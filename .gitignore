@@ -1,0 +1,12 @@
+data/
+outputs/
+checkpoints/
+*.pth
+*.ckpt
+__pycache__/
+.ipynb_checkpoints/
+runs/
+*.tif
+*.npy
+notebooks/*-checkpoint.ipynb
+data.zip

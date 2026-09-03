@@ -1,0 +1,61 @@
+# Default configuration. Placeholder keys only.
+# null = to be measured / decided in a later step. Do not invent values.
+
+paths:
+  data_root: null
+  audit_json: null
+  output_dir: null
+  checkpoint_dir: null
+  tensorboard_dir: null
+
+patch:
+  size: null
+  stride: null
+  overlap: null
+  pad_mode: null
+
+augment:
+  spatial: null
+  photometric: null
+
+model:
+  arch: null
+  encoder: null
+  encoder_weights: null
+  in_channels: null
+  classes: null
+
+loss:
+  name: null
+  params: null
+
+train:
+  epochs: null
+  batch_size: null
+  lr: null
+  optimizer: null
+  scheduler: null
+  weight_decay: null
+  num_workers: null
+  seed: null
+  val_split: null
+
+inference:
+  tile_size: null
+  tile_overlap: null
+  threshold: null
+  overlay_color: null
+
+# Remote-session bootstrap. Consumed only by scripts/bootstrap_session.py
+# and src/paths.py. null = must be filled in per user / per host before a
+# remote session can run; bootstrap fails loudly when a required one is null.
+session:
+  repo_url: null            # https clone URL, e.g. https://github.com/<owner>/<repo>.git
+  branch: null              # branch to check out in the remote session
+  clone_dir_name: null      # directory name for the clone (defaults to repo name)
+  colab:
+    drive_mount: null       # where Drive is mounted, e.g. /content/drive
+    data_root: null         # Drive path holding the dataset folders
+    persistent_dir: null    # Drive path for checkpoints / logs / outputs
+  kaggle:
+    dataset_slug: null      # /kaggle/input/<dataset_slug>

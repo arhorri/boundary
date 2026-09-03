@@ -1,0 +1,11 @@
+# Installed at NOTEBOOK RUNTIME on the host (Colab / Kaggle), never on a
+# local machine. There is no local Python environment for this project.
+#
+# Colab and Kaggle already ship torch, torchvision, numpy, scipy,
+# opencv, scikit-image, matplotlib and pandas. Only what is missing or
+# version-sensitive is listed here.
+
+segmentation-models-pytorch
+albumentations
+pyyaml
+tqdm
