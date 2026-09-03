@@ -60,13 +60,20 @@ MAX_LABELS = 32           # colours kept when building a MODE B label map
 QUANTIZED_COVERAGE = 0.995   # top-MAX_LABELS coverage above this = quantized
 QUANTIZED_MAX_COLOURS = 512  # more distinct colours than this = continuous
 
-MODE_A_MIN_FRAC = 0.0005  # a painted line covers at least this much of the image
-MODE_A_MAX_FRAC = 0.30    # ... and at most this much, or it is a phase, not a line
-MODE_A_MAX_THICKNESS = 4.0   # px; area / skeleton length
-MODE_A_MIN_SPAN = 0.50    # candidate bbox must cover this fraction of the image
-MODE_A_FILE_QUORUM = 0.60 # fraction of sampled files that must agree
+# Line-likeness is a GEOMETRIC test, deliberately independent of how much of
+# the image a colour covers: a fine-grained micrograph can have a genuinely
+# 1-px-wide boundary network that still occupies 20-40% of the pixels. Total
+# pixel fraction is therefore reported as evidence but never gates a verdict.
+MODE_A_MAX_THICKNESS = 4.0    # px; area / skeleton length. A drawn line is 1-3.
+MODE_A_MIN_SPAN = 0.50        # colour bbox must cover this much of the frame
+MODE_A_MIN_SKELETON_SPANS = 2.0   # skeleton length / longest image side; a real
+                                  # network crosses the frame several times,
+                                  # a speck or a corner artefact does not
+MODE_A_FILE_QUORUM = 0.60     # fraction of sampled files a colour must pass in
 
-MAX_CANDIDATE_COLOURS = 12   # thinness is measured for at most this many colours
+MODE_A_MIN_COLOUR_PIXELS = 64  # below this a colour is noise, not a network
+MAX_TESTED_COLOURS = 64        # cap per mask, most frequent first; any colour
+                               # left untested is recorded in colours_skipped
 
 
 class AuditError(RuntimeError):
@@ -412,7 +419,13 @@ def colour_geometry(mask_of_colour: np.ndarray) -> dict:
     ``mean_thickness`` is area / skeleton length: ~1-3 px for a drawn
     boundary, large for a filled phase region. ``span`` is how much of the
     image the colour's bounding box covers: a boundary network spans the
-    whole frame, a corner artefact does not.
+    whole frame, a corner artefact does not. ``skeleton_spans`` is the
+    skeleton length in units of the longest image side: a boundary network
+    crosses the frame many times over, a speck or a stray mark does not.
+
+    All three are scale-free and none of them looks at how much of the image
+    the colour covers, so a dense network of thin lines scores exactly like a
+    sparse one.
     """
     from skimage.measure import label as cc_label
     from skimage.morphology import skeletonize
@@ -427,6 +440,7 @@ def colour_geometry(mask_of_colour: np.ndarray) -> dict:
         "mean_thickness_px": None,
         "n_components": 0,
         "span": 0.0,
+        "skeleton_spans": 0.0,
     }
     if area == 0:
         return out
@@ -436,6 +450,7 @@ def colour_geometry(mask_of_colour: np.ndarray) -> dict:
     if skel_px:
         out["skeleton_to_area"] = float(skel_px) / float(area)
         out["mean_thickness_px"] = float(area) / float(skel_px)
+    out["skeleton_spans"] = float(skel_px) / float(max(h, w))
     out["n_components"] = int(cc_label(mask_of_colour, connectivity=2).max())
     ys, xs = np.nonzero(mask_of_colour)
     bbox = (ys.max() - ys.min() + 1) * (xs.max() - xs.min() + 1)
@@ -443,37 +458,80 @@ def colour_geometry(mask_of_colour: np.ndarray) -> dict:
     return out
 
 
-def mode_a_candidates(arr: np.ndarray) -> list:
-    """Score every plausible painted-boundary colour in one mask."""
+def line_likeness(arr: np.ndarray, colour: Sequence) -> dict:
+    """Measure one colour's line-likeness in one mask.
+
+    A colour qualifies as a painted boundary when it is thin, spans the frame
+    and forms an extensive network -- three geometric facts. Its share of the
+    image is recorded but is NOT part of the test: a dense boundary network in
+    a fine-grained micrograph covers a large fraction of the pixels while
+    still being one pixel wide.
+    """
+    if arr.ndim == 2:
+        hit = arr == colour[0]
+    else:
+        hit = np.all(arr[..., :len(colour)] == np.array(colour), axis=-1)
+    geo = colour_geometry(hit)
+    hsv = _rgb_to_hsv(colour)
+    thin = (geo["mean_thickness_px"] is not None
+            and geo["mean_thickness_px"] <= MODE_A_MAX_THICKNESS)
+    spanning = geo["span"] >= MODE_A_MIN_SPAN
+    extensive = geo["skeleton_spans"] >= MODE_A_MIN_SKELETON_SPANS
+    return {
+        "colour": list(colour),
+        "hsv": [round(hsv[0], 1), round(hsv[1], 3), round(hsv[2], 3)],
+        "saturation": round(hsv[1], 3),
+        **geo,
+        "thin": bool(thin),
+        "spanning": bool(spanning),
+        "extensive": bool(extensive),
+        "qualifies": bool(thin and spanning and extensive),
+    }
+
+
+def mode_a_colour_tests(arr: np.ndarray) -> dict:
+    """Test EVERY non-majority colour in one mask for line-likeness.
+
+    The majority colour is excluded because it is the background phase by
+    definition. Every other colour is tested on its own merits, whatever its
+    pixel fraction -- so several colours in one mask may qualify, and a dense
+    thin network is not filtered out before it is measured. Colours below
+    ``MODE_A_MIN_COLOUR_PIXELS``, and anything past ``MAX_TESTED_COLOURS``,
+    are listed under ``skipped`` rather than silently dropped.
+    """
     colours, counts = colour_counts(arr)
     total = float(arr.shape[0] * arr.shape[1])
-    shortlist = [
-        (c, n) for c, n in zip(colours, counts)
-        if MODE_A_MIN_FRAC <= (n / total) <= MODE_A_MAX_FRAC
-    ][:MAX_CANDIDATE_COLOURS]
+    if not colours:
+        return {"majority_colour": None, "tested": [], "skipped": [],
+                "n_colours": 0, "n_tested": 0, "n_skipped": 0}
 
-    results = []
-    for colour, _ in shortlist:
-        if arr.ndim == 2:
-            hit = arr == colour[0]
-        else:
-            hit = np.all(arr[..., :len(colour)] == np.array(colour), axis=-1)
-        geo = colour_geometry(hit)
-        hsv = _rgb_to_hsv(colour)
-        thin = (geo["mean_thickness_px"] is not None
-                and geo["mean_thickness_px"] <= MODE_A_MAX_THICKNESS)
-        qualifies = bool(thin and geo["span"] >= MODE_A_MIN_SPAN
-                         and MODE_A_MIN_FRAC <= geo["fraction"] <= MODE_A_MAX_FRAC)
-        results.append({
-            "colour": list(colour),
-            "hsv": [round(hsv[0], 1), round(hsv[1], 3), round(hsv[2], 3)],
-            "saturation": round(hsv[1], 3),
-            **geo,
-            "qualifies": qualifies,
-        })
-    results.sort(key=lambda r: (not r["qualifies"],
-                                r["mean_thickness_px"] if r["mean_thickness_px"] else 1e9))
-    return results
+    majority = colours[0]
+    rest = list(zip(colours[1:], counts[1:]))
+    testable = [(c, n) for c, n in rest if int(n) >= MODE_A_MIN_COLOUR_PIXELS]
+    too_small = [(c, n) for c, n in rest if int(n) < MODE_A_MIN_COLOUR_PIXELS]
+    over_cap = testable[MAX_TESTED_COLOURS:]
+    testable = testable[:MAX_TESTED_COLOURS]
+
+    tested = [line_likeness(arr, colour) for colour, _ in testable]
+    tested.sort(key=lambda r: (not r["qualifies"],
+                               r["mean_thickness_px"] if r["mean_thickness_px"]
+                               else 1e9))
+    skipped = [
+        {"colour": list(c), "pixels": int(n), "fraction": float(n) / total,
+         "why": ("fewer than %d pixels" % MODE_A_MIN_COLOUR_PIXELS
+                 if int(n) < MODE_A_MIN_COLOUR_PIXELS
+                 else "past the %d-colour cap" % MAX_TESTED_COLOURS)}
+        for c, n in (too_small + over_cap)
+    ]
+    return {
+        "majority_colour": list(majority),
+        "majority_fraction": float(counts[0]) / total,
+        "tested": tested,
+        "skipped": skipped,
+        "n_colours": len(colours),
+        "n_tested": len(tested),
+        "n_skipped": len(skipped),
+    }
 
 
 # --------------------------------------------------------------------------
@@ -536,12 +594,15 @@ def audit_pair(image_path: Path, mask_path: Path) -> dict:
     image = read_array(image_path)
 
     palette = palette_report(mask)
-    candidates = mode_a_candidates(mask)
+    colour_tests = mode_a_colour_tests(mask)
     labels, label_colours = label_map(mask)
     b_stats = mode_b_stats(labels, label_colours)
 
-    best = candidates[0] if candidates and candidates[0]["qualifies"] else None
-    frac_a = best["fraction"] if best else 0.0
+    qualifying = [c for c in colour_tests["tested"] if c["qualifies"]]
+    # Colours partition the mask, so the fractions of the qualifying colours
+    # add up: this is the boundary fraction MODE A extraction would produce
+    # from THIS mask, over all of its line-like colours, not just one.
+    frac_a = float(sum(c["fraction"] for c in qualifying))
 
     return {
         "image": image_meta | {
@@ -555,8 +616,8 @@ def audit_pair(image_path: Path, mask_path: Path) -> dict:
         "size_match": (image_meta["width"] == mask_meta["width"]
                        and image_meta["height"] == mask_meta["height"]),
         "palette": palette,
-        "mode_a_candidates": candidates[:5],
-        "mode_a_colour": None if best is None else best["colour"],
+        "mode_a": colour_tests,
+        "mode_a_qualifying": [c["colour"] for c in qualifying],
         "mode_b": b_stats,
         "boundary_fraction": {
             "mode_a": frac_a,
@@ -612,49 +673,77 @@ def audit_folder(
     widths = [r["image"]["width"] for r in per_file]
     heights = [r["image"]["height"] for r in per_file]
 
-    # MODE A verdict: which colour qualifies, and in how many sampled files
-    votes = Counter(tuple(r["mode_a_colour"]) for r in per_file if r["mode_a_colour"])
+    # ---- MODE A verdict -------------------------------------------------
+    # Every non-majority colour of every sampled mask was tested on its own.
+    # A colour clears MODE A by passing the quorum on its own line-likeness,
+    # whatever its pixel fraction, so the tally is per colour, not per file.
     quorum = MODE_A_FILE_QUORUM * len(per_file)
-    winner, n_votes = (votes.most_common(1)[0] if votes else (None, 0))
-    is_a = winner is not None and n_votes >= quorum
+    colour_stats = _tally_colours(per_file)   # votes over ALL tested colours
+    passing = [c for c in colour_stats if c["files_qualifying"] >= quorum]
+    is_a = bool(passing)
+    passing_set = {tuple(c["colour"]) for c in passing}
+    # What MODE A extraction would actually select in this folder: the colours
+    # that cleared the quorum, summed per file. A file's own sporadic
+    # qualifiers are reported separately as boundary_fraction.mode_a.
+    passing_fracs = [
+        float(sum(c["fraction"] for c in r["mode_a"]["tested"]
+                  if tuple(c["colour"]) in passing_set))
+        for r in per_file
+    ]
+    _trim_per_file_colours(per_file)          # ... then shrink the per-file dump
+    winner = passing[0] if passing else (colour_stats[0] if colour_stats else None)
 
-    ev = [c for r in per_file for c in r["mode_a_candidates"]
-          if winner and tuple(c["colour"]) == winner]
     evidence = {
-        "candidate_colour": list(winner) if winner else None,
-        "candidate_hsv": ev[0]["hsv"] if ev else None,
-        "files_qualifying": int(n_votes),
         "files_sampled": len(per_file),
         "quorum_required": round(quorum, 2),
-        "pixel_fraction": _minmedmax([c["fraction"] for c in ev]),
-        "skeleton_to_area": _minmedmax([c["skeleton_to_area"] for c in ev]),
-        "mean_thickness_px": _minmedmax([c["mean_thickness_px"] for c in ev]),
-        "n_components": _minmedmax([c["n_components"] for c in ev]),
-        "span": _minmedmax([c["span"] for c in ev]),
+        "n_colours_tested": len(colour_stats),
+        "colours": colour_stats,
+        "passing_colours": [c["colour"] for c in passing],
+        # The winner's own numbers, kept as flat keys so a reader (and the
+        # verdict table) can see the strongest candidate at a glance.
+        "candidate_colour": winner["colour"] if winner else None,
+        "candidate_hsv": winner["hsv"] if winner else None,
+        "files_qualifying": winner["files_qualifying"] if winner else 0,
+        "pixel_fraction": winner["pixel_fraction"] if winner else _minmedmax([]),
+        "skeleton_to_area": winner["skeleton_to_area"] if winner else _minmedmax([]),
+        "mean_thickness_px": winner["mean_thickness_px"] if winner else _minmedmax([]),
+        "n_components": winner["n_components"] if winner else _minmedmax([]),
+        "span": winner["span"] if winner else _minmedmax([]),
+        "skeleton_spans": winner["skeleton_spans"] if winner else _minmedmax([]),
         "thresholds": {
-            "min_fraction": MODE_A_MIN_FRAC,
-            "max_fraction": MODE_A_MAX_FRAC,
             "max_mean_thickness_px": MODE_A_MAX_THICKNESS,
             "min_span": MODE_A_MIN_SPAN,
+            "min_skeleton_spans": MODE_A_MIN_SKELETON_SPANS,
+            "min_colour_pixels": MODE_A_MIN_COLOUR_PIXELS,
+            "max_tested_colours": MAX_TESTED_COLOURS,
             "file_quorum": MODE_A_FILE_QUORUM,
+            "pixel_fraction_gates_verdict": False,
         },
     }
     if is_a:
+        head = passing[0]
+        others = (f" (also {len(passing) - 1} other colour(s): "
+                  + ", ".join(str(c["colour"]) for c in passing[1:]) + ")"
+                  if len(passing) > 1 else "")
         reason = (
-            f"colour {list(winner)} is thin (median "
-            f"{evidence['mean_thickness_px']['median']:.2f} px thick), sparse "
-            f"({evidence['pixel_fraction']['median']:.4f} of pixels) and spans "
-            f"the frame, in {n_votes}/{len(per_file)} sampled masks"
+            f"colour {head['colour']} is thin (median "
+            f"{_fmt(head['mean_thickness_px']['median'], '.2f')} px), spans the "
+            f"frame and forms a network "
+            f"{_fmt(head['skeleton_spans']['median'], '.1f')} frame-widths long, "
+            f"in {head['files_qualifying']}/{len(per_file)} sampled masks; it "
+            f"covers {_fmt(head['pixel_fraction']['median'])} of pixels, which "
+            f"does not affect the verdict" + others
         )
     elif winner is not None:
         reason = (
-            f"colour {list(winner)} looks line-like in only {n_votes}/"
-            f"{len(per_file)} sampled masks, below the "
-            f"{MODE_A_FILE_QUORUM:.0%} quorum"
+            f"{len(colour_stats)} non-majority colours tested; the best, "
+            f"{winner['colour']}, is line-like in only "
+            f"{winner['files_qualifying']}/{len(per_file)} sampled masks, below "
+            f"the {MODE_A_FILE_QUORUM:.0%} quorum"
         )
     else:
-        reason = ("no colour is simultaneously sparse, thin and frame-spanning: "
-                  "the mask is a phase-label map, so grain boundaries are absent")
+        reason = ("no non-majority colour to test: the mask is a phase-label "
+                  "map, so grain boundaries are absent")
 
     majority_structures = Counter(r["mode_b"]["majority_structure"] for r in per_file)
     mode_b_summary = {
@@ -720,11 +809,77 @@ def audit_folder(
         },
         "mode_b": mode_b_summary,
         "boundary_fraction": {
-            "mode_a": _minmedmax([r["boundary_fraction"]["mode_a"] for r in per_file]),
+            # colours that cleared the folder quorum -- what MODE A extraction
+            # would really produce here (0 for a MODE B folder)
+            "mode_a": _minmedmax(passing_fracs),
+            # any colour that looked line-like in that file alone: a looser
+            # diagnostic, non-zero even where no colour clears the quorum
+            "mode_a_per_file_qualifiers": _minmedmax(
+                [r["boundary_fraction"]["mode_a"] for r in per_file]),
             "mode_b": _minmedmax([r["boundary_fraction"]["mode_b"] for r in per_file]),
         },
         "files": per_file,
     }
+
+
+def _trim_per_file_colours(per_file: Sequence, keep: int = 5) -> None:
+    """Shrink the per-file colour dump AFTER the votes have been tallied.
+
+    Every non-majority colour is tested and counted in ``mode.evidence.colours``;
+    storing all of them for every sampled file as well would multiply the size
+    of a tracked report for no extra information. Each file keeps the colours
+    that qualified plus the ``keep`` thinnest, and says how many were tested.
+    """
+    for rec in per_file:
+        tested = rec["mode_a"]["tested"]
+        kept, seen = [], set()
+        for c in tested:
+            if c["qualifies"] or len(kept) < keep:
+                key = tuple(c["colour"])
+                if key not in seen:
+                    seen.add(key)
+                    kept.append(c)
+        rec["mode_a"]["tested"] = kept
+        rec["mode_a"]["tested_trimmed"] = len(kept) < rec["mode_a"]["n_tested"]
+
+
+def _tally_colours(per_file: Sequence) -> list:
+    """Vote count and evidence for every colour tested across the sample.
+
+    One row per colour, not per file: ``files_qualifying`` is how many sampled
+    masks that colour passed its own line-likeness test in, and the
+    distributions are taken over the masks the colour appears in. Sorted by
+    votes, then by how thin the colour is.
+    """
+    seen = {}
+    for rec in per_file:
+        for c in rec["mode_a"]["tested"]:
+            key = tuple(c["colour"])
+            seen.setdefault(key, []).append(c)
+
+    rows = []
+    for key, records in seen.items():
+        votes = sum(1 for c in records if c["qualifies"])
+        rows.append({
+            "colour": list(key),
+            "hsv": records[0]["hsv"],
+            "files_present": len(records),
+            "files_qualifying": votes,
+            "failed_thin": sum(1 for c in records if not c["thin"]),
+            "failed_spanning": sum(1 for c in records if not c["spanning"]),
+            "failed_extensive": sum(1 for c in records if not c["extensive"]),
+            "pixel_fraction": _minmedmax([c["fraction"] for c in records]),
+            "mean_thickness_px": _minmedmax([c["mean_thickness_px"] for c in records]),
+            "skeleton_to_area": _minmedmax([c["skeleton_to_area"] for c in records]),
+            "skeleton_spans": _minmedmax([c["skeleton_spans"] for c in records]),
+            "span": _minmedmax([c["span"] for c in records]),
+            "n_components": _minmedmax([c["n_components"] for c in records]),
+        })
+    rows.sort(key=lambda r: (-r["files_qualifying"],
+                             r["mean_thickness_px"]["median"]
+                             if r["mean_thickness_px"]["median"] is not None
+                             else 1e9))
+    return rows
 
 
 def _merge_palettes(per_file: Sequence, top_n: int = PALETTE_TOP_N) -> list:
@@ -884,19 +1039,35 @@ def render_markdown(report: dict) -> str:
 
         ev = m["evidence"]
         lines += [
-            "", "### MODE A evidence", "",
-            f"- candidate colour: `{ev['candidate_colour']}` "
-            f"(HSV {ev['candidate_hsv']})",
-            f"- qualifying in {ev['files_qualifying']}/{ev['files_sampled']} "
-            f"sampled masks (quorum {ev['quorum_required']})",
-            f"- pixel fraction (min/median/max): "
-            f"{_fmt(ev['pixel_fraction']['min'])}/"
-            f"{_fmt(ev['pixel_fraction']['median'])}/"
-            f"{_fmt(ev['pixel_fraction']['max'])}",
-            f"- skeleton-to-area: {_fmt(ev['skeleton_to_area']['median'])} "
-            f"(mean thickness {_fmt(ev['mean_thickness_px']['median'], '.2f')} px)",
-            f"- components: {_fmt(ev['n_components']['median'], '.0f')}, "
-            f"frame span {_fmt(ev['span']['median'], '.3f')}",
+            "", "### MODE A evidence — every non-majority colour tested", "",
+            f"{ev['n_colours_tested']} colours tested over "
+            f"{ev['files_sampled']} sampled masks; a colour clears MODE A at "
+            f"{ev['quorum_required']} qualifying masks. Pixel fraction is "
+            "reported but does not gate the verdict: a colour qualifies on "
+            "thickness, frame span and network length alone.",
+            "",
+            "| colour | HSV | votes | present in | frac (med) | thick px (med) "
+            "| span (med) | skel spans (med) | components (med) | failed |",
+            "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+        ]
+        for c in ev["colours"]:
+            failed = ", ".join(
+                lbl for lbl, n in (("thin", c["failed_thin"]),
+                                   ("span", c["failed_spanning"]),
+                                   ("extent", c["failed_extensive"])) if n
+            ) or "-"
+            mark = "**" if c["colour"] in ev["passing_colours"] else ""
+            lines.append(
+                f"| {mark}`{c['colour']}`{mark} | {c['hsv']} | "
+                f"{c['files_qualifying']}/{ev['files_sampled']} | "
+                f"{c['files_present']} | "
+                f"{_fmt(c['pixel_fraction']['median'])} | "
+                f"{_fmt(c['mean_thickness_px']['median'], '.2f')} | "
+                f"{_fmt(c['span']['median'], '.3f')} | "
+                f"{_fmt(c['skeleton_spans']['median'], '.1f')} | "
+                f"{_fmt(c['n_components']['median'], '.0f')} | {failed} |"
+            )
+        lines += [
             "",
             "### MODE B structure", "",
             f"- labels per mask (min/median/max): "
@@ -919,8 +1090,10 @@ def render_markdown(report: dict) -> str:
             f"{_fmt(d['mode_b']['per_label_area_max']['max'], '.0f')} px",
             "",
             "### Boundary pixel fraction each mode would produce", "",
-            f"- MODE A (painted colour): "
+            f"- MODE A (colours that cleared the quorum): "
             f"{_fmt(d['boundary_fraction']['mode_a']['median'])}",
+            f"- MODE A (any per-file line-like colour, diagnostic only): "
+            f"{_fmt(d['boundary_fraction']['mode_a_per_file_qualifiers']['median'])}",
             f"- MODE B (find_boundaries on the label map): "
             f"{_fmt(d['boundary_fraction']['mode_b']['median'])}",
         ]
