@@ -1,79 +1,92 @@
 #!/usr/bin/env python3
-"""Idempotent remote-session bootstrap for Colab / Kaggle / local.
+"""Idempotent remote-session bootstrap for Colab / Kaggle.
 
 Safe to run any number of times in one session and after any disconnect:
-every step checks current state before acting.
+every step inspects the current state before acting.
 
-From a notebook (repo not yet cloned)::
+Standard use, from cell 1 of any notebook (the repo is not cloned yet, so
+this file is fetched from GitHub first)::
 
-    import urllib.request, pathlib
-    url = "https://raw.githubusercontent.com/<owner>/<repo>/<branch>/scripts/bootstrap_session.py"
-    urllib.request.urlretrieve(url, "bootstrap_session.py")
     import bootstrap_session
-    paths = bootstrap_session.bootstrap(
-        repo_url="https://github.com/<owner>/<repo>.git", branch="<branch>")
+    PATHS = bootstrap_session.bootstrap(
+        repo_url="https://github.com/<owner>/<repo>.git", branch="main")
 
-From a shell inside the repo::
+From a shell inside an existing checkout::
 
-    python scripts/bootstrap_session.py --repo-url https://github.com/<owner>/<repo>.git --branch main
+    python scripts/bootstrap_session.py
 
-The GitHub PAT is ALWAYS read from the host secret store, never a literal:
-    colab   google.colab.userdata.get('GH_TOKEN')
-    kaggle  kaggle_secrets.UserSecretsClient().get_secret('GH_TOKEN')
+What it does, in order:
+    1. detect the platform (colab | kaggle | local)
+    2. read the GitHub PAT from the host secret store -- never a literal
+    3. clone the repo, or fetch + hard reset an existing clone
+    4. pip install requirements-notebook.txt, skipping what already imports
+    5. mount Google Drive (colab only)
+    6. resolve and VERIFY DATA_ROOT against session.expected_datasets
+    7. resolve PERSISTENT_DIR and symlink outputs/ + checkpoints/ into it
+    8. print the session summary and return every resolved path
+
+Host-specific absolute paths are never written here. They live in
+configs/default.yaml under ``session:`` and are read through src/paths.py.
 """
 
 from __future__ import annotations
 
 import argparse
 import importlib
+import importlib.util
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
 from typing import Optional
 
-# Keep in sync with environment.yml / requirements-colab.txt.
-TORCH_MIN = (2, 1, 2)
-TORCHVISION_MIN = (0, 16, 2)
+REQUIREMENTS_FILE = "requirements-notebook.txt"
 
-REQUIRED_IMPORTS = [
-    "numpy",
-    "scipy",
-    "skimage",
-    "yaml",
-    "tqdm",
-    "matplotlib",
-    "pandas",
-    "tensorboard",
-    "cv2",
-    "albumentations",
-    "segmentation_models_pytorch",
-]
+#: pip distribution name -> module name, where they differ.
+IMPORT_NAMES = {
+    "segmentation-models-pytorch": "segmentation_models_pytorch",
+    "opencv-python": "cv2",
+    "opencv-python-headless": "cv2",
+    "pyyaml": "yaml",
+    "scikit-image": "skimage",
+    "scikit-learn": "sklearn",
+    "pillow": "PIL",
+}
 
 SECRET_SETUP = {
     "colab": (
         "GH_TOKEN secret is missing.\n"
         "  1. Click the key icon (Secrets) in the Colab left sidebar.\n"
-        "  2. Add a secret named exactly  GH_TOKEN  whose value is a GitHub PAT\n"
-        "     with repo contents read access.\n"
+        "  2. Add a secret named exactly  GH_TOKEN  whose value is a GitHub\n"
+        "     fine-grained PAT with Contents: read and write on this repo.\n"
         "  3. Turn 'Notebook access' ON for this notebook.\n"
         "  4. Re-run this cell."
     ),
     "kaggle": (
         "GH_TOKEN secret is missing.\n"
         "  1. In the Kaggle notebook editor open  Add-ons -> Secrets.\n"
-        "  2. Add a secret named exactly  GH_TOKEN  whose value is a GitHub PAT\n"
-        "     with repo contents read access.\n"
-        "  3. Tick the checkbox to attach it to this notebook.\n"
+        "  2. Add a secret named exactly  GH_TOKEN  whose value is a GitHub\n"
+        "     fine-grained PAT with Contents: read and write on this repo.\n"
+        "  3. Tick the checkbox that attaches it to this notebook.\n"
         "  4. Re-run this cell."
     ),
+    "local": (
+        "GH_TOKEN is not set. Export it before running:\n"
+        "    export GH_TOKEN=<github personal access token>"
+    ),
 }
+
+
+class BootstrapError(RuntimeError):
+    """Anything that makes this session unusable. Always raised loudly."""
 
 
 # --------------------------------------------------------------------------
 # platform
 # --------------------------------------------------------------------------
 def detect_platform() -> str:
+    """Return ``"colab"``, ``"kaggle"`` or ``"local"``."""
     if "COLAB_RELEASE_TAG" in os.environ or "COLAB_GPU" in os.environ:
         return "colab"
     try:
@@ -82,64 +95,33 @@ def detect_platform() -> str:
         return "colab"
     except Exception:
         pass
-    if "KAGGLE_KERNEL_RUN_TYPE" in os.environ or os.path.isdir("/kaggle"):
+    if "KAGGLE_KERNEL_RUN_TYPE" in os.environ or "KAGGLE_URL_BASE" in os.environ:
+        return "kaggle"
+    if Path(os.sep, "kaggle").is_dir():
         return "kaggle"
     return "local"
 
 
 def _run(cmd, cwd: Optional[Path] = None, check: bool = True, quiet: bool = False):
+    cmd = [str(c) for c in cmd]
     if not quiet:
-        printable = " ".join(str(c) for c in cmd)
-        print(f"  $ {printable}")
-    return subprocess.run(
-        [str(c) for c in cmd], cwd=str(cwd) if cwd else None, check=check
+        print("  $ " + " ".join(cmd))
+    proc = subprocess.run(
+        cmd, cwd=str(cwd) if cwd else None, capture_output=True, text=True
     )
-
-
-# --------------------------------------------------------------------------
-# torch version gate
-# --------------------------------------------------------------------------
-def _version_tuple(v: str):
-    out = []
-    for part in v.split("+")[0].split("."):
-        try:
-            out.append(int(part))
-        except ValueError:
-            break
-    return tuple(out)
-
-
-def assert_host_torch() -> None:
-    try:
-        import torch
-    except ImportError as exc:  # pragma: no cover - host is expected to ship it
-        raise SystemExit(
-            "torch is not importable on this host. Colab and Kaggle ship it "
-            "preinstalled; do not run this off those hosts without torch."
-        ) from exc
-    tv = _version_tuple(torch.__version__)
-    if tv < TORCH_MIN:
-        raise SystemExit(
-            f"host torch {torch.__version__} is older than the required "
-            f"{'.'.join(map(str, TORCH_MIN))}. Update the host runtime."
+    if check and proc.returncode != 0:
+        raise BootstrapError(
+            "command failed: " + " ".join(cmd) + "\n"
+            + (proc.stderr or proc.stdout or "").strip()
         )
-    try:
-        import torchvision
-
-        vv = _version_tuple(torchvision.__version__)
-        if vv < TORCHVISION_MIN:
-            raise SystemExit(
-                f"host torchvision {torchvision.__version__} is older than the "
-                f"required {'.'.join(map(str, TORCHVISION_MIN))}."
-            )
-    except ImportError:
-        raise SystemExit("torchvision is not importable on this host.")
+    return proc
 
 
 # --------------------------------------------------------------------------
 # secrets
 # --------------------------------------------------------------------------
 def get_github_token(platform: str) -> str:
+    """Read GH_TOKEN from the host secret store. Never accepts a literal."""
     token = None
     if platform == "colab":
         try:
@@ -159,203 +141,271 @@ def get_github_token(platform: str) -> str:
         token = os.environ.get("GH_TOKEN")
 
     if not token:
-        print(SECRET_SETUP.get(platform, "Set the GH_TOKEN environment variable."))
-        sys.exit(1)
-    return token
-
-
-# --------------------------------------------------------------------------
-# drive
-# --------------------------------------------------------------------------
-def mount_drive(mount_point: str = "/content/drive") -> None:
-    from google.colab import drive
-
-    # force_remount=False makes this a no-op if already mounted.
-    drive.mount(mount_point, force_remount=False)
+        print(SECRET_SETUP[platform])
+        raise BootstrapError(f"GH_TOKEN not available on {platform}.")
+    return token.strip()
 
 
 # --------------------------------------------------------------------------
 # repo
 # --------------------------------------------------------------------------
 def _auth_url(repo_url: str, token: str) -> str:
-    if repo_url.startswith("https://"):
-        return "https://x-access-token:" + token + "@" + repo_url[len("https://"):]
-    return repo_url
+    if not repo_url.startswith("https://"):
+        raise BootstrapError(
+            f"repo_url must be an https clone URL, got: {repo_url}. "
+            "ssh remotes cannot authenticate from a notebook."
+        )
+    return "https://x-access-token:" + token + "@" + repo_url[len("https://"):]
 
 
 def clone_or_update(repo_url: str, branch: str, dest: Path, token: str) -> Path:
+    """Clone the repo, or fetch + hard-reset an existing clone. Idempotent.
+
+    The token-bearing remote URL is written only for the duration of the
+    network call and scrubbed back out of .git/config afterwards.
+    """
     auth = _auth_url(repo_url, token)
     if (dest / ".git").is_dir():
-        _run(["git", "remote", "set-url", "origin", auth], cwd=dest)
-        _run(["git", "fetch", "--depth", "1", "origin", branch], cwd=dest)
-        _run(["git", "reset", "--hard", f"origin/{branch}"], cwd=dest)
-        _run(["git", "checkout", "-B", branch, f"origin/{branch}"], cwd=dest, check=False)
-        # scrub the token back out of .git/config
-        _run(["git", "remote", "set-url", "origin", repo_url], cwd=dest, quiet=True)
+        _run(["git", "remote", "set-url", "origin", auth], cwd=dest, quiet=True)
+        try:
+            _run(["git", "fetch", "--depth", "1", "origin", branch], cwd=dest)
+            _run(["git", "reset", "--hard", f"origin/{branch}"], cwd=dest)
+            _run(["git", "checkout", "-B", branch, f"origin/{branch}"], cwd=dest)
+        finally:
+            _run(["git", "remote", "set-url", "origin", repo_url], cwd=dest, quiet=True)
     else:
         dest.parent.mkdir(parents=True, exist_ok=True)
-        _run(["git", "clone", "--branch", branch, "--depth", "1", auth, str(dest)])
+        print(f"  $ git clone --branch {branch} --depth 1 <repo> {dest}")
+        _run(["git", "clone", "--branch", branch, "--depth", "1", auth, str(dest)],
+             quiet=True)
         _run(["git", "remote", "set-url", "origin", repo_url], cwd=dest, quiet=True)
     return dest
 
 
 def repo_commit(dest: Path) -> str:
-    try:
-        out = subprocess.run(
-            ["git", "rev-parse", "HEAD"], cwd=str(dest), capture_output=True, text=True
-        )
-        return out.stdout.strip() or "unknown"
-    except Exception:
-        return "unknown"
+    proc = _run(["git", "rev-parse", "--short", "HEAD"], cwd=dest, check=False, quiet=True)
+    return proc.stdout.strip() or "unknown"
+
+
+def _repo_name(repo_url: str) -> str:
+    name = repo_url.rstrip("/").split("/")[-1]
+    return name[:-4] if name.endswith(".git") else name
 
 
 # --------------------------------------------------------------------------
 # dependencies
 # --------------------------------------------------------------------------
-def imports_satisfied() -> bool:
-    for mod in REQUIRED_IMPORTS:
-        try:
-            importlib.import_module(mod)
-        except Exception:
-            return False
-    return True
+def parse_requirements(path: Path) -> list:
+    """Return the distribution names listed in a requirements file."""
+    if not path.is_file():
+        raise BootstrapError(
+            f"{path} not found. The repo checkout is incomplete; delete the "
+            "clone directory and re-run this cell."
+        )
+    names = []
+    for raw in path.read_text().splitlines():
+        line = raw.split("#", 1)[0].strip()
+        if not line or line.startswith("-"):
+            continue
+        name = re.split(r"[<>=!~;\[ ]", line, 1)[0].strip()
+        if name:
+            names.append(name)
+    return names
 
 
-def pip_install_requirements(repo_root: Path) -> None:
-    if imports_satisfied():
-        print("  dependencies already satisfied - skipping pip install")
+def _importable(dist: str) -> bool:
+    module = IMPORT_NAMES.get(dist.lower(), dist.replace("-", "_"))
+    try:
+        return importlib.util.find_spec(module) is not None
+    except Exception:
+        return False
+
+
+def install_requirements(repo_root: Path) -> dict:
+    """pip install only what is not already importable. Idempotent."""
+    req = repo_root / REQUIREMENTS_FILE
+    wanted = parse_requirements(req)
+    missing = [d for d in wanted if not _importable(d)]
+    skipped = [d for d in wanted if d not in missing]
+
+    if missing:
+        _run([sys.executable, "-m", "pip", "install", "-q", *missing])
+        importlib.invalidate_caches()
+        still_missing = [d for d in missing if not _importable(d)]
+        if still_missing:
+            raise BootstrapError(
+                "pip reported success but these are still not importable: "
+                + ", ".join(still_missing)
+            )
+    print(f"  installed: {', '.join(missing) if missing else '(nothing)'}")
+    print(f"  skipped (already importable): {', '.join(skipped) if skipped else '(nothing)'}")
+    return {"installed": missing, "skipped": skipped}
+
+
+# --------------------------------------------------------------------------
+# drive
+# --------------------------------------------------------------------------
+def mount_drive(mount_point: str) -> None:
+    """Mount Google Drive. A no-op if it is already mounted."""
+    from google.colab import drive
+
+    mount = Path(mount_point)
+    if mount.is_dir() and any(mount.iterdir()):
+        print(f"  Drive already mounted at {mount_point}")
         return
-    req = repo_root / "requirements-colab.txt"
-    _run([sys.executable, "-m", "pip", "install", "-q", "-r", str(req)])
-    importlib.invalidate_caches()
+    drive.mount(mount_point, force_remount=False)
 
 
 # --------------------------------------------------------------------------
-# symlinks
+# data root
 # --------------------------------------------------------------------------
-def _link(target: Path, link: Path) -> None:
-    """Idempotently point ``link`` at ``target``."""
-    target = Path(target)
-    link = Path(link)
+def _listing(path: Path, limit: int = 30) -> str:
+    if not path.exists():
+        return "(does not exist)"
+    if not path.is_dir():
+        return "(not a directory)"
+    entries = sorted(p.name + ("/" if p.is_dir() else "") for p in path.iterdir())
+    if not entries:
+        return "(empty)"
+    shown = entries[:limit]
+    more = "" if len(entries) <= limit else f" ... (+{len(entries) - limit} more)"
+    return ", ".join(shown) + more
+
+
+def verify_data_root(data_root: Path, expected: list, paths_mod) -> Path:
+    """Return the directory that actually holds the dataset folders.
+
+    Accepts either ``data_root`` itself or a single subdirectory of it (host
+    dataset archives often add one wrapping folder). Raises with the full
+    listing of what was found when the expected folders are not there.
+    """
+    data_root = Path(data_root)
+    if not data_root.is_dir():
+        raise BootstrapError(
+            f"DATA_ROOT does not exist: {data_root}\n"
+            f"  parent {data_root.parent} contains: {_listing(data_root.parent)}\n"
+            "Fix session.*.data_root / dataset_slug in configs/default.yaml."
+        )
+
+    candidates = [data_root] + [p for p in sorted(data_root.iterdir()) if p.is_dir()]
+    best, best_found = None, {}
+    for cand in candidates:
+        found_as, missing = paths_mod.match_datasets(cand, expected)
+        if not missing:
+            return cand
+        if len(found_as) > len(best_found):
+            best, best_found = cand, found_as
+
+    _, missing = paths_mod.match_datasets(best or data_root, expected)
+    raise BootstrapError(
+        f"DATA_ROOT is missing expected dataset folders: {', '.join(missing)}\n"
+        f"  looked in : {data_root}\n"
+        f"  found     : {_listing(data_root)}\n"
+        f"  expected  : {', '.join(expected)}\n"
+        "Either the upload is incomplete or session.expected_datasets in "
+        "configs/default.yaml does not match how the data is packaged."
+    )
+
+
+# --------------------------------------------------------------------------
+# persistence
+# --------------------------------------------------------------------------
+def link_into_persistent(link: Path, target: Path) -> None:
+    """Idempotently point ``link`` at ``target`` so nothing lives only in RAM."""
+    link, target = Path(link), Path(target)
+    target.mkdir(parents=True, exist_ok=True)
     if link.is_symlink():
-        if Path(os.readlink(link)) == target:
+        if Path(os.readlink(link)).resolve() == target.resolve():
             return
         link.unlink()
     elif link.exists():
         if link.is_dir() and not any(link.iterdir()):
             link.rmdir()
         else:
-            print(f"  ! {link} exists and is not empty - leaving it untouched")
-            return
+            raise BootstrapError(
+                f"{link} exists, is not a symlink, and is not empty. Refusing "
+                "to touch it. Move it aside and re-run."
+            )
     link.parent.mkdir(parents=True, exist_ok=True)
     link.symlink_to(target, target_is_directory=True)
     print(f"  {link} -> {target}")
 
 
 # --------------------------------------------------------------------------
-# config-driven path resolution
-# --------------------------------------------------------------------------
-def _load_config(repo_root: Path, config_path: Optional[str] = None) -> dict:
-    import yaml
-
-    path = Path(config_path) if config_path else repo_root / "configs" / "default.yaml"
-    if not path.is_file():
-        return {}
-    with open(path) as fh:
-        return yaml.safe_load(fh) or {}
-
-
-def _need(value, what: str, platform: str):
-    if value in (None, ""):
-        raise SystemExit(
-            f"configs/default.yaml: session.{what} is null but is required on "
-            f"{platform}. Fill it in and re-run."
-        )
-    return value
-
-
-def resolve_data_root(platform: str, cfg: dict, repo_root: Path) -> Path:
-    session = cfg.get("session", {}) or {}
-    if platform == "colab":
-        return Path(_need((session.get("colab") or {}).get("data_root"), "colab.data_root", platform))
-    if platform == "kaggle":
-        slug = _need((session.get("kaggle") or {}).get("dataset_slug"), "kaggle.dataset_slug", platform)
-        return Path("/kaggle/input") / slug
-    return repo_root / "data"
-
-
-def resolve_persistent_dir(platform: str, cfg: dict, repo_root: Path) -> Path:
-    session = cfg.get("session", {}) or {}
-    if platform == "colab":
-        return Path(_need((session.get("colab") or {}).get("persistent_dir"), "colab.persistent_dir", platform))
-    if platform == "kaggle":
-        return Path("/kaggle/working")
-    return repo_root
-
-
-# --------------------------------------------------------------------------
-# gpu summary
+# gpu
 # --------------------------------------------------------------------------
 def gpu_summary() -> tuple:
+    """Return (gpu name, vram string, torch version). Never raises."""
     try:
         import torch
-
+    except Exception:
+        return "unknown", "-", "not importable"
+    try:
         if torch.cuda.is_available():
             name = torch.cuda.get_device_name(0)
-            vram_gb = torch.cuda.get_device_properties(0).total_memory / 1024**3
-            return name, f"{vram_gb:.1f} GB", torch.__version__
+            vram = torch.cuda.get_device_properties(0).total_memory / 1024 ** 3
+            return name, f"{vram:.1f} GB", torch.__version__
         return "none (CPU only)", "-", torch.__version__
     except Exception:
-        return "unknown", "-", "unknown"
+        return "unknown", "-", torch.__version__
 
 
 # --------------------------------------------------------------------------
-# main entry point
+# entry point
 # --------------------------------------------------------------------------
+def _find_repo_root(repo_url: str, clone_name: Optional[str]) -> Path:
+    """Existing checkout containing this file, else a clone dir under CWD."""
+    here = Path(__file__).resolve()
+    for parent in (here.parent.parent, here.parent):
+        if (parent / ".git").is_dir():
+            return parent
+    return Path.cwd() / (clone_name or _repo_name(repo_url))
+
+
 def bootstrap(
     repo_url: Optional[str] = None,
     branch: Optional[str] = None,
     config_path: Optional[str] = None,
 ) -> dict:
+    """Prepare the session and return every resolved path. Idempotent."""
     platform = detect_platform()
     print(f"[bootstrap] platform: {platform}")
 
-    assert_host_torch()
-
     token = get_github_token(platform)
 
-    if platform == "colab":
-        mount_drive()
-
-    # Where does the repo live?  If this file is already inside a checkout,
-    # reuse it; otherwise clone under the host working area.
-    here = Path(__file__).resolve()
-    in_repo = (here.parent.parent / ".git").is_dir()
-    if in_repo:
-        repo_root = here.parent.parent
-    else:
-        base = Path("/content") if platform == "colab" else (
-            Path("/kaggle/working") if platform == "kaggle" else Path.cwd()
-        )
-        repo_root = base / _default_clone_name(repo_url)
-
-    # config may only be readable after the clone; try repo first, else CWD file
-    pre_cfg = _load_config(repo_root, config_path) if (repo_root / "configs").is_dir() else {}
-    repo_url = repo_url or (pre_cfg.get("session", {}) or {}).get("repo_url")
-    branch = branch or (pre_cfg.get("session", {}) or {}).get("branch")
     if not repo_url or not branch:
-        raise SystemExit(
-            "repo_url and branch must be given as arguments or set in "
-            "configs/default.yaml (session.repo_url / session.branch)."
+        raise BootstrapError(
+            "repo_url and branch are required: the repo must be located before "
+            "its config can be read. Pass them from the notebook bootstrap cell."
         )
 
-    clone_or_update(repo_url, branch, repo_root, token)
+    repo_root = _find_repo_root(repo_url, None)
+    if platform == "local":
+        print(f"  local platform: using checkout at {repo_root} as-is (no reset)")
+        if not (repo_root / ".git").is_dir():
+            raise BootstrapError(f"no git checkout at {repo_root}")
+    else:
+        clone_or_update(repo_url, branch, repo_root, token)
 
-    cfg = _load_config(repo_root, config_path)
-    pip_install_requirements(repo_root)
+    if str(repo_root) not in sys.path:
+        sys.path.insert(0, str(repo_root))
 
-    data_root = resolve_data_root(platform, cfg, repo_root)
-    persistent_dir = resolve_persistent_dir(platform, cfg, repo_root)
+    install_requirements(repo_root)
+
+    # src/paths.py owns every host path; it is only importable after the clone.
+    importlib.invalidate_caches()
+    paths_mod = importlib.import_module("src.paths")
+    cfg = paths_mod.load_config(config_path)
+
+    if platform == "colab":
+        mount_drive(paths_mod._need(cfg, "colab", "drive_mount"))
+
+    resolved = paths_mod.resolve_paths(config=cfg, config_path=config_path,
+                                       platform=platform)
+    data_root = verify_data_root(
+        resolved["data_root"], resolved["expected_datasets"], paths_mod
+    )
+    persistent_dir = Path(resolved["persistent_dir"])
     persistent_dir.mkdir(parents=True, exist_ok=True)
 
     outputs_dir = persistent_dir / "outputs"
@@ -364,15 +414,13 @@ def bootstrap(
     for d in (outputs_dir, checkpoints_dir, logs_dir):
         d.mkdir(parents=True, exist_ok=True)
 
-    # Wire the repo-relative names to their real, persistent locations.
-    if data_root.resolve() != (repo_root / "data").resolve():
-        _link(data_root, repo_root / "data")
+    # Repo-relative names point at the persistent locations, so a killed
+    # session loses nothing and code can always say repo_root/"outputs".
     if persistent_dir.resolve() != repo_root.resolve():
-        _link(outputs_dir, repo_root / "outputs")
-        _link(checkpoints_dir, repo_root / "checkpoints")
-
-    if str(repo_root) not in sys.path:
-        sys.path.insert(0, str(repo_root))
+        link_into_persistent(repo_root / "outputs", outputs_dir)
+        link_into_persistent(repo_root / "checkpoints", checkpoints_dir)
+    if data_root.resolve() != (repo_root / "data").resolve():
+        link_into_persistent(repo_root / "data", data_root)
 
     gpu_name, vram, torch_version = gpu_summary()
     commit = repo_commit(repo_root)
@@ -382,34 +430,36 @@ def bootstrap(
     print(f"  GPU             : {gpu_name}")
     print(f"  VRAM            : {vram}")
     print(f"  torch           : {torch_version}")
-    print(f"  repo commit     : {commit}")
+    print(f"  repo commit     : {commit} ({branch})")
     print(f"  repo root       : {repo_root}")
-    print(f"  data root       : {data_root}")
-    print(f"  persistent dir  : {persistent_dir}")
-    print("========================================================\n")
+    print(f"  DATA_ROOT       : {data_root}")
+    print(f"  PERSISTENT_DIR  : {persistent_dir}")
+    print("=========================================================\n")
 
     return {
         "platform": platform,
         "repo_root": repo_root,
+        "repo_url": repo_url,
+        "branch": branch,
+        "commit": commit,
+        "config_path": resolved["config_path"],
         "data_root": data_root,
         "persistent_dir": persistent_dir,
         "outputs_dir": outputs_dir,
         "checkpoints_dir": checkpoints_dir,
         "logs_dir": logs_dir,
-        "commit": commit,
+        "reports_dir": repo_root / "reports",
+        "expected_datasets": resolved["expected_datasets"],
+        "gpu": gpu_name,
+        "vram": vram,
+        "torch": torch_version,
     }
-
-
-def _default_clone_name(repo_url: Optional[str]) -> str:
-    if not repo_url:
-        return "repo"
-    return repo_url.rstrip("/").split("/")[-1].removesuffix(".git") or "repo"
 
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser(description="Idempotent Colab/Kaggle bootstrap")
-    ap.add_argument("--repo-url", default=None)
-    ap.add_argument("--branch", default=None)
+    ap.add_argument("--repo-url", required=True, help="https clone URL")
+    ap.add_argument("--branch", required=True)
     ap.add_argument("--config", default=None)
     args = ap.parse_args()
     bootstrap(repo_url=args.repo_url, branch=args.branch, config_path=args.config)

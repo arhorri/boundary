@@ -52,6 +52,28 @@ Masks come in two kinds, and which kind each folder is MUST be read from
 - Never hardcode /content, /kaggle, a token, or a personal path. Use
   src/paths.py.
 
+## Remote sessions
+
+Every notebook under notebooks/ must:
+
+- open with a markdown cell stating: what it does, what must already exist,
+  what it produces, and expected runtime on a free T4
+- put a markdown cell BEFORE every code cell explaining what that cell does
+  and WHY. The reader is learning the pipeline, not just running it.
+- have cell 1 be the standard bootstrap block, identical in every notebook
+- run top to bottom on a fresh Colab AND a fresh Kaggle session with no
+  manual edits. Platform differences are handled by bootstrap_session.py,
+  never by the user editing a path.
+- import from src/, never redefine pipeline logic inline. If a notebook needs
+  a function that does not exist in src/, that function goes in src/.
+- VERIFY, not just run. Every notebook ends with an explicit checks cell that
+  asserts the step's output is well-formed and prints PASS or FAIL per check.
+  This is where correctness is established, because nothing is run locally.
+- end with a call to scripts/push_results.py so generated reports and configs
+  reach the repo
+- be committed with all outputs cleared
+- never contain a token, key, or absolute personal path
+
 ## Response style
 No preamble. No postamble. No summary of what you just did. Do not restate
 the task. Do not explain code unless asked. Report only: files changed,

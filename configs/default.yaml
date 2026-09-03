@@ -46,16 +46,32 @@ inference:
   threshold: null
   overlay_color: null
 
-# Remote-session bootstrap. Consumed only by scripts/bootstrap_session.py
-# and src/paths.py. null = must be filled in per user / per host before a
-# remote session can run; bootstrap fails loudly when a required one is null.
+# Remote-session settings. Every host-specific absolute path lives HERE and
+# nowhere else: no module may contain a literal /content or /kaggle path.
+# Consumed by scripts/bootstrap_session.py, src/paths.py and
+# scripts/push_results.py.
 session:
-  repo_url: null            # https clone URL, e.g. https://github.com/<owner>/<repo>.git
-  branch: null              # branch to check out in the remote session
-  clone_dir_name: null      # directory name for the clone (defaults to repo name)
+  repo_url: https://github.com/arhorri/boundary.git
+  branch: main
+  clone_dir_name: boundary
+
+  # Dataset folders that must be present under the resolved data root.
+  # Bootstrap fails loudly and lists what it actually found if any is missing.
+  expected_datasets:
+    - MetalDam
+    - Steel1
+    - Steel2
+    - uhcs1
+    - uhcs2
+
   colab:
-    drive_mount: null       # where Drive is mounted, e.g. /content/drive
-    data_root: null         # Drive path holding the dataset folders
-    persistent_dir: null    # Drive path for checkpoints / logs / outputs
+    drive_mount: /content/drive
+    # The uploaded copy of the repo's data/ folder.
+    data_root: /content/drive/MyDrive/phase11-data/data
+    # Survives session death: checkpoints, outputs, logs.
+    persistent_dir: /content/drive/MyDrive/phase11-persistent
+
   kaggle:
-    dataset_slug: null      # /kaggle/input/<dataset_slug>
+    input_root: /kaggle/input
+    working_dir: /kaggle/working
+    dataset_slug: phase11-microstructure-data
