@@ -1,6 +1,6 @@
 # Tiling and folds
 
-- generated: 2026-09-04T11:16:10Z
+- generated: 2026-09-04T11:26:48Z
 - patch 256 px, stride 128 px (50% overlap); the last tile of each row and column is clamped to the image edge, so no pixel is fabricated. Padding applies only to an image smaller than the patch in an axis (reflect mode), and every such pixel is counted below.
 - tiles below 0.005 boundary fraction are dropped
 - nothing is resized and no tile images are written: a tile is a row in a manifest and the loader crops it on the fly
