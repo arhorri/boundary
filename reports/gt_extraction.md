@@ -1,6 +1,6 @@
 # Boundary ground truth extraction
 
-- generated: 2026-09-04T08:53:37Z
+- generated: 2026-09-04T09:04:16Z
 - from audit: 2026-09-03T23:42:26Z
 - output root: `/content/drive/MyDrive/phase11-persistent/gt_boundaries`
 - line width: 2 px, speckle removal 'speckle' at 3x3, CLOSE 3x3
