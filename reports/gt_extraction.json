@@ -1,0 +1,399 @@
+{
+  "generated_utc": "2026-09-04T07:43:51Z",
+  "audit_generated_utc": "2026-09-03T23:42:26Z",
+  "out_root": "/content/drive/MyDrive/phase11-persistent/gt_boundaries",
+  "settings": {
+    "artifact_colours": {
+      "MetalDam": [
+        [
+          75,
+          176,
+          40
+        ]
+      ],
+      "uhcs2": [
+        [
+          75,
+          176,
+          40
+        ]
+      ]
+    },
+    "close_kernel": 3,
+    "exclusions": {
+      "uhcs2": [
+        "uhcs0596.png"
+      ]
+    },
+    "fold_artifact_colours": false,
+    "hsv_percentiles": [
+      2,
+      98
+    ],
+    "hsv_sample_files": 12,
+    "line_width_px": 2,
+    "max_unsnapped_fraction": 0.02,
+    "min_palette_share": 0.002,
+    "open_kernel": 3,
+    "open_mode": "speckle",
+    "output_subdir": "gt_boundaries",
+    "palette_merge_distance": 48
+  },
+  "mode_overrides": {},
+  "sane_fraction_band": [
+    0.005,
+    0.25
+  ],
+  "datasets": {
+    "MetalDam": {
+      "folder": "MetalDam",
+      "mode": "B",
+      "out_dir": "/content/drive/MyDrive/phase11-persistent/gt_boundaries/MetalDam",
+      "n_pairs": 42,
+      "n_processed": 40,
+      "n_rejected": 2,
+      "n_excluded": 0,
+      "palette": [
+        [
+          255,
+          255,
+          0
+        ],
+        [
+          21,
+          100,
+          255
+        ],
+        [
+          254,
+          40,
+          40
+        ],
+        [
+          0,
+          0,
+          0
+        ],
+        [
+          75,
+          176,
+          40
+        ]
+      ],
+      "k": 5,
+      "hsv_window": null,
+      "fraction_before": {
+        "min": 0.10588512569832402,
+        "median": 0.16588435166251778,
+        "max": 0.2403774559921764,
+        "n": 40
+      },
+      "fraction_after": {
+        "min": 0.11745373603351955,
+        "median": 0.17205142025248932,
+        "max": 0.2534464460348506,
+        "n": 40
+      },
+      "fraction_after_open": {
+        "min": 0.10584933659217877,
+        "median": 0.16566695190256045,
+        "max": 0.24024132067923187,
+        "n": 40
+      },
+      "fraction_after_close": {
+        "min": 0.11207314944134078,
+        "median": 0.18248244132290187,
+        "max": 0.2749849973328592,
+        "n": 40
+      },
+      "artifacts": [
+        {
+          "colour": [
+            75,
+            176,
+            40
+          ],
+          "folded_into_background": false,
+          "files_present": 17,
+          "files_checked": 40,
+          "pixel_fraction": {
+            "min": 1.5280494310099573e-05,
+            "median": 0.003125555654338549,
+            "max": 0.034275537873399715,
+            "n": 17
+          },
+          "share_of_boundary": {
+            "min": 5.881068001949154e-05,
+            "median": 0.01731007315700619,
+            "max": 0.1805909322465614,
+            "n": 17
+          }
+        }
+      ],
+      "folded_colours": [],
+      "excluded": [],
+      "rejected": [
+        {
+          "pair": [
+            "micrograph15.jpg",
+            "micrograph15.png"
+          ],
+          "why": "mask 1024x702 does not match image 1024x703"
+        },
+        {
+          "pair": [
+            "micrograph19.jpg",
+            "micrograph19.png"
+          ],
+          "why": "mask 1024x702 does not match image 1024x703"
+        }
+      ]
+    },
+    "Steel1": {
+      "folder": "Steel1",
+      "mode": "B",
+      "out_dir": "/content/drive/MyDrive/phase11-persistent/gt_boundaries/Steel1",
+      "n_pairs": 907,
+      "n_processed": 907,
+      "n_rejected": 0,
+      "n_excluded": 0,
+      "palette": [
+        [
+          0,
+          0,
+          0
+        ],
+        [
+          255,
+          255,
+          255
+        ]
+      ],
+      "k": 2,
+      "hsv_window": null,
+      "fraction_before": {
+        "min": 0.000213623046875,
+        "median": 0.038055419921875,
+        "max": 0.1116180419921875,
+        "n": 907
+      },
+      "fraction_after": {
+        "min": 0.000213623046875,
+        "median": 0.043243408203125,
+        "max": 0.1229095458984375,
+        "n": 907
+      },
+      "fraction_after_open": {
+        "min": 0.000213623046875,
+        "median": 0.038055419921875,
+        "max": 0.1116180419921875,
+        "n": 907
+      },
+      "fraction_after_close": {
+        "min": 0.000244140625,
+        "median": 0.0395965576171875,
+        "max": 0.115997314453125,
+        "n": 907
+      },
+      "artifacts": [],
+      "folded_colours": [],
+      "excluded": [],
+      "rejected": []
+    },
+    "Steel2": {
+      "folder": "Steel2",
+      "mode": "B",
+      "out_dir": "/content/drive/MyDrive/phase11-persistent/gt_boundaries/Steel2",
+      "n_pairs": 504,
+      "n_processed": 504,
+      "n_rejected": 0,
+      "n_excluded": 0,
+      "palette": [
+        [
+          255,
+          255,
+          255
+        ],
+        [
+          0,
+          0,
+          0
+        ]
+      ],
+      "k": 2,
+      "hsv_window": null,
+      "fraction_before": {
+        "min": 0.03375244140625,
+        "median": 0.17873382568359375,
+        "max": 0.2801055908203125,
+        "n": 504
+      },
+      "fraction_after": {
+        "min": 0.0171051025390625,
+        "median": 0.1407928466796875,
+        "max": 0.206756591796875,
+        "n": 504
+      },
+      "fraction_after_open": {
+        "min": 0.029937744140625,
+        "median": 0.17545318603515625,
+        "max": 0.2736358642578125,
+        "n": 504
+      },
+      "fraction_after_close": {
+        "min": 0.034698486328125,
+        "median": 0.2183837890625,
+        "max": 0.341796875,
+        "n": 504
+      },
+      "artifacts": [],
+      "folded_colours": [],
+      "excluded": [],
+      "rejected": []
+    },
+    "uhcs1": {
+      "folder": "uhcs1",
+      "mode": "B",
+      "out_dir": "/content/drive/MyDrive/phase11-persistent/gt_boundaries/uhcs1",
+      "n_pairs": 24,
+      "n_processed": 24,
+      "n_rejected": 0,
+      "n_excluded": 0,
+      "palette": [
+        [
+          0,
+          0,
+          0
+        ],
+        [
+          255,
+          255,
+          255
+        ]
+      ],
+      "k": 2,
+      "hsv_window": null,
+      "fraction_before": {
+        "min": 0.03075968992248062,
+        "median": 0.11506323949408405,
+        "max": 0.22546226030191757,
+        "n": 24
+      },
+      "fraction_after": {
+        "min": 0.034647082823337415,
+        "median": 0.10273031415748674,
+        "max": 0.14944430844553244,
+        "n": 24
+      },
+      "fraction_after_open": {
+        "min": 0.030603019175846593,
+        "median": 0.11414769481844145,
+        "max": 0.2129906160750714,
+        "n": 24
+      },
+      "fraction_after_close": {
+        "min": 0.03103386372909017,
+        "median": 0.1277845777233782,
+        "max": 0.2637780497756018,
+        "n": 24
+      },
+      "artifacts": [],
+      "folded_colours": [],
+      "excluded": [],
+      "rejected": []
+    },
+    "uhcs2": {
+      "folder": "uhcs2",
+      "mode": "B",
+      "out_dir": "/content/drive/MyDrive/phase11-persistent/gt_boundaries/uhcs2",
+      "n_pairs": 24,
+      "n_processed": 23,
+      "n_rejected": 0,
+      "n_excluded": 1,
+      "palette": [
+        [
+          254,
+          40,
+          40
+        ],
+        [
+          21,
+          100,
+          255
+        ],
+        [
+          255,
+          255,
+          0
+        ],
+        [
+          75,
+          176,
+          40
+        ]
+      ],
+      "k": 4,
+      "hsv_window": null,
+      "fraction_before": {
+        "min": 0.023194951630469602,
+        "median": 0.05051572810558012,
+        "max": 0.10978281760522775,
+        "n": 23
+      },
+      "fraction_after": {
+        "min": 0.022554295598693062,
+        "median": 0.04870267153565251,
+        "max": 0.10420590684861299,
+        "n": 23
+      },
+      "fraction_after_open": {
+        "min": 0.023194951630469602,
+        "median": 0.0504997117047857,
+        "max": 0.10974437824332116,
+        "n": 23
+      },
+      "fraction_after_close": {
+        "min": 0.02559741174963162,
+        "median": 0.054993913767698126,
+        "max": 0.13247485425075278,
+        "n": 23
+      },
+      "artifacts": [
+        {
+          "colour": [
+            75,
+            176,
+            40
+          ],
+          "folded_into_background": false,
+          "files_present": 23,
+          "files_checked": 23,
+          "pixel_fraction": {
+            "min": 0.0028829521429944265,
+            "median": 0.01687167659683516,
+            "max": 0.16328400281888655,
+            "n": 23
+          },
+          "share_of_boundary": {
+            "min": 0.05818181818181818,
+            "median": 0.24458655441777633,
+            "max": 0.5490455258061542,
+            "n": 23
+          }
+        }
+      ],
+      "folded_colours": [],
+      "excluded": [
+        {
+          "pair": [
+            "uhcs0596.jpg",
+            "uhcs0596.png"
+          ],
+          "why": "listed in boundary_gt.exclusions"
+        }
+      ],
+      "rejected": []
+    }
+  },
+  "failures": {}
+}

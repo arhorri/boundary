@@ -1,0 +1,16 @@
+# HSV windows for MODE A folders, in OpenCV units: H 0-179, S/V 0-255.
+#
+# DERIVED, not hardcoded: each window is the 2nd/98th percentile of H,
+# S and V over the pixels that actually carry the folder's painted
+# boundary colour, measured by src/boundary_gt.py.
+#
+# To hand-tune: edit lower/upper and set  manual: true  on that folder.
+# A folder marked manual is never overwritten by a later extraction.
+# Widen the window when boundaries come out broken; tighten it when
+# neighbouring phases bleed into the boundary map.
+#
+# No folder is currently MODE A -- every dataset in reports/audit.json
+# is a phase-label map -- so there is no window to derive yet. This
+# file exists so that the moment a folder is MODE A (a new dataset, or
+# an override in notebooks/02_boundary_gt.ipynb) its window lands here.
+folders: {}
