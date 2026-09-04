@@ -56,6 +56,11 @@ DEFAULTS = {
     "max_unsnapped_fraction": 0.02,  # reject if this much of the mask sits far
                                      # from every palette peak
     "output_subdir": "gt_boundaries",
+    # Mask and image dimensions that differ by at most this many pixels in
+    # either axis are centre-cropped to their common size instead of being
+    # rejected: an off-by-one row in a source dataset is a packaging slip, not
+    # a broken annotation. Set to 0 to reject every mismatch.
+    "size_tolerance_px": 2,
     "exclusions": {},            # folder -> [mask filename, ...] never processed
     # folder -> [[r, g, b], ...] colours suspected of being scale bars, tool
     # marks or other non-phase annotation. ALWAYS measured and reported;
@@ -188,6 +193,54 @@ def derive_palette(folder_report: dict, settings: dict) -> list:
             "min_palette_share or check the folder."
         )
     return peaks
+
+
+def _centre_crop(arr: np.ndarray, height: int, width: int) -> np.ndarray:
+    """Centre-crop an array to (height, width). Never resamples."""
+    top = (arr.shape[0] - height) // 2
+    left = (arr.shape[1] - width) // 2
+    return arr[top:top + height, left:left + width]
+
+
+def reconcile_size(mask: np.ndarray, image_wh: tuple, tolerance: int) -> tuple:
+    """Bring a mask and its image to a common size, or refuse to.
+
+    Returns ``(mask, info, error)``. ``info`` is None when the sizes already
+    agree; ``error`` is a message when the mismatch is larger than
+    ``tolerance`` and the pair must be rejected. The crop is centred and
+    applied to the mask here; ``info["image_crop"]`` records the identical
+    crop the image needs, so a later step can apply it without guessing.
+
+    Cropping, not resizing: a resampled mask would invent label values, and a
+    resampled image would break the physical micron scale.
+    """
+    img_w, img_h = int(image_wh[0]), int(image_wh[1])
+    mask_h, mask_w = int(mask.shape[0]), int(mask.shape[1])
+    if (img_w, img_h) == (mask_w, mask_h):
+        return mask, None, None
+
+    d_w, d_h = abs(img_w - mask_w), abs(img_h - mask_h)
+    if d_w > tolerance or d_h > tolerance:
+        return mask, None, (
+            f"mask {mask_w}x{mask_h} does not match image {img_w}x{img_h} "
+            f"(differs by {d_w}x{d_h} px, tolerance {tolerance})"
+        )
+
+    common_w, common_h = min(img_w, mask_w), min(img_h, mask_h)
+    info = {
+        "image_size": [img_w, img_h],
+        "mask_size": [mask_w, mask_h],
+        "final_size": [common_w, common_h],
+        "delta_px": [d_w, d_h],
+        # top-left offset of the centre crop, for whoever loads the image
+        "image_crop": {"left": (img_w - common_w) // 2,
+                       "top": (img_h - common_h) // 2,
+                       "width": common_w, "height": common_h},
+        "mask_crop": {"left": (mask_w - common_w) // 2,
+                      "top": (mask_h - common_h) // 2,
+                      "width": common_w, "height": common_h},
+    }
+    return _centre_crop(mask, common_h, common_w), info, None
 
 
 def watched_colours(folder: str, settings: dict) -> list:
@@ -565,19 +618,25 @@ def extract_folder(
     else:
         window = window or derive_hsv_window(folder_report, kept, settings)
 
-    processed, rejected = [], []
+    processed, rejected, reconciled = [], [], []
     out_dir = Path(out_dir) / name
     iterator = progress(kept, desc=name) if progress else kept
     for img_path, mask_path in iterator:
         try:
             mask = audit_mod.read_array(mask_path)
             image_meta = audit_mod.read_meta(img_path)
-            if (image_meta["width"], image_meta["height"]) != (mask.shape[1], mask.shape[0]):
+            mask, size_info, size_error = reconcile_size(
+                mask,
+                (image_meta["width"], image_meta["height"]),
+                int(settings["size_tolerance_px"]),
+            )
+            if size_error:
                 rejected.append({"pair": [img_path.name, mask_path.name],
-                                 "why": f"mask {mask.shape[1]}x{mask.shape[0]} does "
-                                        f"not match image {image_meta['width']}x"
-                                        f"{image_meta['height']}"})
+                                 "why": size_error})
                 continue
+            if size_info:
+                reconciled.append({"pair": [img_path.name, mask_path.name],
+                                   **size_info})
 
             if mode == "B":
                 labels, unsnapped, n_levels = snap_to_palette(mask, palette)
@@ -624,6 +683,7 @@ def extract_folder(
                 "pair": [img_path.name, mask_path.name],
                 "output": img_path.stem + ".png",
                 "artifacts": artifacts,
+                "size_reconciled": size_info,
                 "fraction_before": frac_before,
                 "fraction_after": frac_after,
                 "stages": stages,
@@ -656,6 +716,8 @@ def extract_folder(
         "folded_colours": [list(palette[i]) for i in folded_idx] if palette else [],
         "excluded": excluded,
         "rejected": rejected,
+        "reconciled": reconciled,
+        "n_reconciled": len(reconciled),
         "files": processed,
     }
 
@@ -811,6 +873,9 @@ def render_markdown(report: dict) -> str:
         "would erase the whole map: its erosion needs a full 3x3 block of "
         "foreground, and a boundary line is 1-3 px wide. Set "
         "`boundary_gt.open_mode: morph` to force the literal version.",
+        f"- size tolerance: {s['size_tolerance_px']} px — a mask within this "
+        "many pixels of its image is centre-cropped to the common size, not "
+        "rejected. Cropped, never resized.",
         f"- mode overrides applied: {report['mode_overrides'] or 'none'}",
         f"- artifact colour folding: "
         f"{'ON' if s.get('fold_artifact_colours') else 'off'} "
@@ -822,12 +887,13 @@ def render_markdown(report: dict) -> str:
         "phase interfaces ONLY -- grain boundaries are absent from the source "
         "masks and are not invented here.",
         "",
-        "| folder | mode | K | processed | rejected | excluded | frac before | frac after |",
-        "| --- | --- | --- | --- | --- | --- | --- | --- |",
+        "| folder | mode | K | processed | reconciled | rejected | excluded | frac before | frac after |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- | --- |",
     ]
     for name, d in report["datasets"].items():
         lines.append(
             f"| {name} | **{d['mode']}** | {d['k'] or '-'} | {d['n_processed']} | "
+            f"{d.get('n_reconciled', 0)} | "
             f"{d['n_rejected']} | {d['n_excluded']} | "
             f"{_fmt(d['fraction_before']['median'])} | "
             f"{_fmt(d['fraction_after']['median'])} |"
@@ -891,6 +957,26 @@ def render_markdown(report: dict) -> str:
                     f"{a['files_present']}/{a['files_checked']} | "
                     f"{_fmt(a['pixel_fraction']['median'])} | "
                     f"{_fmt(a['share_of_boundary']['median'])} |"
+                )
+        if d.get("reconciled"):
+            lines += [
+                "", f"### Size-reconciled pairs ({d['n_reconciled']})", "",
+                "Mask and image dimensions disagreed by no more than the "
+                f"{s['size_tolerance_px']} px tolerance, so both were "
+                "centre-cropped to their common size and the pair was kept. The "
+                "boundary PNG is written at the final size; `image crop` is the "
+                "identical crop the raw image needs when it is loaded.",
+                "",
+                "| pair | image | mask | final | image crop (l,t,w,h) |",
+                "| --- | --- | --- | --- | --- |",
+            ]
+            for rec in d["reconciled"]:
+                c = rec["image_crop"]
+                lines.append(
+                    f"| `{rec['pair'][1]}` | {rec['image_size'][0]}x{rec['image_size'][1]} "
+                    f"| {rec['mask_size'][0]}x{rec['mask_size'][1]} "
+                    f"| {rec['final_size'][0]}x{rec['final_size'][1]} "
+                    f"| {c['left']},{c['top']},{c['width']},{c['height']} |"
                 )
         if d["excluded"]:
             lines += ["", "### Excluded before processing", ""]

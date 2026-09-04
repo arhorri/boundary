@@ -73,6 +73,12 @@ boundary_gt:
     uhcs2:
       - uhcs0596.png        # 645x484, 100% [75,176,40], no annotation at all
 
+  # Mask/image dimensions differing by at most this many px in either axis are
+  # centre-cropped to their common size instead of rejected (e.g. MetalDam's
+  # micrograph15 / micrograph19, 1024x702 masks against 1024x703 images).
+  # Cropped, never resized. 0 rejects every mismatch.
+  size_tolerance_px: 2
+
   # Colours suspected of being annotation rather than phase (scale bar, tool
   # mark, stray overlay). They are ALWAYS measured and reported -- per file in
   # the QC triptychs, per folder in reports/gt_extraction.md -- so the evidence
