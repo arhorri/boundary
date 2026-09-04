@@ -1,0 +1,16 @@
+# Measured on the host by notebooks/04_dataset.ipynb. Regenerated on each
+# run; the training step reads num_workers from here rather than guessing.
+measured_utc: '2026-09-04T12:02:52Z'
+platform: colab
+gpu: Tesla T4
+batch_size: 8
+batches_timed: 200
+num_workers: 4
+seconds_by_workers:
+  0: 13.832
+  2: 6.826
+  4: 4.252
+tiles_per_second:
+  0: 115.7
+  2: 234.4
+  4: 376.3
