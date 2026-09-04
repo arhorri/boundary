@@ -46,6 +46,33 @@ inference:
   threshold: null
   overlay_color: null
 
+# Boundary ground truth extraction (step 2). Consumed by src/boundary_gt.py;
+# every value here is echoed into reports/gt_extraction.md so a run can be
+# reproduced from the report alone.
+boundary_gt:
+  line_width_px: 2          # uniform width of the final boundary line
+  # Speckle removal. "speckle" drops connected components smaller than
+  # open_kernel**2 pixels. "morph" is the literal 3x3 morphological OPEN --
+  # do not use it here: its erosion keeps a pixel only if all 9 neighbours are
+  # set, and a boundary line is 1-3 px wide, so it erases the entire map.
+  open_kernel: 3
+  open_mode: speckle
+  close_kernel: 3           # morphological CLOSE, seals 1-2 px gaps
+  hsv_percentiles: [2, 98]  # MODE A window, derived from the pixels
+  hsv_sample_files: 12      # masks sampled when deriving that window
+  # Two mask colours closer than this in RGB are the same class: this is what
+  # collapses Steel2's anti-aliasing ramp (45-52 raw colours, 2 real classes).
+  # Real classes in this collection are >190 apart, so 48 is safe.
+  palette_merge_distance: 48
+  min_palette_share: 0.002  # a colour peak must hold this share of pixels
+  max_unsnapped_fraction: 0.02  # reject a mask this far from its own palette
+  output_subdir: gt_boundaries  # under PERSISTENT_DIR
+  # Pairs never processed at all: a blank or corrupt mask is not a rejection,
+  # it is data that should not have been there. Logged as excluded.
+  exclusions:
+    uhcs2:
+      - uhcs0596.png        # 645x484, 100% [75,176,40], no annotation at all
+
 # Remote-session settings. Every host-specific absolute path lives HERE and
 # nowhere else: no module may contain a literal /content or /kaggle path.
 # Consumed by scripts/bootstrap_session.py, src/paths.py and
