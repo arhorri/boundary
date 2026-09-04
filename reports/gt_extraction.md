@@ -1,6 +1,6 @@
 # Boundary ground truth extraction
 
-- generated: 2026-09-04T08:31:41Z
+- generated: 2026-09-04T08:53:37Z
 - from audit: 2026-09-03T23:42:26Z
 - output root: `/content/drive/MyDrive/phase11-persistent/gt_boundaries`
 - line width: 2 px, speckle removal 'speckle' at 3x3, CLOSE 3x3
@@ -23,7 +23,7 @@ MODE A extracts a painted boundary colour by HSV thresholding and yields phase i
 
 - mode: **B**
 - output: `/content/drive/MyDrive/phase11-persistent/gt_boundaries/MetalDam`
-- pairs: 42 -> processed 42, rejected 0, excluded 0
+- pairs: 42 -> processed 42 (2 size-reconciled), rejected 0, excluded 0
 - boundary pixel fraction before cleanup (min/median/max): 0.1059/0.1651/0.2404
 - boundary pixel fraction after cleanup (min/median/max): 0.1175/0.1702/0.2534
 - intermediate medians: after speckle removal 0.1650, after CLOSE 0.1808
@@ -51,7 +51,7 @@ Mask and image dimensions disagreed by no more than the 2 px tolerance, so both 
 
 - mode: **B**
 - output: `/content/drive/MyDrive/phase11-persistent/gt_boundaries/Steel1`
-- pairs: 907 -> processed 907, rejected 0, excluded 0
+- pairs: 907 -> processed 907 (0 size-reconciled), rejected 0, excluded 0
 - boundary pixel fraction before cleanup (min/median/max): 0.0002/0.0381/0.1116
 - boundary pixel fraction after cleanup (min/median/max): 0.0002/0.0432/0.1229
 - intermediate medians: after speckle removal 0.0381, after CLOSE 0.0396
@@ -62,7 +62,7 @@ Mask and image dimensions disagreed by no more than the 2 px tolerance, so both 
 
 - mode: **B**
 - output: `/content/drive/MyDrive/phase11-persistent/gt_boundaries/Steel2`
-- pairs: 504 -> processed 504, rejected 0, excluded 0
+- pairs: 504 -> processed 504 (0 size-reconciled), rejected 0, excluded 0
 - boundary pixel fraction before cleanup (min/median/max): 0.0338/0.1787/0.2801
 - boundary pixel fraction after cleanup (min/median/max): 0.0171/0.1408/0.2068
 - intermediate medians: after speckle removal 0.1755, after CLOSE 0.2184
@@ -73,7 +73,7 @@ Mask and image dimensions disagreed by no more than the 2 px tolerance, so both 
 
 - mode: **B**
 - output: `/content/drive/MyDrive/phase11-persistent/gt_boundaries/uhcs1`
-- pairs: 24 -> processed 24, rejected 0, excluded 0
+- pairs: 24 -> processed 24 (0 size-reconciled), rejected 0, excluded 0
 - boundary pixel fraction before cleanup (min/median/max): 0.0308/0.1151/0.2255
 - boundary pixel fraction after cleanup (min/median/max): 0.0346/0.1027/0.1494
 - intermediate medians: after speckle removal 0.1141, after CLOSE 0.1278
@@ -84,7 +84,7 @@ Mask and image dimensions disagreed by no more than the 2 px tolerance, so both 
 
 - mode: **B**
 - output: `/content/drive/MyDrive/phase11-persistent/gt_boundaries/uhcs2`
-- pairs: 24 -> processed 23, rejected 0, excluded 1
+- pairs: 24 -> processed 23 (0 size-reconciled), rejected 0, excluded 1
 - boundary pixel fraction before cleanup (min/median/max): 0.0232/0.0505/0.1098
 - boundary pixel fraction after cleanup (min/median/max): 0.0226/0.0487/0.1042
 - intermediate medians: after speckle removal 0.0505, after CLOSE 0.0550
