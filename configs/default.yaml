@@ -130,3 +130,85 @@ session:
     input_root: /kaggle/input
     working_dir: /kaggle/working
     dataset_slug: phase11-microstructure-data
+
+# Tiling, parent grouping and the fold protocol (src/tiling.py).
+tiling:
+  patch_size: 256          # Steel1 and Steel2 ARE 256x256; 512 is impossible
+  stride: 128              # 50% overlap
+  pad_mode: reflect        # right and bottom edges only, where a tile overruns
+  min_boundary_frac: 0.005 # a tile with less boundary than this teaches nothing
+  weight_mode: parents     # parents | dataset | none
+  seed: 0
+
+  # stem -> parent_id. Tiles of one micrograph must never straddle a split.
+  parent_rules:
+    Steel1: '_\d+_\d+$'         # ..._4000x14_1_3 -> ..._4000x14
+    Steel2: '_tile_\d+_\d+$'    # 87431041_tile_0_256 -> 87431041
+  expected_parents:
+    Steel1: 19             # 20 parents ship, one has no masks at all
+  assert_single_tile: [Steel1, Steel2]
+
+  # Split protocol.
+  test_only: [Steel2]      # domain-shift fold: never trained or validated on
+  parent_split:
+    Steel1:
+      val_parents: 4       # 15 train / 4 val of the 19 parents
+  lodo_datasets: [MetalDam, uhcs1, uhcs2]
+
+  gt_subdir: gt_boundaries
+  manifest_subdir: manifests
+
+  # The 48 Steel1 tiles of parent im_val_cut10-400-01-V-9mm-4000x13, which
+  # ships images but no masks. They have no ground truth and cannot be
+  # trained on; naming them here means they are reported, not silently
+  # dropped at pairing time.
+  exclusions:
+    Steel1:
+      - im_val_cut10-400-01-V-9mm-4000x13_1_1.png
+      - im_val_cut10-400-01-V-9mm-4000x13_1_2.png
+      - im_val_cut10-400-01-V-9mm-4000x13_1_3.png
+      - im_val_cut10-400-01-V-9mm-4000x13_1_4.png
+      - im_val_cut10-400-01-V-9mm-4000x13_1_5.png
+      - im_val_cut10-400-01-V-9mm-4000x13_1_6.png
+      - im_val_cut10-400-01-V-9mm-4000x13_2_1.png
+      - im_val_cut10-400-01-V-9mm-4000x13_2_2.png
+      - im_val_cut10-400-01-V-9mm-4000x13_2_3.png
+      - im_val_cut10-400-01-V-9mm-4000x13_2_4.png
+      - im_val_cut10-400-01-V-9mm-4000x13_2_5.png
+      - im_val_cut10-400-01-V-9mm-4000x13_2_6.png
+      - im_val_cut10-400-01-V-9mm-4000x13_3_1.png
+      - im_val_cut10-400-01-V-9mm-4000x13_3_2.png
+      - im_val_cut10-400-01-V-9mm-4000x13_3_3.png
+      - im_val_cut10-400-01-V-9mm-4000x13_3_4.png
+      - im_val_cut10-400-01-V-9mm-4000x13_3_5.png
+      - im_val_cut10-400-01-V-9mm-4000x13_3_6.png
+      - im_val_cut10-400-01-V-9mm-4000x13_4_1.png
+      - im_val_cut10-400-01-V-9mm-4000x13_4_2.png
+      - im_val_cut10-400-01-V-9mm-4000x13_4_3.png
+      - im_val_cut10-400-01-V-9mm-4000x13_4_4.png
+      - im_val_cut10-400-01-V-9mm-4000x13_4_5.png
+      - im_val_cut10-400-01-V-9mm-4000x13_4_6.png
+      - im_val_cut10-400-01-V-9mm-4000x13_5_1.png
+      - im_val_cut10-400-01-V-9mm-4000x13_5_2.png
+      - im_val_cut10-400-01-V-9mm-4000x13_5_3.png
+      - im_val_cut10-400-01-V-9mm-4000x13_5_4.png
+      - im_val_cut10-400-01-V-9mm-4000x13_5_5.png
+      - im_val_cut10-400-01-V-9mm-4000x13_5_6.png
+      - im_val_cut10-400-01-V-9mm-4000x13_6_1.png
+      - im_val_cut10-400-01-V-9mm-4000x13_6_2.png
+      - im_val_cut10-400-01-V-9mm-4000x13_6_3.png
+      - im_val_cut10-400-01-V-9mm-4000x13_6_4.png
+      - im_val_cut10-400-01-V-9mm-4000x13_6_5.png
+      - im_val_cut10-400-01-V-9mm-4000x13_6_6.png
+      - im_val_cut10-400-01-V-9mm-4000x13_7_1.png
+      - im_val_cut10-400-01-V-9mm-4000x13_7_2.png
+      - im_val_cut10-400-01-V-9mm-4000x13_7_3.png
+      - im_val_cut10-400-01-V-9mm-4000x13_7_4.png
+      - im_val_cut10-400-01-V-9mm-4000x13_7_5.png
+      - im_val_cut10-400-01-V-9mm-4000x13_7_6.png
+      - im_val_cut10-400-01-V-9mm-4000x13_8_1.png
+      - im_val_cut10-400-01-V-9mm-4000x13_8_2.png
+      - im_val_cut10-400-01-V-9mm-4000x13_8_3.png
+      - im_val_cut10-400-01-V-9mm-4000x13_8_4.png
+      - im_val_cut10-400-01-V-9mm-4000x13_8_5.png
+      - im_val_cut10-400-01-V-9mm-4000x13_8_6.png
