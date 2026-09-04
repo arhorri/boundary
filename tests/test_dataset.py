@@ -46,7 +46,7 @@ def roots():
 
     resolved = paths_mod.resolve_paths()
     return {"data_root": resolved["data_root"],
-            "gt_root": Path(resolved["persistent_dir"]) / "gt_boundaries"}
+            "gt_root": Path(resolved["gt_boundaries_root"])}
 
 
 def _synthetic_pair(size: int = PATCH, seed: int = 0):

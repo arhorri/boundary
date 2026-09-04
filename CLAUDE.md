@@ -74,6 +74,29 @@ Every notebook under notebooks/ must:
 - be committed with all outputs cleared
 - never contain a token, key, or absolute personal path
 
+## Branches
+
+`main` is the source of truth. All library code, notebooks, scripts and shared
+config live there, and every step is developed there.
+
+`kaggle` carries CONFIGURATION ONLY — `configs/kaggle.yaml`, naming the two
+attached input datasets and the Kaggle path roots. It exists so a notebook can
+be opened straight from GitHub in Kaggle by switching branch. It must never
+contain a different version of a notebook or a src module.
+
+After every step on main:
+
+    git checkout kaggle && git merge main && git push && git checkout main
+
+so the branch never falls behind. The merge should always be a fast-forward or
+a clean merge touching nothing.
+
+A conflict outside `configs/` means pipeline logic has leaked onto the branch.
+Move it back to main: platform differences belong in `scripts/bootstrap_session.py`
+and `src/paths.py`, where BOTH hosts get them. If a difference cannot be
+expressed as configuration, that is a signal to change the code on main, not to
+fork a file onto the branch.
+
 ## Response style
 No preamble. No postamble. No summary of what you just did. Do not restate
 the task. Do not explain code unless asked. Report only: files changed,

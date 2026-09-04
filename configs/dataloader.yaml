@@ -1,16 +1,28 @@
-# Measured on the host by notebooks/04_dataset.ipynb. Regenerated on each
-# run; the training step reads num_workers from here rather than guessing.
-measured_utc: '2026-09-04T12:02:52Z'
-platform: colab
-gpu: Tesla T4
-batch_size: 8
-batches_timed: 200
-num_workers: 4
-seconds_by_workers:
-  0: 13.832
-  2: 6.826
-  4: 4.252
-tiles_per_second:
-  0: 115.7
-  2: 234.4
-  4: 376.3
+# DataLoader settings measured on each host by notebooks/04_dataset.ipynb.
+# Keyed BY PLATFORM: Colab and Kaggle have different CPU counts, so a
+# single num_workers would be wrong on one of them. Running this notebook
+# on a host updates only that host's entry.
+#
+# Read it as: hosts[<platform>][num_workers], falling back to 2.
+# The kaggle entry below is a documented DEFAULT, not a measurement:
+# Kaggle gives 2 CPUs, and running 04 there replaces it with real timings.
+hosts:
+  colab:
+    measured_utc: '2026-09-04T12:02:52Z'
+    gpu: Tesla T4
+    batch_size: 8
+    batches_timed: 200
+    num_workers: 4
+    seconds_by_workers:
+      0: 13.832
+      2: 6.826
+      4: 4.252
+    tiles_per_second:
+      0: 115.7
+      2: 234.4
+      4: 376.3
+  kaggle:
+    measured_utc: null
+    cpu_count: 2
+    num_workers: 2
+    note: default for a 2-CPU Kaggle kernel; not yet measured

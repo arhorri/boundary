@@ -200,6 +200,16 @@ def rescue_generated_results(dest: Path) -> list:
     return saved
 
 
+def current_branch(dest: Path) -> Optional[str]:
+    """The branch this checkout is actually on, or None if there is no checkout."""
+    if not (dest / ".git").is_dir():
+        return None
+    proc = _run(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=dest,
+                check=False, quiet=True)
+    name = proc.stdout.strip()
+    return name if name and name != "HEAD" else None
+
+
 def clone_or_update(repo_url: str, branch: str, dest: Path, token: str) -> Path:
     """Clone the repo, or fetch + hard-reset an existing clone. Idempotent.
 
@@ -209,6 +219,14 @@ def clone_or_update(repo_url: str, branch: str, dest: Path, token: str) -> Path:
     """
     auth = _auth_url(repo_url, token)
     if (dest / ".git").is_dir():
+        # Sync the branch this checkout is ON, never a hardcoded one. A session
+        # that silently resets a feature branch to main is worse than no branch
+        # at all: the work is gone and nothing says so.
+        checked_out = current_branch(dest)
+        if checked_out and checked_out != branch:
+            print(f"  checkout is on '{checked_out}', not '{branch}': syncing "
+                  f"'{checked_out}'")
+            branch = checked_out
         rescue_generated_results(dest)
         _run(["git", "remote", "set-url", "origin", auth], cwd=dest, quiet=True)
         try:
@@ -224,6 +242,21 @@ def clone_or_update(repo_url: str, branch: str, dest: Path, token: str) -> Path:
              quiet=True)
         _run(["git", "remote", "set-url", "origin", repo_url], cwd=dest, quiet=True)
     return dest
+
+
+def switch_branch(repo_url: str, branch: str, dest: Path, token: str) -> str:
+    """Move an existing checkout onto ``branch``. Idempotent."""
+    if current_branch(dest) == branch:
+        return branch
+    auth = _auth_url(repo_url, token)
+    _run(["git", "remote", "set-url", "origin", auth], cwd=dest, quiet=True)
+    try:
+        _run(["git", "fetch", "--depth", "1", "origin", branch], cwd=dest)
+        _run(["git", "checkout", "-B", branch, f"origin/{branch}"], cwd=dest)
+        _run(["git", "reset", "--hard", f"origin/{branch}"], cwd=dest)
+    finally:
+        _run(["git", "remote", "set-url", "origin", repo_url], cwd=dest, quiet=True)
+    return branch
 
 
 def repo_commit(dest: Path) -> str:
@@ -351,6 +384,56 @@ def verify_data_root(data_root: Path, expected: list, paths_mod) -> Path:
     )
 
 
+def verify_gt_root(gt_root: Path, expected: list, paths_mod, platform: str) -> Path:
+    """Locate and check the boundary maps step 2 produced.
+
+    On Kaggle this is a separate READ-ONLY input dataset: if it is missing or
+    incomplete nothing in the session can fix it, so the run stops here with
+    the listing rather than failing later inside a data loader.
+
+    On Colab it lives in Drive and step 2 is what creates it, so notebooks 00
+    to 02 legitimately run before it exists. There the directory is created and
+    a warning printed -- refusing to boot would make step 2 impossible to run.
+    """
+    gt_root = Path(gt_root)
+    if not gt_root.is_dir():
+        if platform == "kaggle":
+            raise BootstrapError(
+                f"GT_BOUNDARIES_ROOT does not exist: {gt_root}\n"
+                f"  parent {gt_root.parent} contains: {_listing(gt_root.parent)}\n"
+                "On Kaggle the boundary maps are a separate read-only input "
+                "dataset. Attach it, and check session.kaggle.gt_dataset_slug "
+                "in configs/kaggle.yaml."
+            )
+        gt_root.mkdir(parents=True, exist_ok=True)
+        print(f"  ! {gt_root} is empty: step 2 has not run on this host yet")
+        return gt_root
+
+    found_as, missing = paths_mod.match_datasets(gt_root, expected)
+    root = gt_root
+    if missing:
+        # Some upload paths add one wrapping folder; accept exactly one level.
+        for cand in sorted(p for p in gt_root.iterdir() if p.is_dir()):
+            _, cand_missing = paths_mod.match_datasets(cand, expected)
+            if not cand_missing:
+                return cand
+    if missing:
+        message = (
+            f"GT_BOUNDARIES_ROOT is missing boundary maps for: "
+            f"{', '.join(missing)}\n"
+            f"  looked in : {gt_root}\n"
+            f"  found     : {_listing(gt_root)}\n"
+            f"  expected  : {', '.join(expected)}"
+        )
+        if platform == "kaggle":
+            raise BootstrapError(
+                message + "\nThe uploaded dataset is incomplete; nothing in a "
+                "Kaggle session can produce these.")
+        print(f"  ! {message}")
+        print("  ! run notebooks/02_boundary_gt.ipynb to produce the missing ones")
+    return root
+
+
 # --------------------------------------------------------------------------
 # persistence
 # --------------------------------------------------------------------------
@@ -430,6 +513,7 @@ def bootstrap(
             raise BootstrapError(f"no git checkout at {repo_root}")
     else:
         clone_or_update(repo_url, branch, repo_root, token)
+        branch = current_branch(repo_root) or branch
 
     if str(repo_root) not in sys.path:
         sys.path.insert(0, str(repo_root))
@@ -439,7 +523,21 @@ def bootstrap(
     # src/paths.py owns every host path; it is only importable after the clone.
     importlib.invalidate_caches()
     paths_mod = importlib.import_module("src.paths")
-    cfg = paths_mod.load_config(config_path)
+    cfg = paths_mod.load_config(config_path, platform=platform)
+
+    # A host may need a branch of its own -- not different logic, just the
+    # configuration overlay that names its roots. The notebooks are identical
+    # on every branch, so the switch is made here, once, from config.
+    wanted = (cfg.get("session", {}).get(platform) or {}).get("branch")
+    if platform != "local" and wanted and wanted != branch:
+        print(f"  {platform} prefers branch '{wanted}' (session.{platform}.branch); "
+              f"switching from '{branch}'")
+        branch = switch_branch(repo_url, wanted, repo_root, token)
+        importlib.invalidate_caches()
+        paths_mod = importlib.reload(paths_mod)
+        cfg = paths_mod.load_config(config_path, platform=platform)
+    if cfg.get("_overlay"):
+        print(f"  config overlay applied: {cfg['_overlay']}")
 
     if platform == "colab":
         mount_drive(paths_mod._need(cfg, "colab", "drive_mount"))
@@ -448,6 +546,10 @@ def bootstrap(
                                        platform=platform)
     data_root = verify_data_root(
         resolved["data_root"], resolved["expected_datasets"], paths_mod
+    )
+    gt_root = verify_gt_root(
+        resolved["gt_boundaries_root"], resolved["expected_datasets"],
+        paths_mod, platform
     )
     persistent_dir = Path(resolved["persistent_dir"])
     persistent_dir.mkdir(parents=True, exist_ok=True)
@@ -477,8 +579,19 @@ def bootstrap(
     print(f"  repo commit     : {commit} ({branch})")
     print(f"  repo root       : {repo_root}")
     print(f"  DATA_ROOT       : {data_root}")
+    print(f"  GT_BOUNDARIES   : {gt_root}")
     print(f"  PERSISTENT_DIR  : {persistent_dir}")
     print("=========================================================\n")
+
+    if platform == "kaggle":
+        print("  " + "!" * 70)
+        print("  ! /kaggle/working DOES NOT SURVIVE THIS SESSION.")
+        print("  ! Everything written there -- checkpoints, logs, outputs -- is")
+        print("  ! discarded when the kernel stops, UNLESS you use Save Version")
+        print("  ! (Save & Run All, or Quick Save) to persist the output.")
+        print("  ! Push reports and configs to GitHub as you go; treat a")
+        print("  ! checkpoint left only in /kaggle/working as already lost.")
+        print("  " + "!" * 70 + "\n")
 
     return {
         "platform": platform,
@@ -488,6 +601,7 @@ def bootstrap(
         "commit": commit,
         "config_path": resolved["config_path"],
         "data_root": data_root,
+        "gt_boundaries_root": gt_root,
         "persistent_dir": persistent_dir,
         "outputs_dir": outputs_dir,
         "checkpoints_dir": checkpoints_dir,

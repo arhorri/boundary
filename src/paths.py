@@ -46,8 +46,28 @@ def detect_platform() -> str:
     return "local"
 
 
-def load_config(config_path: Optional[os.PathLike] = None) -> dict:
-    """Load a YAML config. A missing file is an error, not an empty dict."""
+def _deep_merge(base: dict, overlay: dict) -> dict:
+    """Recursively merge ``overlay`` over ``base`` without mutating either."""
+    out = dict(base)
+    for key, value in (overlay or {}).items():
+        if isinstance(value, dict) and isinstance(out.get(key), dict):
+            out[key] = _deep_merge(out[key], value)
+        elif value is not None:
+            out[key] = value
+    return out
+
+
+def load_config(
+    config_path: Optional[os.PathLike] = None,
+    platform: Optional[str] = None,
+) -> dict:
+    """Load configs/default.yaml, then overlay configs/<platform>.yaml if present.
+
+    The overlay is how a host that needs different roots gets them WITHOUT a
+    second copy of the pipeline: ``configs/kaggle.yaml`` carries only the keys
+    Kaggle sees differently, and everything else stays shared. A missing
+    overlay is normal, not an error; a missing default.yaml is an error.
+    """
     import yaml
 
     path = Path(config_path) if config_path else DEFAULT_CONFIG
@@ -60,6 +80,17 @@ def load_config(config_path: Optional[os.PathLike] = None) -> dict:
         cfg = yaml.safe_load(fh)
     if not isinstance(cfg, dict):
         raise PathConfigError(f"config {path} did not parse to a mapping.")
+
+    platform = platform or detect_platform()
+    overlay_path = path.parent / f"{platform}.yaml"
+    if overlay_path.is_file():
+        with open(overlay_path) as fh:
+            overlay = yaml.safe_load(fh)
+        if overlay is not None and not isinstance(overlay, dict):
+            raise PathConfigError(
+                f"config overlay {overlay_path} did not parse to a mapping.")
+        cfg = _deep_merge(cfg, overlay or {})
+        cfg["_overlay"] = str(overlay_path)
     return cfg
 
 
@@ -134,8 +165,13 @@ def resolve_paths(
     """Resolve every path the pipeline needs, for the current platform.
 
     Returns a dict with keys ``platform``, ``repo_root``, ``config_path``,
-    ``data_root``, ``persistent_dir``, ``outputs_dir``, ``checkpoints_dir``,
-    ``logs_dir``, ``reports_dir``, ``expected_datasets``. All locations are
+    ``data_root``, ``gt_boundaries_root``, ``persistent_dir``, ``outputs_dir``,
+    ``checkpoints_dir``, ``logs_dir``, ``reports_dir``, ``expected_datasets``.
+
+    ``gt_boundaries_root`` is resolved INDEPENDENTLY of ``persistent_dir``: on
+    Colab step 2 writes it into Drive beside the checkpoints, but on Kaggle it
+    is a separate read-only input dataset. Deriving it from PERSISTENT_DIR
+    would point at /kaggle/working, which is empty. All locations are
     :class:`pathlib.Path`. Nothing is created and nothing is checked for
     existence here -- ``scripts/bootstrap_session.py`` does the asserting.
 
@@ -145,22 +181,31 @@ def resolve_paths(
         config = load_config(config_path)
     platform = platform or detect_platform()
 
+    gt_subdir = _get(config, "session", "gt_subdir") or "gt_boundaries"
     if platform == "colab":
         data_root = Path(_need(config, "colab", "data_root"))
         persistent_dir = Path(_need(config, "colab", "persistent_dir"))
+        # Written by step 2 into the same Drive folder that survives a restart.
+        gt_boundaries_root = persistent_dir / gt_subdir
     elif platform == "kaggle":
         input_root = Path(_need(config, "kaggle", "input_root"))
         data_root = input_root / _need(config, "kaggle", "dataset_slug")
         persistent_dir = Path(_need(config, "kaggle", "working_dir"))
+        # A SEPARATE read-only input dataset, not something under
+        # /kaggle/working: the boundary maps were produced elsewhere and
+        # uploaded, so this root is resolved independently of PERSISTENT_DIR.
+        gt_boundaries_root = input_root / _need(config, "kaggle", "gt_dataset_slug")
     else:
         data_root = REPO_ROOT / "data"
         persistent_dir = REPO_ROOT
+        gt_boundaries_root = REPO_ROOT / gt_subdir
 
     return {
         "platform": platform,
         "repo_root": REPO_ROOT,
         "config_path": Path(config_path) if config_path else DEFAULT_CONFIG,
         "data_root": data_root,
+        "gt_boundaries_root": gt_boundaries_root,
         "persistent_dir": persistent_dir,
         "outputs_dir": persistent_dir / "outputs",
         "checkpoints_dir": persistent_dir / "checkpoints",

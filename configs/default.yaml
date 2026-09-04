@@ -112,6 +112,11 @@ session:
 
   # Dataset folders that must be present under the resolved data root.
   # Bootstrap fails loudly and lists what it actually found if any is missing.
+  # Boundary maps from step 2. Resolved by src/paths.py as
+  # GT_BOUNDARIES_ROOT, independently of PERSISTENT_DIR: on Colab it sits in
+  # Drive beside the checkpoints, on Kaggle it is a separate read-only input.
+  gt_subdir: gt_boundaries
+
   expected_datasets:
     - MetalDam
     - Steel1
@@ -130,6 +135,14 @@ session:
     input_root: /kaggle/input
     working_dir: /kaggle/working
     dataset_slug: phase11-microstructure-data
+    # The boundary maps, attached as a SECOND input dataset. Null here and set
+    # in configs/kaggle.yaml on the kaggle branch, which is the only place the
+    # two hosts differ.
+    gt_dataset_slug: null
+    # A host may prefer a branch carrying its own config overlay. The bootstrap
+    # switches to it after the first clone, so the notebooks stay identical on
+    # every branch and no pipeline logic is ever duplicated.
+    branch: kaggle
 
 # Tiling, parent grouping and the fold protocol (src/tiling.py).
 tiling:

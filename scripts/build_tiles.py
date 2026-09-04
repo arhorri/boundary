@@ -32,7 +32,7 @@ from src import tiling  # noqa: E402
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description="Build tile index and fold manifests")
     ap.add_argument("--gt-root", default=None,
-                    help="override PERSISTENT_DIR/<gt_subdir>")
+                    help="override GT_BOUNDARIES_ROOT from src/paths.py")
     ap.add_argument("--reports-dir", default=None)
     ap.add_argument("--configs-dir", default=None)
     ap.add_argument("--manifest-dir", default=None,
@@ -45,7 +45,7 @@ def main(argv=None) -> int:
     settings = tiling.load_config()
     reports_dir = Path(args.reports_dir) if args.reports_dir else Path(resolved["reports_dir"])
     gt_root = (Path(args.gt_root) if args.gt_root
-               else Path(resolved["persistent_dir"]) / settings["gt_subdir"])
+               else Path(resolved["gt_boundaries_root"]))
     manifest_dir = (Path(args.manifest_dir) if args.manifest_dir
                     else reports_dir / settings["manifest_subdir"])
 

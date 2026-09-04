@@ -42,7 +42,7 @@ def _parse_modes(items) -> dict:
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description="Extract boundary ground truth")
     ap.add_argument("--out-root", default=None,
-                    help="override PERSISTENT_DIR/<output_subdir>")
+                    help="override GT_BOUNDARIES_ROOT from src/paths.py")
     ap.add_argument("--reports-dir", default=None)
     ap.add_argument("--configs-dir", default=None)
     ap.add_argument("--datasets", nargs="*", default=None)
@@ -57,7 +57,13 @@ def main(argv=None) -> int:
     settings = boundary_gt.load_config()
     reports_dir = Path(args.reports_dir) if args.reports_dir else Path(resolved["reports_dir"])
     out_root = (Path(args.out_root) if args.out_root
-                else Path(resolved["persistent_dir"]) / settings["output_subdir"])
+                else Path(resolved["gt_boundaries_root"]))
+    if resolved["platform"] == "kaggle" and not args.out_root:
+        raise SystemExit(
+            f"GT_BOUNDARIES_ROOT is {out_root}, a read-only Kaggle input. Step 2 "
+            "writes boundary maps and cannot run against it: run this step on "
+            "Colab and upload the result as a Kaggle dataset, or pass "
+            "--out-root /kaggle/working/gt_boundaries deliberately.")
 
     progress = None
     if not args.quiet:
