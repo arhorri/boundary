@@ -1,0 +1,25 @@
+# Kaggle-only configuration overlay.
+#
+# This file is the ENTIRE divergence of the `kaggle` branch from `main`. It is
+# merged over configs/default.yaml by src/paths.py:load_config() whenever the
+# detected platform is "kaggle", so every notebook and every src module is
+# byte-identical on both branches. Nothing but configuration belongs here: if a
+# platform difference cannot be expressed as a key below, it belongs in
+# scripts/bootstrap_session.py or src/paths.py on main, where BOTH hosts get it.
+#
+# Two input datasets must be attached to the Kaggle notebook:
+#   /kaggle/input/phase11-microstructure-data/   the data/ folder (raw + masks)
+#   /kaggle/input/phase11-gt-boundaries/         gt_boundaries/ from step 2
+#
+# Reminder: /kaggle/working does NOT survive the session unless the notebook
+# version is saved. The bootstrap prints this warning on every Kaggle run.
+
+session:
+  branch: kaggle          # this checkout stays on this branch when it re-syncs
+
+  kaggle:
+    input_root: /kaggle/input
+    working_dir: /kaggle/working
+    dataset_slug: phase11-microstructure-data
+    gt_dataset_slug: phase11-gt-boundaries
+    branch: kaggle
