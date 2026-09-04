@@ -251,6 +251,26 @@ def rescue_generated_results(dest: Path) -> list:
     return saved
 
 
+def _fetch_branch(dest: Path, branch: str) -> None:
+    """Fetch one branch into refs/remotes/origin/<branch>, whatever the clone did.
+
+    ``git clone --branch main --depth 1`` writes a remote refspec that maps ONLY
+    main, so a later ``git fetch origin kaggle`` updates FETCH_HEAD and creates
+    no ``origin/kaggle`` at all -- and every command that names it then fails
+    with "not a commit". Naming the destination ref explicitly makes the fetch
+    independent of how the clone was set up.
+    """
+    proc = _run(["git", "fetch", "--depth", "1", "origin",
+                 f"+refs/heads/{branch}:refs/remotes/origin/{branch}"],
+                cwd=dest, check=False)
+    if proc.returncode != 0:
+        raise BootstrapError(
+            f"cannot fetch branch '{branch}' from origin:\n"
+            + (proc.stderr or proc.stdout or "").strip()
+            + f"\nDoes origin have a branch named '{branch}'? It is named in "
+              "configs/default.yaml under session.<platform>.branch.")
+
+
 def current_branch(dest: Path) -> Optional[str]:
     """The branch this checkout is actually on, or None if there is no checkout."""
     if not (dest / ".git").is_dir():
@@ -281,7 +301,7 @@ def clone_or_update(repo_url: str, branch: str, dest: Path, token: str) -> Path:
         rescue_generated_results(dest)
         _run(["git", "remote", "set-url", "origin", auth], cwd=dest, quiet=True)
         try:
-            _run(["git", "fetch", "--depth", "1", "origin", branch], cwd=dest)
+            _fetch_branch(dest, branch)
             _run(["git", "reset", "--hard", f"origin/{branch}"], cwd=dest)
             _run(["git", "checkout", "-B", branch, f"origin/{branch}"], cwd=dest)
         finally:
@@ -291,6 +311,10 @@ def clone_or_update(repo_url: str, branch: str, dest: Path, token: str) -> Path:
         print(f"  $ git clone --branch {branch} --depth 1 <repo> {dest}")
         _run(["git", "clone", "--branch", branch, "--depth", "1", auth, str(dest)],
              quiet=True)
+        # A single-branch clone can only ever see the branch it cloned; this
+        # host may need another one (its config overlay lives there).
+        _run(["git", "config", "remote.origin.fetch",
+              "+refs/heads/*:refs/remotes/origin/*"], cwd=dest, quiet=True)
         _run(["git", "remote", "set-url", "origin", repo_url], cwd=dest, quiet=True)
     return dest
 
@@ -302,7 +326,7 @@ def switch_branch(repo_url: str, branch: str, dest: Path, token: str) -> str:
     auth = _auth_url(repo_url, token)
     _run(["git", "remote", "set-url", "origin", auth], cwd=dest, quiet=True)
     try:
-        _run(["git", "fetch", "--depth", "1", "origin", branch], cwd=dest)
+        _fetch_branch(dest, branch)
         _run(["git", "checkout", "-B", branch, f"origin/{branch}"], cwd=dest)
         _run(["git", "reset", "--hard", f"origin/{branch}"], cwd=dest)
     finally:
