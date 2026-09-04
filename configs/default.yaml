@@ -212,3 +212,39 @@ tiling:
       - im_val_cut10-400-01-V-9mm-4000x13_8_4.png
       - im_val_cut10-400-01-V-9mm-4000x13_8_5.png
       - im_val_cut10-400-01-V-9mm-4000x13_8_6.png
+
+# Tile reading and augmentation (src/dataset.py).
+# Spatial transforms hit image AND mask identically; photometric transforms
+# hit the image only. Masks are always nearest-neighbour.
+dataset:
+  patch_size: 256
+
+  # spatial — image and mask together
+  p_hflip: 0.5
+  p_vflip: 0.5
+  p_rot90: 0.5
+  p_affine: 0.5
+  affine_shift: 0.0625      # fraction of the tile
+  affine_scale: 0.10        # +/- 10%
+  affine_rotate: 15         # degrees
+  p_elastic: 0.15
+  elastic_alpha: 20.0       # low: a micrograph must stay physically plausible
+  elastic_sigma: 6.0
+
+  # photometric — image only. Heavier than usual on purpose: the held-out fold
+  # is always a different microscope and there is no domain-adaptation stage,
+  # so this is the model's only preparation for an unseen detector.
+  p_brightness_contrast: 0.5
+  brightness_limit: 0.25
+  contrast_limit: 0.25
+  p_gamma: 0.3
+  gamma_limit: [70, 140]
+  p_noise: 0.25
+  noise_std_range: [0.02, 0.10]
+  p_blur: 0.2
+  blur_limit: 3
+  p_clahe: 0.2
+  clahe_clip_limit: 2.0
+
+  manifest_subdir: manifests
+  gt_subdir: gt_boundaries

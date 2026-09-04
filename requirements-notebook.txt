@@ -9,3 +9,4 @@ segmentation-models-pytorch
 albumentations
 pyyaml
 tqdm
+pytest
