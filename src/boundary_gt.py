@@ -57,6 +57,11 @@ DEFAULTS = {
                                      # from every palette peak
     "output_subdir": "gt_boundaries",
     "exclusions": {},            # folder -> [mask filename, ...] never processed
+    # folder -> [[r, g, b], ...] colours suspected of being scale bars, tool
+    # marks or other non-phase annotation. ALWAYS measured and reported;
+    # folded into the background class only when fold_artifact_colours is on.
+    "artifact_colours": {},
+    "fold_artifact_colours": False,
 }
 
 #: A boundary map covering less/more than this is not a boundary map.
@@ -183,6 +188,70 @@ def derive_palette(folder_report: dict, settings: dict) -> list:
             "min_palette_share or check the folder."
         )
     return peaks
+
+
+def watched_colours(folder: str, settings: dict) -> list:
+    """Colours to measure (and possibly fold) for one folder."""
+    listed = (settings.get("artifact_colours") or {}).get(folder) or []
+    return [_as_rgb(c) for c in listed]
+
+
+def fold_targets(palette: Sequence, folder: str, settings: dict) -> list:
+    """Palette indices to fold into the background class.
+
+    Empty unless ``fold_artifact_colours`` is on. Index 0 is the background:
+    ``derive_palette`` returns peaks in descending pixel share, so the first
+    entry is the majority colour of the folder.
+    """
+    if not settings.get("fold_artifact_colours"):
+        return []
+    watch = {tuple(c) for c in watched_colours(folder, settings)}
+    return [i for i, c in enumerate(palette) if tuple(_as_rgb(c)) in watch and i != 0]
+
+
+def colour_hit(rgb: np.ndarray, colour: Sequence) -> np.ndarray:
+    """Exact-match mask for one colour, grayscale or RGB."""
+    if rgb.ndim == 2:
+        rgb = np.repeat(rgb[:, :, None], 3, axis=2)
+    target = np.array(_as_rgb(colour), dtype=np.int32)
+    return np.all(rgb[..., :3].astype(np.int32) == target, axis=-1)
+
+
+def artifact_boundary_overlap(
+    mask: np.ndarray,
+    colour: Sequence,
+    boundary: np.ndarray,
+    return_masks: bool = False,
+):
+    """Is this colour present, and is a boundary being drawn around it?
+
+    ``find_boundaries`` cannot tell a phase from a scale bar: any region whose
+    colour is its own class gets a closed boundary loop drawn around its
+    outline. This measures that directly -- how much of the extracted boundary
+    lies on the colour's own pixels or in the 1-px ring around them.
+    """
+    from scipy.ndimage import binary_dilation
+
+    hit = colour_hit(mask, colour)
+    bnd = boundary > 0
+    n_bnd = int(bnd.sum())
+    stats = {
+        "colour": [int(v) for v in _as_rgb(colour)],
+        "present": bool(hit.any()),
+        "pixels": int(hit.sum()),
+        "fraction": float(hit.mean()),
+        "boundary_pixels_on_outline": 0,
+        "share_of_boundary": 0.0,
+    }
+    ring = np.zeros_like(hit)
+    if hit.any() and n_bnd:
+        ring = binary_dilation(hit, structure=np.ones((3, 3), bool)) & ~hit
+        touching = bnd & (ring | hit)
+        stats["boundary_pixels_on_outline"] = int(touching.sum())
+        stats["share_of_boundary"] = float(touching.sum()) / float(n_bnd)
+    if return_masks:
+        return stats, hit, ring
+    return stats
 
 
 def snap_to_palette(rgb: np.ndarray, palette: Sequence) -> tuple:
@@ -488,8 +557,11 @@ def extract_folder(
             kept.append((img_path, mask_path))
 
     palette, window = None, hsv_window
+    watch = watched_colours(name, settings)
+    folded_idx = []
     if mode == "B":
         palette = derive_palette(folder_report, settings)
+        folded_idx = fold_targets(palette, name, settings)
     else:
         window = window or derive_hsv_window(folder_report, kept, settings)
 
@@ -521,6 +593,11 @@ def extract_folder(
                                             "from every palette colour "
                                             f"(limit {settings['max_unsnapped_fraction']})"})
                     continue
+                if folded_idx:
+                    # Fold suspected annotation colours into the background
+                    # class so no boundary loop is drawn around them.
+                    labels[np.isin(labels, folded_idx)] = 0
+                    n_levels = int(len(np.unique(labels)))
                 if n_levels < 2:
                     rejected.append({"pair": [img_path.name, mask_path.name],
                                      "why": "mask carries a single label: no "
@@ -540,10 +617,13 @@ def extract_folder(
                                         f"(stage fractions {stages})"})
                 continue
 
+            artifacts = [artifact_boundary_overlap(mask, c, out) for c in watch]
+
             _save_png(out_dir / (img_path.stem + ".png"), out)
             processed.append({
                 "pair": [img_path.name, mask_path.name],
                 "output": img_path.stem + ".png",
+                "artifacts": artifacts,
                 "fraction_before": frac_before,
                 "fraction_after": frac_after,
                 "stages": stages,
@@ -572,10 +652,32 @@ def extract_folder(
             [p["stages"]["after_open"] for p in processed]),
         "fraction_after_close": audit_mod._minmedmax(
             [p["stages"]["after_close"] for p in processed]),
+        "artifacts": _summarise_artifacts(watch, processed, folded_idx, palette),
+        "folded_colours": [list(palette[i]) for i in folded_idx] if palette else [],
         "excluded": excluded,
         "rejected": rejected,
         "files": processed,
     }
+
+
+def _summarise_artifacts(watch, processed, folded_idx, palette) -> list:
+    """Per watched colour: how often it appears and how much boundary it causes."""
+    folded = {tuple(_as_rgb(palette[i])) for i in folded_idx} if palette else set()
+    out = []
+    for colour in watch:
+        rows = [a for rec in processed for a in rec["artifacts"]
+                if tuple(a["colour"]) == tuple(colour)]
+        present = [r for r in rows if r["present"]]
+        out.append({
+            "colour": [int(v) for v in colour],
+            "folded_into_background": tuple(colour) in folded,
+            "files_present": len(present),
+            "files_checked": len(rows),
+            "pixel_fraction": audit_mod._minmedmax([r["fraction"] for r in present]),
+            "share_of_boundary": audit_mod._minmedmax(
+                [r["share_of_boundary"] for r in present]),
+        })
+    return out
 
 
 def extract_all(
@@ -710,6 +812,9 @@ def render_markdown(report: dict) -> str:
         "foreground, and a boundary line is 1-3 px wide. Set "
         "`boundary_gt.open_mode: morph` to force the literal version.",
         f"- mode overrides applied: {report['mode_overrides'] or 'none'}",
+        f"- artifact colour folding: "
+        f"{'ON' if s.get('fold_artifact_colours') else 'off'} "
+        f"(watched: {s.get('artifact_colours') or 'none'})",
         "",
         "MODE A extracts a painted boundary colour by HSV thresholding and "
         "yields phase interfaces AND grain boundaries. MODE B derives "
@@ -769,6 +874,24 @@ def render_markdown(report: dict) -> str:
                 f"upper {[round(v, 1) for v in w['upper']]}"
                 + (" (hue wraps)" if w.get("wraps_hue") else ""),
             ]
+        if d.get("artifacts"):
+            lines += [
+                "", "### Watched artifact colours", "",
+                "A colour kept as its own class gets a closed boundary loop drawn "
+                "around every region of it. `share_of_boundary` is how much of "
+                "this folder's extracted boundary lies on that colour's outline "
+                "-- the cost of treating it as a phase.",
+                "",
+                "| colour | folded | present in | pixel frac (med) | share of boundary (med) |",
+                "| --- | --- | --- | --- | --- |",
+            ]
+            for a in d["artifacts"]:
+                lines.append(
+                    f"| `{a['colour']}` | {'yes' if a['folded_into_background'] else 'no'} | "
+                    f"{a['files_present']}/{a['files_checked']} | "
+                    f"{_fmt(a['pixel_fraction']['median'])} | "
+                    f"{_fmt(a['share_of_boundary']['median'])} |"
+                )
         if d["excluded"]:
             lines += ["", "### Excluded before processing", ""]
             lines += [f"- `{e['pair'][1]}` — {e['why']}" for e in d["excluded"]]

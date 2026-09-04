@@ -73,6 +73,28 @@ boundary_gt:
     uhcs2:
       - uhcs0596.png        # 645x484, 100% [75,176,40], no annotation at all
 
+  # Colours suspected of being annotation rather than phase (scale bar, tool
+  # mark, stray overlay). They are ALWAYS measured and reported -- per file in
+  # the QC triptychs, per folder in reports/gt_extraction.md -- so the evidence
+  # is visible before anything is changed. They are only folded into the
+  # background class when fold_artifact_colours is true.
+  #
+  # Evidence in reports/audit.json for [75, 176, 40], the green in both folders:
+  #   MetalDam  present in 10/24 sampled masks, 0.33% of pixels pooled,
+  #             0.48% median where present, 142 components -- sporadic, and
+  #             plausibly not a phase.
+  #   uhcs2     present in 24/24 sampled masks, 6.8% of pixels pooled, 1.7%
+  #             median where present (up to 16%), 14 components -- that is a
+  #             phase, almost certainly the fourth microconstituent. Folding it
+  #             would delete a real interface. Watch it; do not fold it without
+  #             looking at the QC panels first.
+  fold_artifact_colours: false
+  artifact_colours:
+    MetalDam:
+      - [75, 176, 40]
+    uhcs2:
+      - [75, 176, 40]
+
 # Remote-session settings. Every host-specific absolute path lives HERE and
 # nowhere else: no module may contain a literal /content or /kaggle path.
 # Consumed by scripts/bootstrap_session.py, src/paths.py and
