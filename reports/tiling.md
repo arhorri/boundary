@@ -1,19 +1,21 @@
 # Tiling and folds
 
-- generated: 2026-09-04T10:14:11Z
-- patch 256 px, stride 128 px (50% overlap), reflect padding on the right and bottom edges only
+- generated: 2026-09-04T11:16:10Z
+- patch 256 px, stride 128 px (50% overlap); the last tile of each row and column is clamped to the image edge, so no pixel is fabricated. Padding applies only to an image smaller than the patch in an axis (reflect mode), and every such pixel is counted below.
 - tiles below 0.005 boundary fraction are dropped
 - nothing is resized and no tile images are written: a tile is a row in a manifest and the loader crops it on the fly
 
 ## Tiles per dataset
 
-| dataset | parents | images | tiles | dropped (low boundary) | excluded | no mask | no boundary map |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| MetalDam | 42 | 42 | 1584 | 0 | 0 | 1 | 0 |
-| Steel1 | 19 | 902 | 902 | 5 | 0 | 48 | 0 |
-| Steel2 | 4 | 504 | 504 | 0 | 0 | 1 | 0 |
-| uhcs1 | 24 | 24 | 360 | 0 | 0 | 0 | 0 |
-| uhcs2 | 23 | 23 | 325 | 20 | 0 | 0 | 1 |
+| dataset | parents | images | tiles | padded px | dropped (low boundary) | excluded | no mask | no boundary map |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| MetalDam | 42 | 42 | 1332 | 0 | 0 | 0 | 1 | 0 |
+| Steel1 | 19 | 902 | 902 | 0 | 5 | 0 | 48 | 0 |
+| Steel2 | 4 | 504 | 504 | 0 | 0 | 0 | 1 | 0 |
+| uhcs1 | 24 | 24 | 288 | 0 | 0 | 0 | 0 | 0 |
+| uhcs2 | 23 | 23 | 265 | 0 | 11 | 0 | 0 | 1 |
+
+**Fabricated pixels: 0.** Every tile is real image data.
 
 ## Images lost entirely to the boundary filter
 
@@ -31,10 +33,10 @@ Steel2 is test-only: the domain-shift fold, evaluated but never learned from. St
 
 | fold | held out | train tiles | val tiles | train parents | val parents | pos_weight | train frac (mean) |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| fold_MetalDam | MetalDam | 1398 | 1773 | 62 | 46 | 15.527 | 0.060509 |
-| fold_uhcs1 | uhcs1 | 2622 | 549 | 80 | 28 | 7.144 | 0.122783 |
-| fold_uhcs2 | uhcs2 | 2657 | 514 | 81 | 27 | 6.825 | 0.127793 |
-| dev (= fold_uhcs2) | uhcs2 | 2657 | 514 | 81 | 27 | 6.825 | 0.127793 |
+| fold_MetalDam | MetalDam | 1266 | 1521 | 62 | 46 | 15.974 | 0.058913 |
+| fold_uhcs1 | uhcs1 | 2310 | 477 | 80 | 28 | 7.45 | 0.118337 |
+| fold_uhcs2 | uhcs2 | 2333 | 454 | 81 | 27 | 7.111 | 0.123292 |
+| dev (= fold_uhcs2) | uhcs2 | 2333 | 454 | 81 | 27 | 7.111 | 0.123292 |
 
 - test manifest: ['Steel2'], 504 tiles from 4 parents, mean boundary fraction 0.131535
 
@@ -48,9 +50,9 @@ Raw tile counts do not measure independent information: Steel1's tiles come from
 
 | dataset | parents | raw tiles | weight | effective tiles/epoch |
 | --- | --- | --- | --- | --- |
-| Steel1 | 15 | 713 | 0.47437 | 338 |
-| uhcs1 | 24 | 360 | 1.503226 | 541 |
-| uhcs2 | 23 | 325 | 1.595732 | 519 |
+| Steel1 | 15 | 713 | 0.42958 | 306 |
+| uhcs1 | 24 | 288 | 1.701613 | 490 |
+| uhcs2 | 23 | 265 | 1.772246 | 470 |
 
 ### fold_uhcs1
 
@@ -58,9 +60,9 @@ Raw tile counts do not measure independent information: Steel1's tiles come from
 
 | dataset | parents | raw tiles | weight | effective tiles/epoch |
 | --- | --- | --- | --- | --- |
-| MetalDam | 42 | 1584 | 0.869034 | 1377 |
-| Steel1 | 15 | 713 | 0.689516 | 492 |
-| uhcs2 | 23 | 325 | 2.319462 | 754 |
+| MetalDam | 42 | 1332 | 0.910473 | 1213 |
+| Steel1 | 15 | 713 | 0.607468 | 433 |
+| uhcs2 | 23 | 265 | 2.506132 | 664 |
 
 ### fold_uhcs2
 
@@ -68,9 +70,9 @@ Raw tile counts do not measure independent information: Steel1's tiles come from
 
 | dataset | parents | raw tiles | weight | effective tiles/epoch |
 | --- | --- | --- | --- | --- |
-| MetalDam | 42 | 1584 | 0.869762 | 1378 |
-| Steel1 | 15 | 713 | 0.690094 | 492 |
-| uhcs1 | 24 | 360 | 2.186831 | 787 |
+| MetalDam | 42 | 1332 | 0.908186 | 1210 |
+| Steel1 | 15 | 713 | 0.605943 | 432 |
+| uhcs1 | 24 | 288 | 2.400206 | 691 |
 
 ### dev
 
@@ -78,9 +80,9 @@ Raw tile counts do not measure independent information: Steel1's tiles come from
 
 | dataset | parents | raw tiles | weight | effective tiles/epoch |
 | --- | --- | --- | --- | --- |
-| MetalDam | 42 | 1584 | 0.869762 | 1378 |
-| Steel1 | 15 | 713 | 0.690094 | 492 |
-| uhcs1 | 24 | 360 | 2.186831 | 787 |
+| MetalDam | 42 | 1332 | 0.908186 | 1210 |
+| Steel1 | 15 | 713 | 0.605943 | 432 |
+| uhcs1 | 24 | 288 | 2.400206 | 691 |
 
 ## Manifests
 

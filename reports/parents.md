@@ -4,61 +4,61 @@ A *parent* is the source micrograph a tile was cut from. Splits are made by pare
 
 | dataset | parents | source images | tiles | tiles per parent (min/median/max) |
 | --- | --- | --- | --- | --- |
-| MetalDam | 42 | 42 | 1584 | 35/35/54 |
+| MetalDam | 42 | 42 | 1332 | 28/28/54 |
 | Steel1 | 19 | 902 | 902 | 43/48/48 |
 | Steel2 | 4 | 504 | 504 | 126/126/126 |
-| uhcs1 | 24 | 24 | 360 | 15/15/15 |
-| uhcs2 | 23 | 23 | 325 | 10/15/15 |
+| uhcs1 | 24 | 24 | 288 | 12/12/12 |
+| uhcs2 | 23 | 23 | 265 | 10/12/12 |
 
 ## MetalDam
 
 - rule: `filename is the parent`
-- 42 parents, 1584 tiles kept, 0 dropped below min_boundary_frac, 0 excluded, 1 images with no mask
+- 42 parents, 1332 tiles kept, 0 dropped below min_boundary_frac, 0 excluded, 1 images with no mask
 
 | parent | source images | tiles |
 | --- | --- | --- |
-| `micrograph0` | 1 | 35 |
-| `micrograph1` | 1 | 35 |
-| `micrograph10` | 1 | 35 |
-| `micrograph11` | 1 | 35 |
-| `micrograph12` | 1 | 35 |
-| `micrograph13` | 1 | 35 |
-| `micrograph14` | 1 | 35 |
-| `micrograph15` | 1 | 35 |
-| `micrograph16` | 1 | 35 |
-| `micrograph17` | 1 | 35 |
-| `micrograph18` | 1 | 35 |
-| `micrograph19` | 1 | 35 |
-| `micrograph2` | 1 | 35 |
-| `micrograph20` | 1 | 35 |
+| `micrograph0` | 1 | 28 |
+| `micrograph1` | 1 | 28 |
+| `micrograph10` | 1 | 28 |
+| `micrograph11` | 1 | 28 |
+| `micrograph12` | 1 | 28 |
+| `micrograph13` | 1 | 28 |
+| `micrograph14` | 1 | 28 |
+| `micrograph15` | 1 | 28 |
+| `micrograph16` | 1 | 28 |
+| `micrograph17` | 1 | 28 |
+| `micrograph18` | 1 | 28 |
+| `micrograph19` | 1 | 28 |
+| `micrograph2` | 1 | 28 |
+| `micrograph20` | 1 | 28 |
 | `micrograph21` | 1 | 54 |
 | `micrograph22` | 1 | 54 |
-| `micrograph23` | 1 | 35 |
-| `micrograph24` | 1 | 35 |
-| `micrograph25` | 1 | 35 |
-| `micrograph26` | 1 | 35 |
-| `micrograph27` | 1 | 35 |
-| `micrograph28` | 1 | 35 |
-| `micrograph29` | 1 | 35 |
-| `micrograph3` | 1 | 35 |
-| `micrograph30` | 1 | 35 |
-| `micrograph31` | 1 | 35 |
+| `micrograph23` | 1 | 28 |
+| `micrograph24` | 1 | 28 |
+| `micrograph25` | 1 | 28 |
+| `micrograph26` | 1 | 28 |
+| `micrograph27` | 1 | 28 |
+| `micrograph28` | 1 | 28 |
+| `micrograph29` | 1 | 28 |
+| `micrograph3` | 1 | 28 |
+| `micrograph30` | 1 | 28 |
+| `micrograph31` | 1 | 28 |
 | `micrograph32` | 1 | 54 |
-| `micrograph33` | 1 | 35 |
-| `micrograph34` | 1 | 35 |
-| `micrograph35` | 1 | 35 |
-| `micrograph36` | 1 | 35 |
-| `micrograph37` | 1 | 35 |
-| `micrograph38` | 1 | 35 |
-| `micrograph39` | 1 | 35 |
+| `micrograph33` | 1 | 28 |
+| `micrograph34` | 1 | 28 |
+| `micrograph35` | 1 | 28 |
+| `micrograph36` | 1 | 28 |
+| `micrograph37` | 1 | 28 |
+| `micrograph38` | 1 | 28 |
+| `micrograph39` | 1 | 28 |
 | `micrograph4` | 1 | 54 |
-| `micrograph40` | 1 | 35 |
+| `micrograph40` | 1 | 28 |
 | `micrograph41` | 1 | 54 |
-| `micrograph5` | 1 | 35 |
-| `micrograph6` | 1 | 35 |
-| `micrograph7` | 1 | 35 |
+| `micrograph5` | 1 | 28 |
+| `micrograph6` | 1 | 28 |
+| `micrograph7` | 1 | 28 |
 | `micrograph8` | 1 | 54 |
-| `micrograph9` | 1 | 35 |
+| `micrograph9` | 1 | 28 |
 
 ### Images with no mask (1)
 
@@ -164,62 +164,62 @@ These never had ground truth, so they cannot be tiled. 0 of them are named expli
 ## uhcs1
 
 - rule: `filename is the parent`
-- 24 parents, 360 tiles kept, 0 dropped below min_boundary_frac, 0 excluded, 0 images with no mask
+- 24 parents, 288 tiles kept, 0 dropped below min_boundary_frac, 0 excluded, 0 images with no mask
 
 | parent | source images | tiles |
 | --- | --- | --- |
-| `800C-24H-Q-1` | 1 | 15 |
-| `800C-24H-Q-2` | 1 | 15 |
-| `800C-24H-Q-3` | 1 | 15 |
-| `800C-24H-Q-4` | 1 | 15 |
-| `800C-24H-Q-5` | 1 | 15 |
-| `800C-24H-Q-6` | 1 | 15 |
-| `800C-24H-Q-7` | 1 | 15 |
-| `800C-3H-Q-1` | 1 | 15 |
-| `800C-3H-Q-2` | 1 | 15 |
-| `800C-3H-Q-3` | 1 | 15 |
-| `800C-3H-Q-4` | 1 | 15 |
-| `800C-85H-Q-1` | 1 | 15 |
-| `800C-85H-Q-2` | 1 | 15 |
-| `800C-85H-Q-3` | 1 | 15 |
-| `800C-85H-Q-5` | 1 | 15 |
-| `800C-85H-Q-6` | 1 | 15 |
-| `800C-8H-Q-1` | 1 | 15 |
-| `800C-8H-Q-3` | 1 | 15 |
-| `800C-8H-Q-4` | 1 | 15 |
-| `970C-5M-Q-1` | 1 | 15 |
-| `970C-5M-Q-2` | 1 | 15 |
-| `970C-5M-Q-3` | 1 | 15 |
-| `970C-5M-Q-4` | 1 | 15 |
-| `970C-5M-Q-5` | 1 | 15 |
+| `800C-24H-Q-1` | 1 | 12 |
+| `800C-24H-Q-2` | 1 | 12 |
+| `800C-24H-Q-3` | 1 | 12 |
+| `800C-24H-Q-4` | 1 | 12 |
+| `800C-24H-Q-5` | 1 | 12 |
+| `800C-24H-Q-6` | 1 | 12 |
+| `800C-24H-Q-7` | 1 | 12 |
+| `800C-3H-Q-1` | 1 | 12 |
+| `800C-3H-Q-2` | 1 | 12 |
+| `800C-3H-Q-3` | 1 | 12 |
+| `800C-3H-Q-4` | 1 | 12 |
+| `800C-85H-Q-1` | 1 | 12 |
+| `800C-85H-Q-2` | 1 | 12 |
+| `800C-85H-Q-3` | 1 | 12 |
+| `800C-85H-Q-5` | 1 | 12 |
+| `800C-85H-Q-6` | 1 | 12 |
+| `800C-8H-Q-1` | 1 | 12 |
+| `800C-8H-Q-3` | 1 | 12 |
+| `800C-8H-Q-4` | 1 | 12 |
+| `970C-5M-Q-1` | 1 | 12 |
+| `970C-5M-Q-2` | 1 | 12 |
+| `970C-5M-Q-3` | 1 | 12 |
+| `970C-5M-Q-4` | 1 | 12 |
+| `970C-5M-Q-5` | 1 | 12 |
 
 ## uhcs2
 
 - rule: `filename is the parent`
-- 23 parents, 325 tiles kept, 20 dropped below min_boundary_frac, 0 excluded, 0 images with no mask
+- 23 parents, 265 tiles kept, 11 dropped below min_boundary_frac, 0 excluded, 0 images with no mask
 
 | parent | source images | tiles |
 | --- | --- | --- |
-| `uhcs0006` | 1 | 15 |
-| `uhcs0007` | 1 | 15 |
-| `uhcs0075` | 1 | 14 |
+| `uhcs0006` | 1 | 12 |
+| `uhcs0007` | 1 | 12 |
+| `uhcs0075` | 1 | 12 |
 | `uhcs0124` | 1 | 10 |
-| `uhcs0220` | 1 | 15 |
-| `uhcs0235` | 1 | 14 |
-| `uhcs0295` | 1 | 11 |
-| `uhcs0312` | 1 | 15 |
-| `uhcs0333` | 1 | 15 |
-| `uhcs0357` | 1 | 15 |
-| `uhcs0360` | 1 | 13 |
-| `uhcs0477` | 1 | 15 |
-| `uhcs0495` | 1 | 15 |
-| `uhcs0579` | 1 | 15 |
-| `uhcs0599` | 1 | 15 |
-| `uhcs1061` | 1 | 14 |
-| `uhcs1150` | 1 | 15 |
-| `uhcs1176` | 1 | 15 |
-| `uhcs1219` | 1 | 15 |
-| `uhcs1289` | 1 | 13 |
-| `uhcs1528` | 1 | 15 |
-| `uhcs1579` | 1 | 12 |
-| `uhcs1648` | 1 | 14 |
+| `uhcs0220` | 1 | 12 |
+| `uhcs0235` | 1 | 11 |
+| `uhcs0295` | 1 | 10 |
+| `uhcs0312` | 1 | 12 |
+| `uhcs0333` | 1 | 12 |
+| `uhcs0357` | 1 | 12 |
+| `uhcs0360` | 1 | 11 |
+| `uhcs0477` | 1 | 12 |
+| `uhcs0495` | 1 | 12 |
+| `uhcs0579` | 1 | 12 |
+| `uhcs0599` | 1 | 12 |
+| `uhcs1061` | 1 | 11 |
+| `uhcs1150` | 1 | 12 |
+| `uhcs1176` | 1 | 12 |
+| `uhcs1219` | 1 | 12 |
+| `uhcs1289` | 1 | 11 |
+| `uhcs1528` | 1 | 12 |
+| `uhcs1579` | 1 | 10 |
+| `uhcs1648` | 1 | 11 |

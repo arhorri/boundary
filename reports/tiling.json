@@ -1,5 +1,5 @@
 {
-  "generated_utc": "2026-09-04T10:14:11Z",
+  "generated_utc": "2026-09-04T11:16:10Z",
   "settings": {
     "assert_single_tile": [
       "Steel1",
@@ -137,10 +137,13 @@
         "micrograph8",
         "micrograph9"
       ],
-      "n_tiles": 1584,
+      "n_tiles": 1332,
       "n_dropped": 0,
       "n_excluded": 0,
       "n_skipped": 0,
+      "n_padded_images": 0,
+      "padded_pixels": 0,
+      "padded_images": [],
       "n_orphans": 1,
       "n_orphans_listed": 0,
       "listed_but_absent": [],
@@ -187,6 +190,9 @@
       "n_dropped": 5,
       "n_excluded": 0,
       "n_skipped": 0,
+      "n_padded_images": 0,
+      "padded_pixels": 0,
+      "padded_images": [],
       "n_orphans": 48,
       "n_orphans_listed": 48,
       "listed_but_absent": [],
@@ -505,6 +511,9 @@
       "n_dropped": 0,
       "n_excluded": 0,
       "n_skipped": 0,
+      "n_padded_images": 0,
+      "padded_pixels": 0,
+      "padded_images": [],
       "n_orphans": 1,
       "n_orphans_listed": 0,
       "listed_but_absent": [],
@@ -552,10 +561,13 @@
         "970C-5M-Q-4",
         "970C-5M-Q-5"
       ],
-      "n_tiles": 360,
+      "n_tiles": 288,
       "n_dropped": 0,
       "n_excluded": 0,
       "n_skipped": 0,
+      "n_padded_images": 0,
+      "padded_pixels": 0,
+      "padded_images": [],
       "n_orphans": 0,
       "n_orphans_listed": 0,
       "listed_but_absent": [],
@@ -596,76 +608,47 @@
         "uhcs1579",
         "uhcs1648"
       ],
-      "n_tiles": 325,
-      "n_dropped": 20,
+      "n_tiles": 265,
+      "n_dropped": 11,
       "n_excluded": 0,
       "n_skipped": 1,
+      "n_padded_images": 0,
+      "padded_pixels": 0,
+      "padded_images": [],
       "n_orphans": 0,
       "n_orphans_listed": 0,
       "listed_but_absent": [],
       "dropped": [
         {
-          "tile_id": "uhcs2/uhcs0075/x512_y256",
+          "tile_id": "uhcs2/uhcs0124/x389_y0",
           "boundary_fraction": 0.0
         },
         {
-          "tile_id": "uhcs2/uhcs0124/x384_y0",
-          "boundary_fraction": 0.0
+          "tile_id": "uhcs2/uhcs0124/x389_y128",
+          "boundary_fraction": 0.001038
         },
         {
-          "tile_id": "uhcs2/uhcs0124/x512_y0",
-          "boundary_fraction": 0.0
+          "tile_id": "uhcs2/uhcs0235/x256_y228",
+          "boundary_fraction": 0.004318
         },
         {
-          "tile_id": "uhcs2/uhcs0124/x384_y128",
-          "boundary_fraction": 0.001358
+          "tile_id": "uhcs2/uhcs0295/x389_y0",
+          "boundary_fraction": 0.002274
         },
         {
-          "tile_id": "uhcs2/uhcs0124/x512_y128",
-          "boundary_fraction": 0.0
+          "tile_id": "uhcs2/uhcs0295/x389_y128",
+          "boundary_fraction": 0.001892
         },
         {
-          "tile_id": "uhcs2/uhcs0124/x512_y256",
-          "boundary_fraction": 0.003326
-        },
-        {
-          "tile_id": "uhcs2/uhcs0235/x256_y256",
-          "boundary_fraction": 0.002747
-        },
-        {
-          "tile_id": "uhcs2/uhcs0295/x384_y0",
-          "boundary_fraction": 0.003357
-        },
-        {
-          "tile_id": "uhcs2/uhcs0295/x512_y0",
-          "boundary_fraction": 0.0
-        },
-        {
-          "tile_id": "uhcs2/uhcs0295/x384_y128",
-          "boundary_fraction": 0.002213
-        },
-        {
-          "tile_id": "uhcs2/uhcs0295/x512_y128",
-          "boundary_fraction": 0.0
-        },
-        {
-          "tile_id": "uhcs2/uhcs0360/x512_y0",
-          "boundary_fraction": 0.001251
-        },
-        {
-          "tile_id": "uhcs2/uhcs0360/x512_y128",
-          "boundary_fraction": 0.0
+          "tile_id": "uhcs2/uhcs0360/x389_y128",
+          "boundary_fraction": 0.004913
         },
         {
           "tile_id": "uhcs2/uhcs1061/x0_y128",
           "boundary_fraction": 0.002777
         },
         {
-          "tile_id": "uhcs2/uhcs1289/x384_y256",
-          "boundary_fraction": 0.0
-        },
-        {
-          "tile_id": "uhcs2/uhcs1289/x512_y256",
+          "tile_id": "uhcs2/uhcs1289/x389_y228",
           "boundary_fraction": 0.0
         },
         {
@@ -673,12 +656,8 @@
           "boundary_fraction": 0.003967
         },
         {
-          "tile_id": "uhcs2/uhcs1579/x384_y128",
-          "boundary_fraction": 0.002487
-        },
-        {
-          "tile_id": "uhcs2/uhcs1579/x512_y128",
-          "boundary_fraction": 0.00235
+          "tile_id": "uhcs2/uhcs1579/x389_y128",
+          "boundary_fraction": 0.002121
         },
         {
           "tile_id": "uhcs2/uhcs1648/x0_y0",
@@ -700,8 +679,8 @@
     "fold_MetalDam": {
       "held_out": "MetalDam",
       "alias_of": null,
-      "n_train_tiles": 1398,
-      "n_val_tiles": 1773,
+      "n_train_tiles": 1266,
+      "n_val_tiles": 1521,
       "train_datasets": [
         "Steel1",
         "uhcs1",
@@ -715,30 +694,30 @@
       "n_val_parents": 46,
       "train_boundary_fraction": {
         "min": 0.005127,
-        "mean": 0.060509,
-        "median": 0.051056,
+        "mean": 0.058913,
+        "median": 0.050247,
         "max": 0.18428,
-        "n": 1398
+        "n": 1266
       },
       "val_boundary_fraction": {
         "min": 0.006607,
-        "mean": 0.157942,
-        "median": 0.165878,
-        "max": 0.316605,
-        "n": 1773
+        "mean": 0.154368,
+        "median": 0.163696,
+        "max": 0.299805,
+        "n": 1521
       },
-      "pos_weight": 15.527,
+      "pos_weight": 15.974,
       "sampling": {
         "mode": "parents",
         "weights": {
-          "Steel1": 0.47437,
-          "uhcs1": 1.503226,
-          "uhcs2": 1.595732
+          "Steel1": 0.42958,
+          "uhcs1": 1.701613,
+          "uhcs2": 1.772246
         },
         "raw_counts": {
           "Steel1": 713,
-          "uhcs1": 360,
-          "uhcs2": 325
+          "uhcs1": 288,
+          "uhcs2": 265
         },
         "n_parents": {
           "Steel1": 15,
@@ -751,17 +730,17 @@
           "uhcs2": 0.371
         },
         "effective_counts": {
-          "Steel1": 338,
-          "uhcs1": 541,
-          "uhcs2": 519
+          "Steel1": 306,
+          "uhcs1": 490,
+          "uhcs2": 470
         }
       }
     },
     "fold_uhcs1": {
       "held_out": "uhcs1",
       "alias_of": null,
-      "n_train_tiles": 2622,
-      "n_val_tiles": 549,
+      "n_train_tiles": 2310,
+      "n_val_tiles": 477,
       "train_datasets": [
         "MetalDam",
         "Steel1",
@@ -775,30 +754,30 @@
       "n_val_parents": 28,
       "train_boundary_fraction": {
         "min": 0.005127,
-        "mean": 0.122783,
-        "median": 0.137085,
-        "max": 0.316605,
-        "n": 2622
+        "mean": 0.118337,
+        "median": 0.130959,
+        "max": 0.299805,
+        "n": 2310
       },
       "val_boundary_fraction": {
         "min": 0.006607,
-        "mean": 0.07775,
-        "median": 0.070877,
+        "mean": 0.075509,
+        "median": 0.066589,
         "max": 0.18428,
-        "n": 549
+        "n": 477
       },
-      "pos_weight": 7.144,
+      "pos_weight": 7.45,
       "sampling": {
         "mode": "parents",
         "weights": {
-          "MetalDam": 0.869034,
-          "Steel1": 0.689516,
-          "uhcs2": 2.319462
+          "MetalDam": 0.910473,
+          "Steel1": 0.607468,
+          "uhcs2": 2.506132
         },
         "raw_counts": {
-          "MetalDam": 1584,
+          "MetalDam": 1332,
           "Steel1": 713,
-          "uhcs2": 325
+          "uhcs2": 265
         },
         "n_parents": {
           "MetalDam": 42,
@@ -811,17 +790,17 @@
           "uhcs2": 0.2875
         },
         "effective_counts": {
-          "MetalDam": 1377,
-          "Steel1": 492,
-          "uhcs2": 754
+          "MetalDam": 1213,
+          "Steel1": 433,
+          "uhcs2": 664
         }
       }
     },
     "fold_uhcs2": {
       "held_out": "uhcs2",
       "alias_of": null,
-      "n_train_tiles": 2657,
-      "n_val_tiles": 514,
+      "n_train_tiles": 2333,
+      "n_val_tiles": 454,
       "train_datasets": [
         "MetalDam",
         "Steel1",
@@ -835,30 +814,30 @@
       "n_val_parents": 27,
       "train_boundary_fraction": {
         "min": 0.005127,
-        "mean": 0.127793,
-        "median": 0.139053,
-        "max": 0.316605,
-        "n": 2657
+        "mean": 0.123292,
+        "median": 0.134705,
+        "max": 0.299805,
+        "n": 2333
       },
       "val_boundary_fraction": {
-        "min": 0.005264,
-        "mean": 0.048789,
-        "median": 0.044579,
+        "min": 0.006607,
+        "mean": 0.04788,
+        "median": 0.044075,
         "max": 0.152466,
-        "n": 514
+        "n": 454
       },
-      "pos_weight": 6.825,
+      "pos_weight": 7.111,
       "sampling": {
         "mode": "parents",
         "weights": {
-          "MetalDam": 0.869762,
-          "Steel1": 0.690094,
-          "uhcs1": 2.186831
+          "MetalDam": 0.908186,
+          "Steel1": 0.605943,
+          "uhcs1": 2.400206
         },
         "raw_counts": {
-          "MetalDam": 1584,
+          "MetalDam": 1332,
           "Steel1": 713,
-          "uhcs1": 360
+          "uhcs1": 288
         },
         "n_parents": {
           "MetalDam": 42,
@@ -871,17 +850,17 @@
           "uhcs1": 0.2963
         },
         "effective_counts": {
-          "MetalDam": 1378,
-          "Steel1": 492,
-          "uhcs1": 787
+          "MetalDam": 1210,
+          "Steel1": 432,
+          "uhcs1": 691
         }
       }
     },
     "dev": {
       "held_out": "uhcs2",
       "alias_of": "fold_uhcs2",
-      "n_train_tiles": 2657,
-      "n_val_tiles": 514,
+      "n_train_tiles": 2333,
+      "n_val_tiles": 454,
       "train_datasets": [
         "MetalDam",
         "Steel1",
@@ -895,30 +874,30 @@
       "n_val_parents": 27,
       "train_boundary_fraction": {
         "min": 0.005127,
-        "mean": 0.127793,
-        "median": 0.139053,
-        "max": 0.316605,
-        "n": 2657
+        "mean": 0.123292,
+        "median": 0.134705,
+        "max": 0.299805,
+        "n": 2333
       },
       "val_boundary_fraction": {
-        "min": 0.005264,
-        "mean": 0.048789,
-        "median": 0.044579,
+        "min": 0.006607,
+        "mean": 0.04788,
+        "median": 0.044075,
         "max": 0.152466,
-        "n": 514
+        "n": 454
       },
-      "pos_weight": 6.825,
+      "pos_weight": 7.111,
       "sampling": {
         "mode": "parents",
         "weights": {
-          "MetalDam": 0.869762,
-          "Steel1": 0.690094,
-          "uhcs1": 2.186831
+          "MetalDam": 0.908186,
+          "Steel1": 0.605943,
+          "uhcs1": 2.400206
         },
         "raw_counts": {
-          "MetalDam": 1584,
+          "MetalDam": 1332,
           "Steel1": 713,
-          "uhcs1": 360
+          "uhcs1": 288
         },
         "n_parents": {
           "MetalDam": 42,
@@ -931,9 +910,9 @@
           "uhcs1": 0.2963
         },
         "effective_counts": {
-          "MetalDam": 1378,
-          "Steel1": 492,
-          "uhcs1": 787
+          "MetalDam": 1210,
+          "Steel1": 432,
+          "uhcs1": 691
         }
       }
     },

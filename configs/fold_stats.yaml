@@ -6,7 +6,7 @@
 # while each dataset's share of it becomes sampling.target_share.
 # pos_weight is n_negative/n_positive over the train split, for
 # BCEWithLogitsLoss.
-generated_utc: '2026-09-04T10:14:11Z'
+generated_utc: '2026-09-04T11:16:10Z'
 patch_size: 256
 stride: 128
 min_boundary_frac: 0.005
@@ -39,8 +39,8 @@ folds:
   fold_MetalDam:
     held_out: MetalDam
     alias_of: null
-    n_train_tiles: 1398
-    n_val_tiles: 1773
+    n_train_tiles: 1266
+    n_val_tiles: 1521
     train_datasets:
     - Steel1
     - uhcs1
@@ -52,27 +52,27 @@ folds:
     n_val_parents: 46
     train_boundary_fraction:
       min: 0.005127
-      mean: 0.060509
-      median: 0.051056
+      mean: 0.058913
+      median: 0.050247
       max: 0.18428
-      n: 1398
+      n: 1266
     val_boundary_fraction:
       min: 0.006607
-      mean: 0.157942
-      median: 0.165878
-      max: 0.316605
-      n: 1773
-    pos_weight: 15.527
+      mean: 0.154368
+      median: 0.163696
+      max: 0.299805
+      n: 1521
+    pos_weight: 15.974
     sampling:
       mode: parents
       weights:
-        Steel1: 0.47437
-        uhcs1: 1.503226
-        uhcs2: 1.595732
+        Steel1: 0.42958
+        uhcs1: 1.701613
+        uhcs2: 1.772246
       raw_counts:
         Steel1: 713
-        uhcs1: 360
-        uhcs2: 325
+        uhcs1: 288
+        uhcs2: 265
       n_parents:
         Steel1: 15
         uhcs1: 24
@@ -82,14 +82,14 @@ folds:
         uhcs1: 0.3871
         uhcs2: 0.371
       effective_counts:
-        Steel1: 338
-        uhcs1: 541
-        uhcs2: 519
+        Steel1: 306
+        uhcs1: 490
+        uhcs2: 470
   fold_uhcs1:
     held_out: uhcs1
     alias_of: null
-    n_train_tiles: 2622
-    n_val_tiles: 549
+    n_train_tiles: 2310
+    n_val_tiles: 477
     train_datasets:
     - MetalDam
     - Steel1
@@ -101,27 +101,27 @@ folds:
     n_val_parents: 28
     train_boundary_fraction:
       min: 0.005127
-      mean: 0.122783
-      median: 0.137085
-      max: 0.316605
-      n: 2622
+      mean: 0.118337
+      median: 0.130959
+      max: 0.299805
+      n: 2310
     val_boundary_fraction:
       min: 0.006607
-      mean: 0.07775
-      median: 0.070877
+      mean: 0.075509
+      median: 0.066589
       max: 0.18428
-      n: 549
-    pos_weight: 7.144
+      n: 477
+    pos_weight: 7.45
     sampling:
       mode: parents
       weights:
-        MetalDam: 0.869034
-        Steel1: 0.689516
-        uhcs2: 2.319462
+        MetalDam: 0.910473
+        Steel1: 0.607468
+        uhcs2: 2.506132
       raw_counts:
-        MetalDam: 1584
+        MetalDam: 1332
         Steel1: 713
-        uhcs2: 325
+        uhcs2: 265
       n_parents:
         MetalDam: 42
         Steel1: 15
@@ -131,14 +131,14 @@ folds:
         Steel1: 0.1875
         uhcs2: 0.2875
       effective_counts:
-        MetalDam: 1377
-        Steel1: 492
-        uhcs2: 754
+        MetalDam: 1213
+        Steel1: 433
+        uhcs2: 664
   fold_uhcs2:
     held_out: uhcs2
     alias_of: null
-    n_train_tiles: 2657
-    n_val_tiles: 514
+    n_train_tiles: 2333
+    n_val_tiles: 454
     train_datasets:
     - MetalDam
     - Steel1
@@ -150,27 +150,27 @@ folds:
     n_val_parents: 27
     train_boundary_fraction:
       min: 0.005127
-      mean: 0.127793
-      median: 0.139053
-      max: 0.316605
-      n: 2657
+      mean: 0.123292
+      median: 0.134705
+      max: 0.299805
+      n: 2333
     val_boundary_fraction:
-      min: 0.005264
-      mean: 0.048789
-      median: 0.044579
+      min: 0.006607
+      mean: 0.04788
+      median: 0.044075
       max: 0.152466
-      n: 514
-    pos_weight: 6.825
+      n: 454
+    pos_weight: 7.111
     sampling:
       mode: parents
       weights:
-        MetalDam: 0.869762
-        Steel1: 0.690094
-        uhcs1: 2.186831
+        MetalDam: 0.908186
+        Steel1: 0.605943
+        uhcs1: 2.400206
       raw_counts:
-        MetalDam: 1584
+        MetalDam: 1332
         Steel1: 713
-        uhcs1: 360
+        uhcs1: 288
       n_parents:
         MetalDam: 42
         Steel1: 15
@@ -180,14 +180,14 @@ folds:
         Steel1: 0.1852
         uhcs1: 0.2963
       effective_counts:
-        MetalDam: 1378
-        Steel1: 492
-        uhcs1: 787
+        MetalDam: 1210
+        Steel1: 432
+        uhcs1: 691
   dev:
     held_out: uhcs2
     alias_of: fold_uhcs2
-    n_train_tiles: 2657
-    n_val_tiles: 514
+    n_train_tiles: 2333
+    n_val_tiles: 454
     train_datasets:
     - MetalDam
     - Steel1
@@ -199,27 +199,27 @@ folds:
     n_val_parents: 27
     train_boundary_fraction:
       min: 0.005127
-      mean: 0.127793
-      median: 0.139053
-      max: 0.316605
-      n: 2657
+      mean: 0.123292
+      median: 0.134705
+      max: 0.299805
+      n: 2333
     val_boundary_fraction:
-      min: 0.005264
-      mean: 0.048789
-      median: 0.044579
+      min: 0.006607
+      mean: 0.04788
+      median: 0.044075
       max: 0.152466
-      n: 514
-    pos_weight: 6.825
+      n: 454
+    pos_weight: 7.111
     sampling:
       mode: parents
       weights:
-        MetalDam: 0.869762
-        Steel1: 0.690094
-        uhcs1: 2.186831
+        MetalDam: 0.908186
+        Steel1: 0.605943
+        uhcs1: 2.400206
       raw_counts:
-        MetalDam: 1584
+        MetalDam: 1332
         Steel1: 713
-        uhcs1: 360
+        uhcs1: 288
       n_parents:
         MetalDam: 42
         Steel1: 15
@@ -229,9 +229,9 @@ folds:
         Steel1: 0.1852
         uhcs1: 0.2963
       effective_counts:
-        MetalDam: 1378
-        Steel1: 492
-        uhcs1: 787
+        MetalDam: 1210
+        Steel1: 432
+        uhcs1: 691
   test:
     datasets:
     - Steel2
