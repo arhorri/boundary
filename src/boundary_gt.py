@@ -908,7 +908,8 @@ def render_markdown(report: dict) -> str:
             f"- mode: **{d['mode']}**"
             + ("  (overridden)" if name in report["mode_overrides"] else ""),
             f"- output: `{d['out_dir']}`",
-            f"- pairs: {d['n_pairs']} -> processed {d['n_processed']}, "
+            f"- pairs: {d['n_pairs']} -> processed {d['n_processed']} "
+            f"({d.get('n_reconciled', 0)} size-reconciled), "
             f"rejected {d['n_rejected']}, excluded {d['n_excluded']}",
             f"- boundary pixel fraction before cleanup (min/median/max): "
             f"{_fmt(d['fraction_before']['min'])}/"
