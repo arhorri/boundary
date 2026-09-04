@@ -399,38 +399,55 @@ def verify_interpolation(transform) -> list:
 
     Configuring interpolation is not the same as having it: this walks the
     composed pipeline and checks the attributes that ended up on the objects.
-    Returns ``{"verified": [...], "unverified": [...]}`` -- ops whose
-    albumentations version exposes no ``mask_interpolation`` cannot be checked
-    structurally, and are covered instead by :func:`assert_binary` on every
-    sample.
+    Returns ``{"verified": [...], "unverified": [...], "unset": [...]}``.
+    ``unverified`` ops are those whose albumentations version exposes no
+    ``mask_interpolation`` attribute; they are covered instead by
+    :func:`assert_binary` on every sample. ``unset`` ops carry the attribute
+    as ``None`` -- containers such as ``Compose`` expose it as an override slot
+    and leave it unset, which correctly defers to the transforms inside.
     """
     import cv2
 
-    verified, unverified = [], []
+    missing = object()
+    verified, unverified, unset = [], [], []
     stack = [transform]
     while stack:
         node = stack.pop()
         for child in getattr(node, "transforms", []) or []:
             stack.append(child)
         name = type(node).__name__
-        if hasattr(node, "mask_interpolation"):
-            if int(node.mask_interpolation) != int(cv2.INTER_NEAREST):
-                raise DatasetError(
-                    f"{name} resamples masks with {node.mask_interpolation}, not "
-                    f"INTER_NEAREST ({cv2.INTER_NEAREST}). A bilinearly "
-                    "resampled mask is no longer binary.")
-            if hasattr(node, "interpolation") \
-                    and int(node.interpolation) != int(cv2.INTER_LINEAR):
-                raise DatasetError(
-                    f"{name} resamples images with {node.interpolation}, not "
-                    f"INTER_LINEAR ({cv2.INTER_LINEAR}).")
-            verified.append(name)
-        elif hasattr(node, "interpolation"):
+        mask_interp = getattr(node, "mask_interpolation", missing)
+
+        if mask_interp is None:
+            # A container (Compose) exposes mask_interpolation as an OVERRIDE
+            # slot and leaves it None unless asked to force one on its
+            # children. None means "this node decides nothing", which is what
+            # we want -- the individual transforms carry the real setting.
+            unset.append(name)
+            continue
+        if mask_interp is missing:
             # Older albumentations hardcode nearest for masks and expose no
-            # attribute to check. Not an error, but not verifiable here either:
+            # attribute to check. Not an error, but not verifiable here:
             # assert_binary() in __getitem__ is what actually enforces it.
-            unverified.append(name)
-    return {"verified": sorted(verified), "unverified": sorted(unverified)}
+            if getattr(node, "interpolation", None) is not None:
+                unverified.append(name)
+            continue
+
+        if int(mask_interp) != int(cv2.INTER_NEAREST):
+            raise DatasetError(
+                f"{name} resamples masks with {mask_interp}, not INTER_NEAREST "
+                f"({cv2.INTER_NEAREST}). A bilinearly resampled mask is no "
+                "longer binary.")
+        image_interp = getattr(node, "interpolation", None)
+        if image_interp is not None and int(image_interp) not in (
+                int(cv2.INTER_LINEAR), int(cv2.INTER_NEAREST)):
+            raise DatasetError(
+                f"{name} resamples images with {image_interp}, which is neither "
+                f"INTER_LINEAR ({cv2.INTER_LINEAR}) nor the INTER_NEAREST "
+                "override the synchronization test uses.")
+        verified.append(name)
+    return {"verified": sorted(verified), "unverified": sorted(unverified),
+            "unset": sorted(unset)}
 
 
 def assert_binary(mask: np.ndarray, where: str) -> None:
