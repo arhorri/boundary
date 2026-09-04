@@ -1,31 +1,32 @@
 # Boundary ground truth extraction
 
-- generated: 2026-09-04T07:43:51Z
+- generated: 2026-09-04T08:31:41Z
 - from audit: 2026-09-03T23:42:26Z
 - output root: `/content/drive/MyDrive/phase11-persistent/gt_boundaries`
 - line width: 2 px, speckle removal 'speckle' at 3x3, CLOSE 3x3
 - speckle removal drops connected components smaller than 9 px. A literal 3x3 morphological OPEN would erase the whole map: its erosion needs a full 3x3 block of foreground, and a boundary line is 1-3 px wide. Set `boundary_gt.open_mode: morph` to force the literal version.
+- size tolerance: 2 px — a mask within this many pixels of its image is centre-cropped to the common size, not rejected. Cropped, never resized.
 - mode overrides applied: none
 - artifact colour folding: off (watched: {'MetalDam': [[75, 176, 40]], 'uhcs2': [[75, 176, 40]]})
 
 MODE A extracts a painted boundary colour by HSV thresholding and yields phase interfaces AND grain boundaries. MODE B derives boundaries from a phase-label map with `find_boundaries` and yields phase interfaces ONLY -- grain boundaries are absent from the source masks and are not invented here.
 
-| folder | mode | K | processed | rejected | excluded | frac before | frac after |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| MetalDam | **B** | 5 | 40 | 2 | 0 | 0.1659 | 0.1721 |
-| Steel1 | **B** | 2 | 907 | 0 | 0 | 0.0381 | 0.0432 |
-| Steel2 | **B** | 2 | 504 | 0 | 0 | 0.1787 | 0.1408 |
-| uhcs1 | **B** | 2 | 24 | 0 | 0 | 0.1151 | 0.1027 |
-| uhcs2 | **B** | 4 | 23 | 0 | 1 | 0.0505 | 0.0487 |
+| folder | mode | K | processed | reconciled | rejected | excluded | frac before | frac after |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| MetalDam | **B** | 5 | 42 | 2 | 0 | 0 | 0.1651 | 0.1702 |
+| Steel1 | **B** | 2 | 907 | 0 | 0 | 0 | 0.0381 | 0.0432 |
+| Steel2 | **B** | 2 | 504 | 0 | 0 | 0 | 0.1787 | 0.1408 |
+| uhcs1 | **B** | 2 | 24 | 0 | 0 | 0 | 0.1151 | 0.1027 |
+| uhcs2 | **B** | 4 | 23 | 0 | 0 | 1 | 0.0505 | 0.0487 |
 
 ## MetalDam
 
 - mode: **B**
 - output: `/content/drive/MyDrive/phase11-persistent/gt_boundaries/MetalDam`
-- pairs: 42 -> processed 40, rejected 2, excluded 0
-- boundary pixel fraction before cleanup (min/median/max): 0.1059/0.1659/0.2404
-- boundary pixel fraction after cleanup (min/median/max): 0.1175/0.1721/0.2534
-- intermediate medians: after speckle removal 0.1657, after CLOSE 0.1825
+- pairs: 42 -> processed 42, rejected 0, excluded 0
+- boundary pixel fraction before cleanup (min/median/max): 0.1059/0.1651/0.2404
+- boundary pixel fraction after cleanup (min/median/max): 0.1175/0.1702/0.2534
+- intermediate medians: after speckle removal 0.1650, after CLOSE 0.1808
 - K = 5 palette classes: `[255, 255, 0]`, `[21, 100, 255]`, `[254, 40, 40]`, `[0, 0, 0]`, `[75, 176, 40]`
 - K is the number of colour *peaks*, not the raw unique-colour count: colours within 48 RGB of a heavier colour are anti-aliasing or JPEG ramp values and snap to it.
 
@@ -35,12 +36,16 @@ A colour kept as its own class gets a closed boundary loop drawn around every re
 
 | colour | folded | present in | pixel frac (med) | share of boundary (med) |
 | --- | --- | --- | --- | --- |
-| `[75, 176, 40]` | no | 17/40 | 0.0031 | 0.0173 |
+| `[75, 176, 40]` | no | 17/42 | 0.0031 | 0.0173 |
 
-### Rejected during processing (2)
+### Size-reconciled pairs (2)
 
-- `micrograph15.png` — mask 1024x702 does not match image 1024x703
-- `micrograph19.png` — mask 1024x702 does not match image 1024x703
+Mask and image dimensions disagreed by no more than the 2 px tolerance, so both were centre-cropped to their common size and the pair was kept. The boundary PNG is written at the final size; `image crop` is the identical crop the raw image needs when it is loaded.
+
+| pair | image | mask | final | image crop (l,t,w,h) |
+| --- | --- | --- | --- | --- |
+| `micrograph15.png` | 1024x703 | 1024x702 | 1024x702 | 0,0,1024,702 |
+| `micrograph19.png` | 1024x703 | 1024x702 | 1024x702 | 0,0,1024,702 |
 
 ## Steel1
 
