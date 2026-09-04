@@ -153,6 +153,45 @@ def test_photometric_never_receives_the_mask(settings):
     assert set(out) == {"image"}, f"photometric returned {sorted(out)}"
 
 
+def test_border_mode_is_reflect_not_constant(settings):
+    """A constant fill would label a fabricated straight edge as background."""
+    import cv2
+
+    report = ds.verify_interpolation(ds.spatial_transform(settings))
+    assert report["border_verified"], (
+        "no geometric op exposed a border mode; cannot verify structurally")
+    assert not report["border_unverified"], report["border_unverified"]
+    assert cv2.BORDER_REFLECT_101 == 4
+
+
+def test_rotation_leaves_no_constant_fill(settings):
+    """Measured on the produced tile, over many seeds, not read off the config."""
+    import random
+
+    image, mask = _synthetic_pair(seed=11)
+    transform = ds.spatial_transform(settings)
+    worst = 0.0
+    for seed in range(40):
+        np.random.seed(seed)
+        random.seed(seed)
+        out = transform(image=image, mask=mask)
+        fill = ds.constant_border_region(np.asarray(out["image"]))
+        worst = max(worst, fill["fraction"])
+    assert worst < 0.01, (
+        f"largest uniform border-touching region {worst:.4f} of the tile; "
+        "a geometric transform is filling with a constant")
+
+
+def test_constant_fill_detector_finds_a_real_wedge():
+    """The detector must fire on fill it is shown, or it proves nothing above."""
+    tile = np.random.default_rng(0).integers(20, 240, size=(256, 256)).astype(np.float32)
+    assert ds.constant_border_region(tile)["fraction"] < 0.01
+    tile[:60, :60] = 0.0            # a corner wedge of constant fill
+    found = ds.constant_border_region(tile)
+    assert found["fraction"] > 0.05, found
+    assert found["value"] == 0.0
+
+
 def test_interpolation_is_configured_as_claimed(settings):
     import cv2
 

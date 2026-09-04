@@ -302,6 +302,35 @@ def _supported(cls, **kwargs) -> dict:
     return {k: v for k, v in kwargs.items() if k in names}
 
 
+def _border_kwargs(cls) -> dict:
+    """Ask for reflected borders under whatever name this version uses.
+
+    Geometric transforms default to a CONSTANT border fill, which paints black
+    wedges into the corners of every rotated tile. That fill is worse than
+    useless here: the seam between real image and flat fill is a hard, dead
+    straight, high-contrast intensity step whose mask value is 0, so it teaches
+    a boundary detector that strong straight edges are NOT boundaries.
+
+    Reflecting instead is not the tile-edge padding removed in step 3. That was
+    a systematic 48% of specific tiles, fabricated identically every epoch, at
+    a fixed location. This is a small wedge that moves with every random draw,
+    it is real texture from the same specimen, and it carries the mask along
+    with it -- so a reflected boundary is still labelled a boundary. Constant
+    fill is strictly worse: it invents an edge that exists in no micrograph.
+    """
+    import cv2
+
+    try:
+        names = set(inspect.signature(cls.__init__).parameters)
+    except (TypeError, ValueError):
+        return {}
+    if "border_mode" in names:
+        return {"border_mode": cv2.BORDER_REFLECT_101}
+    if "mode" in names:      # albumentations 1.x named it "mode" on Affine
+        return {"mode": cv2.BORDER_REFLECT_101}
+    return {}
+
+
 def spatial_transform(settings: dict, image_interpolation: Optional[int] = None):
     """Spatial augmentation applied to the image AND the mask, identically.
 
@@ -321,6 +350,7 @@ def spatial_transform(settings: dict, image_interpolation: Optional[int] = None)
         scale = float(settings["affine_scale"])
         affine_op = affine(**_supported(
             affine,
+            **_border_kwargs(affine),
             translate_percent=(-shift, shift),
             scale=(1 - scale, 1 + scale),
             rotate=(-float(settings["affine_rotate"]), float(settings["affine_rotate"])),
@@ -330,6 +360,7 @@ def spatial_transform(settings: dict, image_interpolation: Optional[int] = None)
     else:  # pragma: no cover - very old albumentations
         affine_op = A.ShiftScaleRotate(**_supported(
             A.ShiftScaleRotate,
+            **_border_kwargs(A.ShiftScaleRotate),
             shift_limit=float(settings["affine_shift"]),
             scale_limit=float(settings["affine_scale"]),
             rotate_limit=float(settings["affine_rotate"]),
@@ -343,6 +374,7 @@ def spatial_transform(settings: dict, image_interpolation: Optional[int] = None)
         affine_op,
         A.ElasticTransform(**_supported(
             A.ElasticTransform,
+            **_border_kwargs(A.ElasticTransform),
             alpha=float(settings["elastic_alpha"]),
             sigma=float(settings["elastic_sigma"]),
             p=float(settings["p_elastic"]),
@@ -395,7 +427,7 @@ def photometric_transform(settings: dict):
 
 
 def verify_interpolation(transform) -> list:
-    """Assert every spatial op resamples masks with NEAREST, images bilinearly.
+    """Assert mask/image interpolation and border fill are what they claim.
 
     Configuring interpolation is not the same as having it: this walks the
     composed pipeline and checks the attributes that ended up on the objects.
@@ -405,17 +437,45 @@ def verify_interpolation(transform) -> list:
     :func:`assert_binary` on every sample. ``unset`` ops carry the attribute
     as ``None`` -- containers such as ``Compose`` expose it as an override slot
     and leave it unset, which correctly defers to the transforms inside.
+
+    The ``border_*`` keys report the same three states for the border fill
+    mode, which must be ``BORDER_REFLECT_101`` on every op that exposes it:
+    a constant fill would paint a hard straight edge into the corner of every
+    rotated tile and label it background.
     """
     import cv2
 
     missing = object()
     verified, unverified, unset = [], [], []
+    border_verified, border_unverified, border_unset = [], [], []
     stack = [transform]
     while stack:
         node = stack.pop()
         for child in getattr(node, "transforms", []) or []:
             stack.append(child)
         name = type(node).__name__
+
+        # --- border fill: a constant fill paints a fabricated straight edge
+        # into every rotated tile, and labels it "not a boundary".
+        border = getattr(node, "border_mode", missing)
+        if border is missing:
+            border = getattr(node, "mode", missing)
+            if not isinstance(border, (int, float, type(None))):
+                border = missing      # "mode" means something else on this op
+        if border is None:
+            border_unset.append(name)
+        elif border is missing:
+            if getattr(node, "interpolation", None) is not None:
+                border_unverified.append(name)
+        elif int(border) != int(cv2.BORDER_REFLECT_101):
+            raise DatasetError(
+                f"{name} fills borders with mode {border}, not "
+                f"BORDER_REFLECT_101 ({cv2.BORDER_REFLECT_101}). A constant "
+                "fill invents a hard straight edge whose mask says 'not a "
+                "boundary' -- the exact opposite of the signal being trained.")
+        else:
+            border_verified.append(name)
+
         mask_interp = getattr(node, "mask_interpolation", missing)
 
         if mask_interp is None:
@@ -447,7 +507,10 @@ def verify_interpolation(transform) -> list:
                 "override the synchronization test uses.")
         verified.append(name)
     return {"verified": sorted(verified), "unverified": sorted(unverified),
-            "unset": sorted(unset)}
+            "unset": sorted(unset),
+            "border_verified": sorted(border_verified),
+            "border_unverified": sorted(border_unverified),
+            "border_unset": sorted(border_unset)}
 
 
 def assert_binary(mask: np.ndarray, where: str) -> None:
@@ -459,6 +522,50 @@ def assert_binary(mask: np.ndarray, where: str) -> None:
             f"{where}: mask holds non-binary values {values.tolist()} after "
             "augmentation. The mask was resampled with something other than "
             "nearest-neighbour.")
+
+
+def constant_border_region(tile: np.ndarray, max_values: int = 3) -> dict:
+    """Largest flat region of one value that touches the tile border.
+
+    Constant-fill augmentation leaves a wedge of exactly identical pixels
+    against an edge of the tile. Real microstructure does not: even a dark
+    phase varies pixel to pixel. So a large, exactly-uniform, border-touching
+    component is a reliable fingerprint of fabricated fill -- measured on the
+    produced tile rather than trusted from the transform's configuration.
+
+    Returns the fraction of the tile it covers, and the value it is made of.
+    """
+    from scipy.ndimage import label
+
+    arr = np.asarray(tile)
+    if arr.ndim == 3:
+        arr = arr[0] if arr.shape[0] == 1 else arr[..., 0]
+    height, width = arr.shape
+    area = float(height * width)
+
+    ring = np.concatenate([arr[0, :], arr[-1, :], arr[:, 0], arr[:, -1]])
+    values, counts = np.unique(ring, return_counts=True)
+    order = np.argsort(-counts)[:max_values]
+
+    border = np.zeros((height, width), dtype=bool)
+    border[0, :] = border[-1, :] = border[:, 0] = border[:, -1] = True
+
+    worst = {"fraction": 0.0, "value": None, "pixels": 0}
+    for idx in order:
+        value = values[idx]
+        hit = arr == value
+        if not hit.any():
+            continue
+        components, n = label(hit)
+        if not n:
+            continue
+        for comp in set(np.unique(components[border & hit]).tolist()) - {0}:
+            pixels = int((components == comp).sum())
+            fraction = pixels / area
+            if fraction > worst["fraction"]:
+                worst = {"fraction": float(fraction), "value": float(value),
+                         "pixels": pixels}
+    return worst
 
 
 def normalize(tile: np.ndarray) -> np.ndarray:
