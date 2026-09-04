@@ -24,6 +24,7 @@ import argparse
 import importlib.util
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Iterable, Optional, Sequence
 
@@ -86,18 +87,66 @@ def _current_branch(repo_root: Path) -> str:
     return branch
 
 
+def _diagnose_unchanged(repo_root: Path, expect: Sequence, dirs: Sequence) -> None:
+    """Explain a "nothing changed" that the caller did not expect.
+
+    A step that has just regenerated its outputs and finds nothing to push is
+    almost never idempotence: it usually means the files were reverted (a
+    ``git reset --hard`` from re-running a bootstrap cell after the run) or
+    were written outside this checkout. Print the facts that tell those apart
+    -- where each file is, when it was last written, and whether it matches
+    the committed version -- instead of a bland no-op message.
+    """
+    print("push_results: the caller expected these files to have changed:")
+    head_time = _run(["git", "log", "-1", "--format=%cd", "--date=iso"],
+                     repo_root, check=False, quiet=True).stdout.strip()
+    for item in expect:
+        path = Path(item)
+        if not path.is_absolute():
+            path = repo_root / path
+        if not path.exists():
+            print(f"    MISSING  {path}")
+            continue
+        try:
+            rel = path.relative_to(repo_root)
+            inside = True
+        except ValueError:
+            rel, inside = path, False
+        mtime = time.strftime("%Y-%m-%d %H:%M:%S",
+                              time.localtime(path.stat().st_mtime))
+        if inside:
+            same = _run(["git", "diff", "--quiet", "HEAD", "--", str(rel)],
+                        repo_root, check=False, quiet=True).returncode == 0
+            state = "identical to HEAD" if same else "differs from HEAD"
+        else:
+            state = "OUTSIDE this checkout -- push_results cannot see it"
+        print(f"    {state:<45} written {mtime}  {path}")
+    print(f"    HEAD was committed at {head_time}")
+    print("  If a file is older than the run that was supposed to write it, "
+          "the working tree was reset after the run (re-running the bootstrap "
+          "cell does that) -- re-run the step's own cells, not just this one.")
+    print(f"  If a file is outside the checkout, the step wrote to the wrong "
+          f"root; push_results only stages {', '.join(dirs)} under {repo_root}.")
+
+
 def push_results(
     message: str,
     repo_root: Optional[Path] = None,
     branch: Optional[str] = None,
     paths: Optional[dict] = None,
     dirs: Iterable[str] = TRACKED_DIRS,
+    expect: Optional[Sequence] = None,
 ) -> bool:
     """Stage, commit and push generated results. Returns True if it pushed.
 
     ``message`` is the commit message. ``paths`` is the dict returned by
     ``bootstrap_session.bootstrap()``; it supplies repo_root and branch when
     they are not given explicitly. A clean tree is a no-op, not an error.
+
+    ``expect`` lists files this call was supposed to be pushing. If none of
+    them changed, the reason is diagnosed and printed rather than reported as
+    a bland no-op -- a step whose regenerated outputs quietly fail to reach the
+    repo is how a later step ends up reading stale inputs with no error at all.
     """
     if not message or not message.strip():
         raise PushError("a commit message is required.")
@@ -124,6 +173,8 @@ def push_results(
     if not changed:
         print("push_results: nothing changed in "
               + ", ".join(existing) + " - nothing to commit or push.")
+        if expect:
+            _diagnose_unchanged(repo_root, expect, existing)
         return False
 
     print("push_results: committing " + str(len(changed)) + " file(s):")

@@ -38,6 +38,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -158,14 +159,57 @@ def _auth_url(repo_url: str, token: str) -> str:
     return "https://x-access-token:" + token + "@" + repo_url[len("https://"):]
 
 
+def rescue_generated_results(dest: Path) -> list:
+    """Copy uncommitted reports/ and configs/ out of harm's way before a reset.
+
+    ``git reset --hard`` reverts tracked files. A notebook that has just
+    regenerated reports/ and configs/ but not yet pushed them loses that work
+    the moment cell 1 is re-run -- silently, because the reset succeeds and the
+    later push then finds "nothing changed". Anything dirty is copied beside
+    the clone first and the paths are printed, so the results still exist and
+    the situation is visible instead of mysterious.
+    """
+    import shutil
+
+    proc = _run(["git", "status", "--porcelain", "--", "reports", "configs"],
+                cwd=dest, check=False, quiet=True)
+    dirty = sorted({line[3:].strip().strip('"') for line in proc.stdout.splitlines()
+                    if line.strip()})
+    if not dirty:
+        return []
+
+    backup = dest.parent / ("rescued-results-" + time.strftime("%Y%m%d-%H%M%S"))
+    saved = []
+    for rel in dirty:
+        source = dest / rel
+        if not source.is_file():
+            continue
+        target = backup / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, target)
+        saved.append(rel)
+    if saved:
+        print(f"  ! {len(saved)} uncommitted result file(s) would be destroyed by "
+              f"the sync; copied to {backup}")
+        for rel in saved[:10]:
+            print(f"      {rel}")
+        if len(saved) > 10:
+            print(f"      ... and {len(saved) - 10} more")
+        print("  ! if these were the results of a run you had not pushed yet, "
+              "re-run the notebook's steps rather than only its push cell.")
+    return saved
+
+
 def clone_or_update(repo_url: str, branch: str, dest: Path, token: str) -> Path:
     """Clone the repo, or fetch + hard-reset an existing clone. Idempotent.
 
     The token-bearing remote URL is written only for the duration of the
-    network call and scrubbed back out of .git/config afterwards.
+    network call and scrubbed back out of .git/config afterwards. Uncommitted
+    results are rescued before the reset, never silently discarded.
     """
     auth = _auth_url(repo_url, token)
     if (dest / ".git").is_dir():
+        rescue_generated_results(dest)
         _run(["git", "remote", "set-url", "origin", auth], cwd=dest, quiet=True)
         try:
             _run(["git", "fetch", "--depth", "1", "origin", branch], cwd=dest)
