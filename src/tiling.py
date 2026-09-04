@@ -5,9 +5,12 @@ correctness constraint rather than a preference:
 
 1. Images are never resized. A micrograph carries a physical micron scale;
    resampling it destroys the very thing the network must learn. Size
-   variation is handled by cutting 256 px tiles with 50% overlap and
-   reflection-padding ONLY the right and bottom edges where the last tile
-   overruns. Steel1 and Steel2 are already exactly 256x256 and must produce
+   variation is handled by cutting 256 px tiles with 50% overlap, and the
+   LAST tile of a row or column is clamped so its far edge lands exactly on
+   the image edge. Overlap at that last position is uneven; nothing is
+   fabricated. Padding happens only when an image is smaller than the patch
+   in an axis -- no dataset here is -- and every padded pixel is counted and
+   reported. Steel1 and Steel2 are already exactly 256x256 and must produce
    exactly one tile each with zero padding -- asserted, not assumed.
 
 2. Tiles are not independent samples. Steel1's 907 tiles come from 19 source
@@ -188,21 +191,40 @@ def parent_map(tiles: Sequence) -> dict:
 # geometry
 # --------------------------------------------------------------------------
 def tile_positions(size: int, patch: int, stride: int) -> tuple:
-    """Start offsets covering ``size``, and the padding the last one needs.
+    """Start offsets covering ``size``, and the padding needed (normally none).
 
-    Positions step by ``stride`` and the final tile is allowed to overrun the
-    image; the overrun is padded, never resized, and never centred -- padding
-    lands on the right/bottom edge only, so every coordinate in the manifest
-    refers to the original pixel grid.
+    Positions step by ``stride`` while the tile still fits. When the tail of
+    the axis is left uncovered, the final tile is CLAMPED to ``size - patch``
+    so its far edge sits exactly on the image edge, rather than overrunning
+    and being reflection-padded.
+
+    Padding a 645 px axis to 768 would have made 48% of the last tile column
+    mirrored texture -- microstructure that exists in no micrograph, complete
+    with an artificial mirror-symmetric boundary down the seam. Clamping costs
+    only an uneven overlap at one position, and the network never sees an
+    invented pixel.
+
+    When the clamped position would sit within half a stride of the previous
+    one, it REPLACES it instead of being appended: two tiles 5 px apart are
+    the same tile twice.
+
+    Padding survives for exactly one case -- an image smaller than the patch
+    in an axis, where there is no position that covers it. The caller reports
+    those loudly; no dataset in this collection has one.
     """
     if patch <= 0 or stride <= 0:
         raise TilingError(f"patch {patch} and stride {stride} must be positive")
     if size <= patch:
         return [0], patch - size
-    n = int(np.ceil((size - patch) / stride)) + 1
-    positions = [i * stride for i in range(n)]
-    padded = positions[-1] + patch
-    return positions, padded - size
+
+    positions = list(range(0, size - patch + 1, stride))
+    last = size - patch
+    if positions[-1] < last:
+        if last - positions[-1] < stride / 2:
+            positions[-1] = last
+        else:
+            positions.append(last)
+    return positions, 0
 
 
 def plan_tiles(width: int, height: int, settings: dict) -> dict:
@@ -216,6 +238,9 @@ def plan_tiles(width: int, height: int, settings: dict) -> dict:
         "pad_right": int(pad_right), "pad_bottom": int(pad_bottom),
         "n_tiles": len(xs) * len(ys),
         "patch": patch, "stride": stride,
+        # pixels that exist only because an image is smaller than the patch
+        "padded_pixels": int((int(width) + pad_right) * (int(height) + pad_bottom)
+                             - int(width) * int(height)),
     }
 
 
@@ -250,6 +275,7 @@ def index_dataset(
     excluded_names = {str(n) for n in (settings["exclusions"] or {}).get(dataset, [])}
 
     tiles, dropped, excluded, skipped, single_tile_drops = [], [], [], [], []
+    padded_images = []   # only possible when an image is smaller than a patch
     # Images with no mask never reach the pairing loop below, so they are
     # enumerated here explicitly: an orphan must be reported, not simply absent.
     orphans = [
@@ -307,6 +333,18 @@ def index_dataset(
                     f"{dataset} is declared pre-tiled at {patch}x{patch} in "
                     "tiling.assert_single_tile: one tile, zero padding."
                 )
+
+        if plan["padded_pixels"]:
+            padded_images.append({
+                "image": img_path.name,
+                "size": [width, height],
+                "pad_right": plan["pad_right"],
+                "pad_bottom": plan["pad_bottom"],
+                "padded_pixels": plan["padded_pixels"],
+                "why": f"image is smaller than the {plan['patch']} px patch in "
+                       "an axis, so no tile position can cover it without "
+                       f"{settings['pad_mode']} padding",
+            })
 
         padded = pad_to_grid(gt > 0, plan, settings["pad_mode"])
         patch = plan["patch"]
@@ -372,6 +410,9 @@ def index_dataset(
         "n_dropped": len(dropped),
         "n_excluded": len(excluded),
         "n_skipped": len(skipped),
+        "n_padded_images": len(padded_images),
+        "padded_pixels": int(sum(x["padded_pixels"] for x in padded_images)),
+        "padded_images": padded_images,
         "n_orphans": len(orphans),
         "n_orphans_listed": sum(1 for o in orphans if o["listed_in_exclusions"]),
         "listed_but_absent": listed_but_absent,
@@ -754,23 +795,41 @@ def write_tiling_report(
         "",
         f"- generated: {payload['generated_utc']}",
         f"- patch {s['patch_size']} px, stride {s['stride']} px "
-        f"({100 - int(100 * s['stride'] / s['patch_size'])}% overlap), "
-        f"{s['pad_mode']} padding on the right and bottom edges only",
+        f"({100 - int(100 * s['stride'] / s['patch_size'])}% overlap); the last "
+        "tile of each row and column is clamped to the image edge, so no pixel "
+        "is fabricated. Padding applies only to an image smaller than the patch "
+        f"in an axis ({s['pad_mode']} mode), and every such pixel is counted below.",
         f"- tiles below {s['min_boundary_frac']} boundary fraction are dropped",
         f"- nothing is resized and no tile images are written: a tile is a row "
         "in a manifest and the loader crops it on the fly",
         "",
         "## Tiles per dataset",
         "",
-        "| dataset | parents | images | tiles | dropped (low boundary) | excluded | no mask | no boundary map |",
-        "| --- | --- | --- | --- | --- | --- | --- | --- |",
+        "| dataset | parents | images | tiles | padded px | dropped (low boundary) | excluded | no mask | no boundary map |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- | --- |",
     ]
     for name, d in payload["datasets"].items():
         lines.append(
             f"| {name} | {d['n_parents']} | {d['n_images']} | {d['n_tiles']} | "
+            f"{d['padded_pixels']} | "
             f"{d['n_dropped']} | {d['n_excluded']} | {d['n_orphans']} | "
             f"{d['n_skipped']} |"
         )
+    fabricated = sum(d["padded_pixels"] for d in payload["datasets"].values())
+    lines += ["", f"**Fabricated pixels: {fabricated}.** "
+              + ("Every tile is real image data." if not fabricated else
+                 "Some image is smaller than the patch in an axis — see below.")]
+    padded_any = [x | {"dataset": name}
+                  for name, d in payload["datasets"].items()
+                  for x in d["padded_images"]]
+    if padded_any:
+        lines += ["", "### Images that required padding", "",
+                  "| dataset | image | size | pad right | pad bottom | padded px |",
+                  "| --- | --- | --- | --- | --- | --- |"]
+        for x in padded_any:
+            lines.append(
+                f"| {x['dataset']} | `{x['image']}` | {x['size'][0]}x{x['size'][1]} "
+                f"| {x['pad_right']} | {x['pad_bottom']} | {x['padded_pixels']} |")
 
     loud = [x for d in payload["datasets"].values() for x in d["single_tile_drops"]]
     if loud:
