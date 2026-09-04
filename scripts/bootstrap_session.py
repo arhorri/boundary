@@ -87,20 +87,44 @@ class BootstrapError(RuntimeError):
 # platform
 # --------------------------------------------------------------------------
 def detect_platform() -> str:
-    """Return ``"colab"``, ``"kaggle"`` or ``"local"``."""
+    """Return ``"colab"``, ``"kaggle"`` or ``"local"``.
+
+    Kaggle is tested FIRST and by evidence that only Kaggle has. Its image can
+    carry an importable ``google.colab`` shim, so "does google.colab import?"
+    answers yes on both hosts and cannot be the deciding test. Getting this
+    backwards sends the session to the wrong secret store, the wrong data root
+    and the wrong branch.
+    """
+    for var in ("KAGGLE_KERNEL_RUN_TYPE", "KAGGLE_URL_BASE",
+                "KAGGLE_DATA_PROXY_TOKEN", "KAGGLE_CONTAINER_NAME"):
+        if os.environ.get(var):
+            return "kaggle"
+    for marker in ("input", "working"):
+        if Path(os.sep, "kaggle", marker).is_dir():
+            return "kaggle"
+
     if "COLAB_RELEASE_TAG" in os.environ or "COLAB_GPU" in os.environ:
         return "colab"
-    try:
-        import google.colab  # noqa: F401
+    if Path(os.sep, "content").is_dir():
+        try:
+            import google.colab  # noqa: F401
 
-        return "colab"
-    except Exception:
-        pass
-    if "KAGGLE_KERNEL_RUN_TYPE" in os.environ or "KAGGLE_URL_BASE" in os.environ:
-        return "kaggle"
-    if Path(os.sep, "kaggle").is_dir():
-        return "kaggle"
+            return "colab"
+        except Exception:
+            pass
     return "local"
+
+
+def platform_evidence() -> str:
+    """Why detect_platform() answered as it did -- printed, never guessed at."""
+    hits = [f"{v}={os.environ[v]!r}" for v in (
+        "KAGGLE_KERNEL_RUN_TYPE", "KAGGLE_URL_BASE", "COLAB_RELEASE_TAG",
+        "COLAB_GPU") if os.environ.get(v)]
+    for path in (Path(os.sep, "kaggle", "input"), Path(os.sep, "kaggle", "working"),
+                 Path(os.sep, "content")):
+        if path.is_dir():
+            hits.append(f"{path} exists")
+    return ", ".join(hits) or "no host markers found"
 
 
 def _run(cmd, cwd: Optional[Path] = None, check: bool = True, quiet: bool = False):
@@ -121,30 +145,57 @@ def _run(cmd, cwd: Optional[Path] = None, check: bool = True, quiet: bool = Fals
 # --------------------------------------------------------------------------
 # secrets
 # --------------------------------------------------------------------------
+def _colab_secret() -> Optional[str]:
+    from google.colab import userdata
+
+    return userdata.get("GH_TOKEN")
+
+
+def _kaggle_secret() -> Optional[str]:
+    from kaggle_secrets import UserSecretsClient
+
+    return UserSecretsClient().get_secret("GH_TOKEN")
+
+
+SECRET_READERS = {"colab": _colab_secret, "kaggle": _kaggle_secret}
+
+
 def get_github_token(platform: str) -> str:
-    """Read GH_TOKEN from the host secret store. Never accepts a literal."""
-    token = None
-    if platform == "colab":
+    """Read GH_TOKEN from the host secret store. Never accepts a literal.
+
+    The detected platform's own store is tried first, then the others, then the
+    environment. A secret that is present in a store this host was not thought
+    to have is a detection bug, not a missing secret -- so it is used, and the
+    disagreement is printed rather than turned into a dead end.
+    """
+    tried = []
+    order = [platform] + [name for name in SECRET_READERS if name != platform]
+    for name in order:
+        reader = SECRET_READERS.get(name)
+        if reader is None:
+            continue
         try:
-            from google.colab import userdata
+            token = reader()
+        except Exception as exc:
+            tried.append(f"{name} store: {type(exc).__name__}")
+            continue
+        if token:
+            if name != platform:
+                print(f"  ! GH_TOKEN came from the {name} secret store, but the "
+                      f"platform was detected as {platform}.")
+                print(f"  ! evidence: {platform_evidence()}")
+            return token.strip()
+        tried.append(f"{name} store: no secret named GH_TOKEN")
 
-            token = userdata.get("GH_TOKEN")
-        except Exception:
-            token = None
-    elif platform == "kaggle":
-        try:
-            from kaggle_secrets import UserSecretsClient
+    token = os.environ.get("GH_TOKEN")
+    if token:
+        return token.strip()
+    tried.append("environment: GH_TOKEN not set")
 
-            token = UserSecretsClient().get_secret("GH_TOKEN")
-        except Exception:
-            token = None
-    else:
-        token = os.environ.get("GH_TOKEN")
-
-    if not token:
-        print(SECRET_SETUP[platform])
-        raise BootstrapError(f"GH_TOKEN not available on {platform}.")
-    return token.strip()
+    print(SECRET_SETUP.get(platform, SECRET_SETUP["local"]))
+    print("  tried: " + "; ".join(tried))
+    print(f"  detected platform: {platform} ({platform_evidence()})")
+    raise BootstrapError(f"GH_TOKEN not available on {platform}.")
 
 
 # --------------------------------------------------------------------------
@@ -496,7 +547,7 @@ def bootstrap(
 ) -> dict:
     """Prepare the session and return every resolved path. Idempotent."""
     platform = detect_platform()
-    print(f"[bootstrap] platform: {platform}")
+    print(f"[bootstrap] platform: {platform}  ({platform_evidence()})")
 
     token = get_github_token(platform)
 
