@@ -29,8 +29,10 @@ would encode the very domain difference the held-out fold exists to measure.
 from __future__ import annotations
 
 import csv
+import hashlib
 import inspect
 import json
+import time
 from pathlib import Path
 from typing import Callable, Optional, Sequence
 
@@ -76,6 +78,12 @@ DEFAULTS = {
     "cache_images": True,
     "cache_preload": True,      # decode everything up front, not lazily
     "cache_max_mb": 4096,       # refuse to start if the cache would exceed this
+    # Decoding ~1000 source images off Drive costs ~0.6 s EACH -- round-trip
+    # latency, not decode time -- so a cold preload is ~27 minutes and is paid
+    # again on every session start and every crash resume. Writing the decoded
+    # arrays to one file turns that into a single sequential read.
+    "persist_cache": True,
+    "cache_subdir": "tile_cache",
 
     "manifest_subdir": "manifests",
     "gt_subdir": "gt_boundaries",
@@ -306,6 +314,139 @@ def estimate_cache_bytes(rows: Sequence) -> dict:
             "per_dataset": {k: {"images": v["images"],
                                 "mb": round(v["bytes"] / 1024 ** 2, 1)}
                             for k, v in sorted(per_dataset.items())}}
+
+
+#: Bump when the on-disk layout changes; old files then simply miss.
+CACHE_FORMAT_VERSION = 1
+
+
+def cache_key(rows: Sequence) -> str:
+    """Identity of the decoded arrays a set of rows needs.
+
+    Derived from the source images and the crops applied to them -- the only
+    inputs that change what gets decoded. Tiling coordinates and augmentation
+    are deliberately NOT part of it: they act after decoding, so including them
+    would invalidate a perfectly good cache for no reason. If any of these do
+    change, the key changes, the file is not found, and the cache is rebuilt
+    rather than silently serving arrays that no longer match the manifest.
+    """
+    images = sorted({(r["dataset"], r["source_image"], int(r["crop_left"]),
+                      int(r["crop_top"]), int(r["crop_width"]),
+                      int(r["crop_height"])) for r in rows})
+    payload = json.dumps({"version": CACHE_FORMAT_VERSION, "images": images},
+                         sort_keys=True)
+    return hashlib.sha256(payload.encode()).hexdigest()[:16]
+
+
+def cache_files(cache_dir: Path, name: str, key: str) -> tuple:
+    """(blob, index) paths for one cached fold split."""
+    stem = f"{name}-{key}"
+    return Path(cache_dir) / f"{stem}.npy", Path(cache_dir) / f"{stem}.json"
+
+
+def write_persistent_cache(cache: dict, cache_dir: Path, name: str,
+                           key: str) -> dict:
+    """Write every decoded array into ONE file, plus a JSON index.
+
+    One file because the problem is per-file latency, not bandwidth: 1,000
+    small reads off Drive cost ~27 minutes, the same bytes as one sequential
+    read cost seconds. The blob is written to a temporary name and renamed, so
+    an interrupted write cannot leave a half-file that looks valid.
+    """
+    cache_dir = Path(cache_dir)
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    blob_path, index_path = cache_files(cache_dir, name, key)
+
+    entries, flat, offset = [], [], 0
+    for (dataset_name, image_name), pair in sorted(cache.items()):
+        for kind, array in (("image", pair[0]), ("gt", pair[1])):
+            arr = np.ascontiguousarray(array, dtype=np.uint8)
+            flat.append(arr.reshape(-1))
+            entries.append({"dataset": dataset_name, "image": image_name,
+                            "kind": kind, "offset": int(offset),
+                            "shape": [int(v) for v in arr.shape]})
+            offset += int(arr.size)
+
+    blob = np.concatenate(flat) if flat else np.zeros(0, dtype=np.uint8)
+    tmp = blob_path.with_suffix(".npy.tmp")
+    # Write through a file object: np.save appends ".npy" to a path that does
+    # not already end in it, which would leave the temp file somewhere else.
+    with open(tmp, "wb") as fh:
+        np.save(fh, blob, allow_pickle=False)
+    tmp.replace(blob_path)
+    index = {
+        "version": CACHE_FORMAT_VERSION,
+        "key": key,
+        "name": name,
+        "created_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "images": len(cache),
+        "bytes": int(blob.nbytes),
+        "entries": entries,
+    }
+    index_path.write_text(json.dumps(index))
+    return {"blob": str(blob_path), "index": str(index_path),
+            "mb": round(blob.nbytes / 1024 ** 2, 1), "images": len(cache)}
+
+
+def read_persistent_cache(cache_dir: Path, name: str, key: str,
+                          required: Optional[set] = None) -> tuple:
+    """Load a cached fold split, or say why it cannot be used.
+
+    Returns ``(cache_or_None, reason)``. Every rejection is explicit: a stale
+    key, an older format, a truncated blob or a missing image all rebuild, and
+    none of them ever returns arrays that do not match the manifest asked for.
+    """
+    blob_path, index_path = cache_files(Path(cache_dir), name, key)
+    if not index_path.is_file() or not blob_path.is_file():
+        others = sorted(Path(cache_dir).glob(f"{name}-*.json")) \
+            if Path(cache_dir).is_dir() else []
+        if others:
+            return None, (f"no cache for key {key}; {len(others)} cache(s) for "
+                          f"'{name}' exist under other keys -- the manifest or "
+                          "the crops changed, so it is being rebuilt")
+        return None, f"no cache file for '{name}' yet"
+
+    try:
+        index = json.loads(index_path.read_text())
+    except Exception as exc:
+        return None, f"cache index unreadable ({type(exc).__name__}); rebuilding"
+
+    if index.get("version") != CACHE_FORMAT_VERSION:
+        return None, (f"cache format {index.get('version')} != "
+                      f"{CACHE_FORMAT_VERSION}; rebuilding")
+    if index.get("key") != key:
+        return None, (f"cache index says key {index.get('key')}, manifest wants "
+                      f"{key}; rebuilding rather than loading the wrong arrays")
+
+    blob = np.load(blob_path, allow_pickle=False, mmap_mode=None)
+    cache, incomplete = {}, []
+    for entry in index["entries"]:
+        shape = tuple(entry["shape"])
+        size = int(np.prod(shape)) if shape else 0
+        end = entry["offset"] + size
+        if end > blob.size:
+            return None, ("cache blob is shorter than its index (truncated "
+                          "write?); rebuilding")
+        view = blob[entry["offset"]:end].reshape(shape)
+        slot = cache.setdefault((entry["dataset"], entry["image"]),
+                                {"image": None, "gt": None})
+        slot[entry["kind"]] = view
+
+    assembled = {}
+    for key_pair, slot in cache.items():
+        if slot["image"] is None or slot["gt"] is None:
+            incomplete.append(key_pair)
+            continue
+        assembled[key_pair] = (slot["image"], slot["gt"])
+    if incomplete:
+        return None, f"{len(incomplete)} cached pair(s) incomplete; rebuilding"
+
+    if required is not None:
+        missing = set(required) - set(assembled)
+        if missing:
+            return None, (f"{len(missing)} image(s) the manifest needs are not "
+                          "in the cache; rebuilding")
+    return assembled, f"loaded {len(assembled)} images from {blob_path.name}"
 
 
 def crop_tile(array: np.ndarray, x: int, y: int, patch: int) -> np.ndarray:
@@ -782,6 +923,65 @@ class TileDataset(_TorchDataset):
             "measured_mb": round(self.cache_bytes() / 1024 ** 2, 1),
             "seconds": round(time.perf_counter() - started, 2),
             "per_dataset": estimate["per_dataset"],
+        }
+
+    def required_images(self) -> set:
+        return {(r["dataset"], r["source_image"]) for r in self.rows}
+
+    def cache_key(self) -> str:
+        return cache_key(self.rows)
+
+    def ensure_cache(
+        self,
+        cache_dir: Optional[Path] = None,
+        name: str = "fold",
+        progress: Optional[Callable] = None,
+        persist: Optional[bool] = None,
+    ) -> dict:
+        """Fill the cache from disk if possible, else from the source images.
+
+        A cold build decodes ~1,000 files off Drive at roughly 0.6 s each --
+        about 27 minutes, paid again on every session start and every crash
+        resume. A warm load is one sequential read of a single file. Which of
+        the two happened is returned and printed, never inferred: the point of
+        this cache is a number you can watch, not a speedup you have to trust.
+        """
+        persist = bool(self.settings["persist_cache"]) if persist is None else persist
+        key = self.cache_key()
+        started = time.perf_counter()
+
+        if persist and cache_dir is not None:
+            loaded, reason = read_persistent_cache(
+                cache_dir, name, key, required=self.required_images())
+            if loaded is not None:
+                self._cache.update(loaded)
+                return {
+                    "source": "warm",
+                    "key": key,
+                    "reason": reason,
+                    "images": len(loaded),
+                    "seconds": round(time.perf_counter() - started, 2),
+                    "mb": round(self.cache_bytes() / 1024 ** 2, 1),
+                    "written": None,
+                }
+            cold_reason = reason
+        else:
+            cold_reason = ("persistent cache disabled"
+                           if not persist else "no cache directory given")
+
+        stats = self.preload(progress=progress)
+        written = None
+        if persist and cache_dir is not None:
+            written = write_persistent_cache(self._cache, cache_dir, name, key)
+        return {
+            "source": "cold",
+            "key": key,
+            "reason": cold_reason,
+            "images": stats["images_cached"],
+            "seconds": round(time.perf_counter() - started, 2),
+            "decode_seconds": stats["seconds"],
+            "mb": stats["measured_mb"],
+            "written": written,
         }
 
     # -- constructors -----------------------------------------------------

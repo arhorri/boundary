@@ -10,3 +10,4 @@ runs/
 *.npy
 notebooks/*-checkpoint.ipynb
 data.zip
+tile_cache/
