@@ -259,5 +259,14 @@ dataset:
   p_clahe: 0.2
   clahe_clip_limit: 2.0
 
+  # Source images live on Drive (Colab) or a read-only input (Kaggle), and
+  # every tile is a crop of one. Reading them per tile makes training
+  # I/O-bound: a measured run fell from 115.7 to 4.8 tiles/s between two
+  # sessions on identical hardware, purely on Drive variance. Decoding each
+  # source once costs a few hundred MB and removes that variance entirely.
+  cache_images: true
+  cache_preload: true       # decode everything up front, where the cost is visible
+  cache_max_mb: 4096        # refuse to start rather than exhaust the session
+
   manifest_subdir: manifests
   gt_subdir: gt_boundaries
