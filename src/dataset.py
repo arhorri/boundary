@@ -69,6 +69,14 @@ DEFAULTS = {
     "p_clahe": 0.2,
     "clahe_clip_limit": 2.0,
 
+    # Every tile is cropped from a full image that lives on Drive (Colab) or a
+    # read-only input (Kaggle). Decoding each source once and holding it in RAM
+    # turns a per-tile network read into a per-image one; the whole collection
+    # is a few hundred MB, which is nothing against a session's memory.
+    "cache_images": True,
+    "cache_preload": True,      # decode everything up front, not lazily
+    "cache_max_mb": 4096,       # refuse to start if the cache would exceed this
+
     "manifest_subdir": "manifests",
     "gt_subdir": "gt_boundaries",
 }
@@ -270,6 +278,34 @@ def read_pair(row: dict, crops: Optional[dict] = None,
             f"boundary map is {gt.shape[1]}x{gt.shape[0]}. Shapes must match "
             "exactly before a tile is cut.")
     return image, gt
+
+
+def estimate_cache_bytes(rows: Sequence) -> dict:
+    """Size of the image cache BEFORE anything is decoded.
+
+    The manifest already records each source image's post-crop dimensions, so
+    the footprint is arithmetic rather than a measurement that requires reading
+    the very files we are trying not to read twice. One byte per pixel for the
+    grayscale image, one for the boundary map.
+    """
+    seen, total = {}, 0
+    for row in rows:
+        key = (row["dataset"], row["source_image"])
+        if key in seen:
+            continue
+        pixels = int(row["crop_width"]) * int(row["crop_height"])
+        seen[key] = pixels
+        total += pixels * 2          # uint8 image + uint8 boundary map
+    per_dataset = {}
+    for (dataset_name, _), pixels in seen.items():
+        entry = per_dataset.setdefault(dataset_name, {"images": 0, "bytes": 0})
+        entry["images"] += 1
+        entry["bytes"] += pixels * 2
+    return {"images": len(seen), "bytes": int(total),
+            "mb": round(total / 1024 ** 2, 1),
+            "per_dataset": {k: {"images": v["images"],
+                                "mb": round(v["bytes"] / 1024 ** 2, 1)}
+                            for k, v in sorted(per_dataset.items())}}
 
 
 def crop_tile(array: np.ndarray, x: int, y: int, patch: int) -> np.ndarray:
@@ -599,6 +635,16 @@ except ImportError as exc:  # pragma: no cover - hosts ship torch
 class TileDataset(_TorchDataset):
     """Tiles named by a fold manifest, cropped on the fly from the full images.
 
+    Source images are decoded once and held in RAM (``dataset.cache_images``,
+    on by default): every tile is a crop of a full image stored on Drive or on
+    a read-only Kaggle input, and re-reading those per tile makes training
+    I/O-bound rather than GPU-bound. Call :meth:`preload` before training so
+    the cost is paid once, visibly, instead of during the first epoch.
+
+    With ``num_workers > 0`` each worker process inherits the cache by fork.
+    Large NumPy buffers stay shared copy-on-write, but the Python objects
+    around them do not, so more workers is not free -- measure both.
+
     Returns a dict, not a tuple. ``dataset`` and ``parent_id`` travel with
     every sample because validation sets are deliberately mixed -- the held-out
     dataset plus Steel1's validation parents -- and step 6 must report metrics
@@ -614,7 +660,7 @@ class TileDataset(_TorchDataset):
         augment: Optional[bool] = None,
         crops: Optional[dict] = None,
         roots: Optional[dict] = None,
-        cache_images: bool = True,
+        cache_images: Optional[bool] = None,
     ):
         self.rows = list(rows)
         if not self.rows:
@@ -627,7 +673,8 @@ class TileDataset(_TorchDataset):
         self.crops = crops if crops is not None else {}
         self.roots = roots or {}
         self.patch = int(self.settings["patch_size"])
-        self._cache_images = cache_images
+        self._cache_images = (bool(self.settings["cache_images"])
+                              if cache_images is None else bool(cache_images))
         self._cache = {}
 
         self.spatial = spatial_transform(self.settings) if self.augment else None
@@ -674,6 +721,67 @@ class TileDataset(_TorchDataset):
             "dataset": row["dataset"],
             "parent_id": row["parent_id"],
             "tile_id": row["tile_id"],
+        }
+
+    # -- cache ------------------------------------------------------------
+    def cache_estimate(self) -> dict:
+        """What the cache will cost, from the manifest alone."""
+        return estimate_cache_bytes(self.rows)
+
+    def cache_bytes(self) -> int:
+        """What the cache costs right now, measured on the arrays held."""
+        return int(sum(image.nbytes + gt.nbytes
+                       for image, gt in self._cache.values()))
+
+    def preload(self, progress: Optional[Callable] = None) -> dict:
+        """Decode every source image once, up front, and hold it.
+
+        Without this the cache only pays off for images that serve many tiles.
+        Steel1 is 902 images serving exactly ONE tile each, so a lazy cache
+        never hits for 40% of the fold and every epoch re-reads them over the
+        network. Preloading turns the whole training run's I/O into a single
+        pass, done once, where its cost is visible instead of smeared across
+        every epoch.
+
+        Raises before reading anything if the cache would exceed
+        ``dataset.cache_max_mb``.
+        """
+        import time
+
+        if not self._cache_images:
+            raise DatasetError(
+                "preload() was called but dataset.cache_images is off; either "
+                "enable the cache or do not preload.")
+
+        estimate = self.cache_estimate()
+        cap_mb = float(self.settings["cache_max_mb"])
+        if estimate["mb"] > cap_mb:
+            raise DatasetError(
+                f"the image cache would need {estimate['mb']:.0f} MB for "
+                f"{estimate['images']} source images, over the "
+                f"dataset.cache_max_mb cap of {cap_mb:.0f} MB. Per dataset: "
+                f"{estimate['per_dataset']}. Raise the cap deliberately or set "
+                "dataset.cache_images: false and accept the I/O.")
+
+        started = time.perf_counter()
+        pairs = []
+        seen = set()
+        for row in self.rows:
+            key = (row["dataset"], row["source_image"])
+            if key not in seen and key not in self._cache:
+                seen.add(key)
+                pairs.append(row)
+        iterator = progress(pairs) if progress else pairs
+        for row in iterator:
+            self._pair(row)
+
+        return {
+            "images_decoded": len(pairs),
+            "images_cached": len(self._cache),
+            "estimated_mb": estimate["mb"],
+            "measured_mb": round(self.cache_bytes() / 1024 ** 2, 1),
+            "seconds": round(time.perf_counter() - started, 2),
+            "per_dataset": estimate["per_dataset"],
         }
 
     # -- constructors -----------------------------------------------------

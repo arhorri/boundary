@@ -334,6 +334,60 @@ def test_normalize_flat_tile_does_not_divide_by_zero():
 
 
 # --------------------------------------------------------------------------
+# image cache
+# --------------------------------------------------------------------------
+def test_cache_estimate_matches_the_manifest(rows):
+    """The footprint is arithmetic on recorded dimensions, not a measurement."""
+    est = ds.estimate_cache_bytes(rows)
+    unique = {(r["dataset"], r["source_image"]) for r in rows}
+    assert est["images"] == len(unique)
+    expected = sum(int(r["crop_width"]) * int(r["crop_height"]) * 2
+                   for r in {(r["dataset"], r["source_image"]): r
+                             for r in rows}.values())
+    assert est["bytes"] == expected
+    assert sum(v["images"] for v in est["per_dataset"].values()) == est["images"]
+
+
+def test_preload_fills_the_cache_and_reports_its_size(settings, rows, roots):
+    row = _first_available(rows, roots)
+    if row is None:
+        pytest.skip("source images are not mounted on this host")
+    dataset = ds.TileDataset([row] * 5, settings=settings, augment=False,
+                             crops=ds.load_crops(), roots=roots)
+    assert dataset.cache_bytes() == 0
+    stats = dataset.preload()
+    assert stats["images_decoded"] == 1
+    assert dataset.cache_bytes() > 0
+    assert stats["measured_mb"] > 0
+    # A second preload is a no-op: the images are already held.
+    assert dataset.preload()["images_decoded"] == 0
+
+
+def test_preload_refuses_to_exceed_the_cap(settings, rows, roots):
+    """Better to stop than to exhaust a session's memory silently."""
+    tiny = dict(settings)
+    tiny["cache_max_mb"] = 0.000001
+    dataset = ds.TileDataset(rows[:5], settings=tiny, augment=False,
+                             crops={}, roots=roots)
+    with pytest.raises(ds.DatasetError) as err:
+        dataset.preload()
+    assert "cache_max_mb" in str(err.value)
+
+
+def test_cache_can_be_switched_off(settings, rows, roots):
+    row = _first_available(rows, roots)
+    if row is None:
+        pytest.skip("source images are not mounted on this host")
+    dataset = ds.TileDataset([row], settings=settings, augment=False,
+                             crops=ds.load_crops(), roots=roots,
+                             cache_images=False)
+    dataset[0]
+    assert dataset.cache_bytes() == 0
+    with pytest.raises(ds.DatasetError):
+        dataset.preload()
+
+
+# --------------------------------------------------------------------------
 # sampler
 # --------------------------------------------------------------------------
 def test_sampler_weights_come_from_fold_stats(settings, rows, roots):
