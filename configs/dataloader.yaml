@@ -4,22 +4,29 @@
 # on a host updates only that host's entry.
 #
 # Read it as: hosts[<platform>][num_workers], falling back to 2.
+#
+# Both cached and uncached rates are recorded on purpose. The uncached
+# numbers measure Drive I/O, which has varied 24x between sessions on
+# identical hardware; keeping them visible is how that stays diagnosable
+# instead of being hidden behind the cache.
 hosts:
   colab:
-    measured_utc: '2026-09-05T09:12:59Z'
+    measured_utc: '2026-09-05T10:23:46Z'
     gpu: Tesla T4
     cpu_count: 2
     batch_size: 8
     batches_timed: 200
-    num_workers: 4
-    seconds_by_workers:
-      0: 335.525
-      2: 53.606
-      4: 15.985
-    tiles_per_second:
-      0: 4.8
-      2: 29.8
-      4: 100.1
+    num_workers: 0
+    cache_images: true
+    cache_mb: 165.7
+    cached_tiles_per_second:
+      0: 361.7
+      2: 327.3
+      4: 304.5
+    uncached_tiles_per_second:
+      0: 52.6
+      2: 66.3
+      4: 55.8
   kaggle:
     measured_utc: null
     cpu_count: 2
