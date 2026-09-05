@@ -268,5 +268,14 @@ dataset:
   cache_preload: true       # decode everything up front, where the cost is visible
   cache_max_mb: 4096        # refuse to start rather than exhaust the session
 
+  # A cold decode of ~1000 source images off Drive costs ~0.6 s EACH -- that is
+  # per-file round-trip latency, not decode time -- so ~27 minutes, paid again
+  # on every session start and every crash resume. The decoded arrays are
+  # therefore written to ONE file under PERSISTENT_DIR, keyed by a hash of the
+  # source images and their crops: a changed manifest rebuilds and says so,
+  # rather than silently serving arrays that no longer match.
+  persist_cache: true
+  cache_subdir: tile_cache
+
   manifest_subdir: manifests
   gt_subdir: gt_boundaries

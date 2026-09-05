@@ -388,6 +388,103 @@ def test_cache_can_be_switched_off(settings, rows, roots):
 
 
 # --------------------------------------------------------------------------
+# persistent cache
+# --------------------------------------------------------------------------
+def _fake_cache(seed: int = 0) -> dict:
+    rng = np.random.default_rng(seed)
+    image = rng.integers(0, 255, size=(6, 8), dtype=np.uint8)
+    return {("MetalDam", "m1.jpg"): (image, (image > 128).astype(np.uint8)),
+            ("uhcs1", "u1.png"): (np.full((5, 5), 7, np.uint8),
+                                  np.zeros((5, 5), np.uint8))}
+
+
+def _fake_rows() -> list:
+    return [
+        {"dataset": "MetalDam", "source_image": "m1.jpg", "crop_left": 0,
+         "crop_top": 0, "crop_width": 8, "crop_height": 6},
+        {"dataset": "uhcs1", "source_image": "u1.png", "crop_left": 0,
+         "crop_top": 0, "crop_width": 5, "crop_height": 5},
+    ]
+
+
+def test_persistent_cache_round_trips(tmp_path):
+    rows, cache = _fake_rows(), _fake_cache()
+    key = ds.cache_key(rows)
+    ds.write_persistent_cache(cache, tmp_path, "dev-train", key)
+
+    loaded, reason = ds.read_persistent_cache(
+        tmp_path, "dev-train", key, required=set(cache))
+    assert loaded is not None, reason
+    for pair_key, (image, gt) in cache.items():
+        assert np.array_equal(loaded[pair_key][0], image)
+        assert np.array_equal(loaded[pair_key][1], gt)
+
+
+def test_stale_key_rebuilds_rather_than_loading_wrong_arrays(tmp_path):
+    """The failure this guards against is silent: right shapes, wrong pixels."""
+    rows, cache = _fake_rows(), _fake_cache()
+    ds.write_persistent_cache(cache, tmp_path, "dev-train", ds.cache_key(rows))
+
+    # The manifest changed: one image is now cropped to a different height.
+    changed = [dict(rows[0], crop_height=7), rows[1]]
+    loaded, reason = ds.read_persistent_cache(
+        tmp_path, "dev-train", ds.cache_key(changed))
+    assert loaded is None
+    assert "rebuil" in reason.lower()
+
+
+def test_tampered_index_key_is_refused(tmp_path):
+    rows, cache = _fake_rows(), _fake_cache()
+    key = ds.cache_key(rows)
+    ds.write_persistent_cache(cache, tmp_path, "dev-train", key)
+
+    _, index_path = ds.cache_files(tmp_path, "dev-train", key)
+    doc = json.loads(index_path.read_text())
+    doc["key"] = "deadbeefdeadbeef"
+    index_path.write_text(json.dumps(doc))
+
+    loaded, reason = ds.read_persistent_cache(tmp_path, "dev-train", key)
+    assert loaded is None
+    assert "wrong arrays" in reason or "rebuilding" in reason
+
+
+def test_cache_missing_an_image_rebuilds(tmp_path):
+    rows, cache = _fake_rows(), _fake_cache()
+    key = ds.cache_key(rows)
+    ds.write_persistent_cache(cache, tmp_path, "dev-train", key)
+    loaded, reason = ds.read_persistent_cache(
+        tmp_path, "dev-train", key,
+        required=set(cache) | {("Steel1", "later.png")})
+    assert loaded is None and "not in the cache" in reason
+
+
+def test_cache_key_ignores_tiling_but_tracks_crops():
+    """Coordinates act after decoding; crops decide what is decoded."""
+    rows = _fake_rows()
+    same_images = [dict(r, x=999, y=999, boundary_fraction=0.5) for r in rows]
+    assert ds.cache_key(rows) == ds.cache_key(same_images)
+    assert ds.cache_key(rows) != ds.cache_key(
+        [dict(rows[0], crop_top=1), rows[1]])
+
+
+def test_ensure_cache_reports_cold_then_warm(settings, rows, roots, tmp_path):
+    row = _first_available(rows, roots)
+    if row is None:
+        pytest.skip("source images are not mounted on this host")
+    crops = ds.load_crops()
+    first = ds.TileDataset([row], settings=settings, augment=False,
+                           crops=crops, roots=roots)
+    cold = first.ensure_cache(tmp_path, name="unit-fold")
+    assert cold["source"] == "cold" and cold["written"]
+
+    second = ds.TileDataset([row], settings=settings, augment=False,
+                            crops=crops, roots=roots)
+    warm = second.ensure_cache(tmp_path, name="unit-fold")
+    assert warm["source"] == "warm", warm["reason"]
+    assert np.array_equal(first[0]["image"], second[0]["image"])
+
+
+# --------------------------------------------------------------------------
 # sampler
 # --------------------------------------------------------------------------
 def test_sampler_weights_come_from_fold_stats(settings, rows, roots):
