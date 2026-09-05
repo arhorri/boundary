@@ -32,44 +32,55 @@ class PathConfigError(RuntimeError):
 def detect_platform() -> str:
     """Return ``"colab"``, ``"kaggle"`` or ``"local"``.
 
-    Kaggle is tested FIRST and by evidence that only Kaggle has. Its image can
-    carry an importable ``google.colab`` shim, so "does google.colab import?"
-    answers yes on both hosts and cannot be the deciding test. Getting this
-    backwards resolves every path against the wrong host.
+    Both host images carry the other's markers, so most "obvious" tests lie:
 
-    Kept deliberately identical to the copy in scripts/bootstrap_session.py,
-    which must run before this module exists on the host.
+    * Colab ships an EMPTY ``/kaggle/input`` directory.
+    * Kaggle sets ``COLAB_RELEASE_TAG``, and has ``/content``.
+    * Kaggle's image has an importable ``google.colab`` shim.
+
+    What actually discriminates: the ``KAGGLE_*`` environment variables and
+    ``/kaggle/working``, which exist only on Kaggle. Everything else is
+    checked afterwards, and only as a fallback. Getting this wrong sends the
+    session to the wrong secret store, the wrong data root and the wrong
+    branch -- all of which happened before this ordering was pinned down.
+
+    Kept deliberately identical to the copy in
+    scripts/bootstrap_session.py, which must run before this module
+    exists on the host.
     """
     for var in ("KAGGLE_KERNEL_RUN_TYPE", "KAGGLE_URL_BASE",
                 "KAGGLE_DATA_PROXY_TOKEN", "KAGGLE_CONTAINER_NAME"):
         if os.environ.get(var):
             return "kaggle"
-    for marker in ("input", "working"):
-        if Path(os.sep, "kaggle", marker).is_dir():
-            return "kaggle"
+    if Path(os.sep, "kaggle", "working").is_dir():
+        return "kaggle"
 
     if "COLAB_RELEASE_TAG" in os.environ or "COLAB_GPU" in os.environ:
         return "colab"
-    if Path(os.sep, "content").is_dir():
-        try:
-            import google.colab  # noqa: F401
+    try:
+        import google.colab  # noqa: F401
 
-            return "colab"
-        except Exception:
-            pass
+        return "colab"
+    except Exception:
+        pass
     return "local"
 
 
 def platform_evidence() -> str:
-    """Why detect_platform() answered as it did -- printed, never guessed at."""
-    hits = [f"{v}={os.environ[v]!r}" for v in (
-        "KAGGLE_KERNEL_RUN_TYPE", "KAGGLE_URL_BASE", "COLAB_RELEASE_TAG",
-        "COLAB_GPU") if os.environ.get(v)]
-    for path in (Path(os.sep, "kaggle", "input"), Path(os.sep, "kaggle", "working"),
-                 Path(os.sep, "content")):
+    """Why detect_platform() answered as it did -- printed, never guessed at.
+
+    Markers both hosts have are labelled as such, so a future reader does not
+    repeat the mistake of treating one of them as decisive.
+    """
+    parts = [f"{var}={os.environ[var]!r}" for var in (
+        "KAGGLE_KERNEL_RUN_TYPE", "KAGGLE_URL_BASE", "KAGGLE_DATA_PROXY_TOKEN",
+        "COLAB_RELEASE_TAG", "COLAB_GPU") if os.environ.get(var)]
+    for path, shared in ((Path(os.sep, "kaggle", "working"), False),
+                         (Path(os.sep, "kaggle", "input"), True),
+                         (Path(os.sep, "content"), True)):
         if path.is_dir():
-            hits.append(f"{path} exists")
-    return ", ".join(hits) or "no host markers found"
+            parts.append(f"{path} exists" + (" [both hosts]" if shared else ""))
+    return ", ".join(parts) or "no host markers found"
 
 
 def _deep_merge(base: dict, overlay: dict) -> dict:
