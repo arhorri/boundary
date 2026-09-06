@@ -53,7 +53,7 @@ train:
   epochs: null
   # Measured by notebooks/05_model_and_loss.ipynb: the largest batch that fits
   # at patch 256 WITH the optimizer state, on the host that ran it.
-  batch_size: null
+  batch_size: 64   # measured on colab / Tesla T4, patch 256, peak 9.83 GB incl. AdamW state
   lr: null
   optimizer: null
   scheduler: null

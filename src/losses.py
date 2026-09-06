@@ -24,12 +24,18 @@ Why three terms.
 * **Dice** is per-image and scale-free: it measures overlap as a fraction of
   what is there, so a tile with few boundary pixels still produces a gradient
   of the same magnitude as a dense one. BCE, being a per-pixel mean, does not.
-* **clDice** measures whether the line is CONNECTED, by comparing each mask
-  against the other's soft skeleton. Dice cannot see connectivity: a boundary
-  broken by a handful of pixels loses a handful of pixels of overlap and is
-  scored as almost perfect. Downstream that break is not almost perfect -- it
-  is two regions merged into one by the watershed that Phase 1 runs on this
-  prior.
+* **clDice** compares each mask against the other's soft SKELETON, and on this
+  data what that buys is measured in notebook 05 rather than assumed. It is
+  not extra sensitivity to gaps: what it removes is Dice's sensitivity to
+  THICKNESS. Dilating every boundary by one pixel doubles the predicted pixel
+  count and costs Dice ~0.34-0.39; it costs clDice ~0.007 and ~0.000 on the
+  same two tiles, because a dilated line has the same centreline. That matters
+  because thickness is the one property of this ground truth that is
+  arbitrary -- step 2 dilated everything to a uniform
+  ``boundary_gt.line_width_px = 2``, so the width is a convention, not a
+  measurement, and a loss dominated by it is optimising a convention. Adding
+  clDice to Dice therefore reweights the loss away from width and towards
+  where the line runs.
 
 Numerical safety. Every ratio is smoothed with ``smooth`` (default 1.0), NOT
 with ``eps``. An epsilon of 1e-6 is not enough and the failure is quiet: a
@@ -207,14 +213,25 @@ def soft_open(x: "torch.Tensor") -> "torch.Tensor":
 def soft_skeletonize(x: "torch.Tensor", iters: int) -> "torch.Tensor":
     """Differentiable skeleton: what survives repeated erosion, accumulated.
 
-    Note what this does on a TWO-pixel-wide line, which is what
-    ``boundary_gt.line_width_px = 2`` produces: one erosion removes it
-    entirely, so ``open(x)`` is empty and the skeleton is the line itself. On
-    this data the skeleton of the ground truth IS the ground truth -- which is
-    a fact about 2 px lines, not a bug, and notebook 05 measures its
-    consequence rather than assuming it away. The term still does real work on
-    the PREDICTION, which during training is a soft, over-thick band whose
-    skeleton is a genuine centreline.
+    What this does to a TWO-pixel line -- the width
+    ``boundary_gt.line_width_px = 2`` produces -- depends on whether the line
+    is isolated or part of a network, and the difference is not a detail:
+
+    * **An isolated 2 px line comes back unchanged.** One erosion removes it
+      (the 3x1 min-pool at every line pixel reaches a background row), so
+      ``open(x)`` is empty and ``skel = relu(x - 0) = x``.
+    * **A JUNCTION does not.** Where two 2 px lines cross, the shape is three
+      or more pixels thick in both directions, so erosion survives there, the
+      opening comes back as a block around the crossing, and
+      ``relu(x - open(x))`` CARVES A HOLE out of the skeleton at every
+      junction. Later iterations restore the eroded core but not the whole
+      hole.
+
+    So on a real boundary network the skeleton is the mask minus a patch at
+    each junction -- neither "the mask itself" nor a thinned centreline.
+    notebooks/05 measures this directly (input, skeleton, pixel counts, max
+    absolute difference) instead of reasoning about it, and
+    tests/test_losses.py pins both halves.
     """
     if int(iters) < 1:
         raise LossError(f"cldice_iters must be >= 1, got {iters}")
@@ -272,6 +289,45 @@ def cldice_term(logits: "torch.Tensor", target: "torch.Tensor",
     t_rec = ((st * p).sum(dim=1) + smooth) / (st.sum(dim=1) + smooth)
     cl_dice = 2.0 * t_prec * t_rec / (t_prec + t_rec + eps)
     return (1.0 - cl_dice).mean()
+
+
+def cldice_parts(logits: "torch.Tensor", target: "torch.Tensor",
+                 iters: int = 3, smooth: float = 1.0,
+                 eps: float = 1e-6) -> dict:
+    """Every intermediate quantity :func:`cldice_term` is built from.
+
+    Diagnostics only -- detached floats, averaged over the batch. It exists so
+    that a notebook or a test can say WHY clDice returned what it returned
+    without re-implementing the term next to it and drifting from it.
+
+    The skeleton sums are the ones that matter when a clDice loss comes out at
+    exactly 0: a term whose two skeletons are both non-empty and overlapping is
+    genuinely indifferent to the difference between the masks, whereas one
+    whose predicted skeleton is EMPTY returns ``t_prec = smooth / smooth = 1``
+    and is merely degenerate. Those two look identical from the loss value
+    alone and are not the same thing at all.
+    """
+    with torch.no_grad():
+        probs = torch.sigmoid(logits)
+        skel_pred = soft_skeletonize(probs, iters)
+        skel_true = soft_skeletonize(target, iters)
+        sp, st = _flatten(skel_pred), _flatten(skel_true)
+        p, t = _flatten(probs), _flatten(target)
+        t_prec = ((sp * t).sum(dim=1) + smooth) / (sp.sum(dim=1) + smooth)
+        t_rec = ((st * p).sum(dim=1) + smooth) / (st.sum(dim=1) + smooth)
+        cl = 2.0 * t_prec * t_rec / (t_prec + t_rec + eps)
+        return {
+            "pred_sum": float(p.sum(dim=1).mean()),
+            "true_sum": float(t.sum(dim=1).mean()),
+            "skel_pred_sum": float(sp.sum(dim=1).mean()),
+            "skel_true_sum": float(st.sum(dim=1).mean()),
+            "skel_pred_on_true": float((sp * t).sum(dim=1).mean()),
+            "skel_true_on_pred": float((st * p).sum(dim=1).mean()),
+            "t_prec": float(t_prec.mean()),
+            "t_rec": float(t_rec.mean()),
+            "cldice": float(cl.mean()),
+            "loss": float((1.0 - cl).mean()),
+        }
 
 
 # --------------------------------------------------------------------------
