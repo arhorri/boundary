@@ -23,3 +23,37 @@ session:
     dataset_slug: phase11-microstructure-data
     gt_dataset_slug: phase11-gt-boundaries
     branch: kaggle
+
+    # Checkpoint survival across sessions. Consumed by src/kaggle_persist.py,
+    # which exists only on this branch. Every key is optional; the module's
+    # DEFAULTS cover them, and an unknown key here is an error rather than a
+    # typo that silently does nothing.
+    persist:
+      # Kaggle kills a free GPU session at its limit with no grace period, so
+      # the budget sits under the 9 h allowance and src/kaggle_persist.py stops
+      # the trainer AFTER a completed epoch's checkpoint is on disk, never
+      # mid-epoch.
+      session_budget_hours: 8.5
+      # Held back from the budget so the run still has time to write
+      # reports/train_<fold>.md and push it. A session killed during
+      # push_results loses the only artefact git ever sees.
+      reserve_minutes: 25
+      # Input dataset slugs to search for last.pt, most preferred first. Empty
+      # means "scan every attached dataset", which is what you want when the
+      # checkpoint came from a saved version of the training notebook and
+      # Kaggle generated the slug.
+      resume_input_slugs: []
+      # Refuse to stage a checkpoint larger than this. A wrong path that
+      # happens to contain a last.pt should fail loudly, not fill the disk.
+      max_stage_mb: 2048
+
+# Kaggle-only dataset overrides.
+dataset:
+  # OFF on Kaggle, deliberately. The persistent tile cache exists because a
+  # cold decode off Google Drive costs ~0.6 s per file and is paid again on
+  # every Colab session start. /kaggle/input is a local SSD mount with none of
+  # that latency, so the cache buys nothing here -- and it would write several
+  # GB into /kaggle/working, the directory whose size decides whether Save
+  # Version can capture the 93 MB checkpoint that actually matters.
+  # In-memory caching (cache_images) stays ON: that one is still worth it.
+  persist_cache: false
