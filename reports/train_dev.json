@@ -1,0 +1,3952 @@
+{
+ "fold": "dev",
+ "held_out": "uhcs2",
+ "generated_utc": "2026-09-06T09:35:36Z",
+ "summary": {
+  "fold": "dev",
+  "held_out": "uhcs2",
+  "platform": "colab",
+  "device": "cuda",
+  "gpu": "Tesla T4",
+  "config_hash": "830d000d24237f0d",
+  "seed": {
+   "seed": 0,
+   "deterministic": false,
+   "cudnn_benchmark": true,
+   "note": "statistically reproducible; cudnn.benchmark picks algorithms by timing, so bitwise equality across runs is not claimed"
+  },
+  "amp": true,
+  "num_workers": 4,
+  "batch_size": 64,
+  "epochs": 40,
+  "steps_per_epoch": 36,
+  "lr": 0.0003,
+  "encoder_lr": 2.9999999999999997e-05,
+  "weight_decay": 0.0001,
+  "warmup_epochs": 2,
+  "grad_clip": 1.0,
+  "pos_weight": 7.111000061035156,
+  "freeze_encoder_epochs": 3,
+  "train_tiles": 2333,
+  "val_tiles": 454,
+  "val_composition": {
+   "Steel1": {
+    "tiles": 189,
+    "parents": 4
+   },
+   "uhcs2": {
+    "tiles": 265,
+    "parents": 23
+   }
+  },
+  "train_composition": {
+   "MetalDam": {
+    "tiles": 1332,
+    "parents": 42
+   },
+   "Steel1": {
+    "tiles": 713,
+    "parents": 15
+   },
+   "uhcs1": {
+    "tiles": 288,
+    "parents": 24
+   }
+  },
+  "parameters": {
+   "total": 24430097,
+   "trainable": 24430097,
+   "frozen": 0,
+   "encoder_total": 21278400,
+   "encoder_trainable": 21278400,
+   "decoder_and_head_total": 3151697
+  },
+  "checkpoint_dir": "/content/drive/MyDrive/phase11-persistent/checkpoints/dev",
+  "log_dir": "/content/drive/MyDrive/phase11-persistent/logs/dev",
+  "cache": {
+   "train": {
+    "source": "warm",
+    "seconds": 6.57,
+    "images": 779
+   },
+   "val": {
+    "source": "warm",
+    "seconds": 2.29,
+    "images": 212
+   }
+  },
+  "sources": {
+   "num_workers": "configs/dataloader.yaml hosts.colab.num_workers, measured 2026-09-06T07:14:10Z",
+   "batch_size": "configs/default.yaml train.batch_size",
+   "pos_weight": "configs/fold_stats.yaml folds.dev.pos_weight",
+   "sampler_weights": "configs/fold_stats.yaml folds.dev.sampling.weights"
+  },
+  "probe_tiles": 24
+ },
+ "best": {
+  "metric": 0.14870468323384503,
+  "epoch": 15,
+  "key": "uhcs2"
+ },
+ "freeze_transitions": [
+  {
+   "epoch": 3,
+   "trainable_before": 3151697,
+   "trainable_after": 24430097,
+   "optimized_before": 3151697,
+   "optimized_after": 24430097,
+   "groups": 2
+  }
+ ],
+ "final_epoch": 39,
+ "history": [
+  {
+   "epoch": 0,
+   "seconds": 54.030274222,
+   "eta_seconds": 2107.1808126720002,
+   "lr": 0.00015,
+   "trainable_params": 3151697,
+   "optimized_params": 3151697,
+   "encoder_frozen": true,
+   "freeze_changed": false,
+   "train": {
+    "total": 2.5005203551716275,
+    "bce": 1.3280269437366061,
+    "dice": 0.7883478966024187,
+    "cldice": 0.7682910743686888
+   },
+   "val": {
+    "total": 2.3918862846979487,
+    "bce": 1.02940148824112,
+    "dice": 0.9153533026510399,
+    "cldice": 0.8942630020532314
+   },
+   "metrics": {
+    "pooled": {
+     "iou": 0.04178627915171775,
+     "dice": 0.08022044441925756,
+     "precision": 0.04304532094000501,
+     "recall": 0.5882450801806829,
+     "f1": 0.08022044441925756,
+     "boundary_precision": 0.11061413309325523,
+     "boundary_recall": 0.891684303258119,
+     "boundary_f": 0.1968134093011446,
+     "tiles": 454,
+     "true_fraction": 0.0478801643270753,
+     "pred_fraction": 0.6543166710941802,
+     "prob_min": 4.898568931821501e-06,
+     "prob_max": 0.9998736381530762,
+     "prob_mean": 0.5282310515248303
+    },
+    "per_dataset": {
+     "Steel1": {
+      "iou": 0.036606323171332514,
+      "dice": 0.07062724267268847,
+      "precision": 0.03722925609458761,
+      "recall": 0.6862998526731817,
+      "f1": 0.07062724267268848,
+      "boundary_precision": 0.0967927743836765,
+      "boundary_recall": 0.9179956903269242,
+      "boundary_f": 0.17512092978774896,
+      "tiles": 189,
+      "true_fraction": 0.038852832935474535,
+      "pred_fraction": 0.716229554837343,
+      "prob_min": 0.00821969285607338,
+      "prob_max": 0.9943140745162964,
+      "prob_mean": 0.530123283308019
+     },
+     "uhcs2": {
+      "iou": 0.04602253929147983,
+      "dice": 0.08799531092829617,
+      "precision": 0.04791447730004288,
+      "recall": 0.538223271906987,
+      "f1": 0.08799531092829617,
+      "boundary_precision": 0.12218524834967054,
+      "boundary_recall": 0.8782617729119141,
+      "boundary_f": 0.21452536827775892,
+      "tiles": 265,
+      "true_fraction": 0.05431852520636792,
+      "pred_fraction": 0.6101599351415095,
+      "prob_min": 4.898568931821501e-06,
+      "prob_max": 0.9998736381530762,
+      "prob_mean": 0.5268814975360654
+     }
+    }
+   },
+   "cldice_probe": {
+    "skel_pred_sum": 3341.29443359375,
+    "skel_true_sum": 1072.291748046875,
+    "skel_pred_on_true": 190.02853393554688,
+    "t_prec": 0.05580805242061615,
+    "t_rec": 0.5229341983795166,
+    "skeleton_delta": 0.4746996760368347,
+    "skeleton_delta_max": 0.9805060625076294,
+    "pred_sum": 34451.2109375,
+    "true_sum": 2845.166748046875,
+    "dice": 0.9206315875053406,
+    "cldice": 0.900051474571228,
+    "tiles": 24,
+    "degenerate": false,
+    "verdict": "soft skeleton differs from the prediction -- clDice is measuring a real centreline"
+   },
+   "score": 0.08799531092829617,
+   "score_key": "uhcs2",
+   "is_best": true,
+   "checkpoints": {
+    "last": "/content/drive/MyDrive/phase11-persistent/checkpoints/dev/last.pt",
+    "best": "/content/drive/MyDrive/phase11-persistent/checkpoints/dev/best.pt"
+   }
+  },
+  {
+   "epoch": 1,
+   "seconds": 19.637771416999954,
+   "eta_seconds": 1447.3764356220004,
+   "lr": 0.0003,
+   "trainable_params": 3151697,
+   "optimized_params": 3151697,
+   "encoder_frozen": true,
+   "freeze_changed": false,
+   "train": {
+    "total": 2.1181646982828775,
+    "bce": 1.086155547036065,
+    "dice": 0.7549102455377579,
+    "cldice": 0.554197795689106
+   },
+   "val": {
+    "total": 2.3502612849164115,
+    "bce": 1.0394937319902597,
+    "dice": 0.9038122377731727,
+    "cldice": 0.8139107952033896
+   },
+   "metrics": {
+    "pooled": {
+     "iou": 0.07326269341948777,
+     "dice": 0.1365233206533395,
+     "precision": 0.07588875734168682,
+     "recall": 0.6791958416251637,
+     "f1": 0.13652332065333952,
+     "boundary_precision": 0.1891006759626399,
+     "boundary_recall": 0.8724079475219273,
+     "boundary_f": 0.3108273054815634,
+     "tiles": 454,
+     "true_fraction": 0.0478801643270753,
+     "pred_fraction": 0.4285220847781009,
+     "prob_min": 0.0004013350699096918,
+     "prob_max": 0.9999834299087524,
+     "prob_mean": 0.5546990025148518
+    },
+    "per_dataset": {
+     "Steel1": {
+      "iou": 0.09574050937692694,
+      "dice": 0.1747503328709971,
+      "precision": 0.10084905790365338,
+      "recall": 0.6539835384618582,
+      "f1": 0.17475033287099706,
+      "boundary_precision": 0.2466427173185446,
+      "boundary_recall": 0.8537204697003385,
+      "boundary_f": 0.3827171591369173,
+      "tiles": 189,
+      "true_fraction": 0.038852832935474535,
+      "pred_fraction": 0.25195191398499506,
+      "prob_min": 0.002243087626993656,
+      "prob_max": 0.9996800422668457,
+      "prob_mean": 0.5071641354964523
+     },
+     "uhcs2": {
+      "iou": 0.06581381915398736,
+      "dice": 0.1234996543884719,
+      "precision": 0.06779931732731609,
+      "recall": 0.6920576836642102,
+      "f1": 0.1234996543884719,
+      "boundary_precision": 0.17045174620727013,
+      "boundary_recall": 0.8819412054037093,
+      "boundary_f": 0.2856887596654607,
+      "tiles": 265,
+      "true_fraction": 0.05431852520636792,
+      "pred_fraction": 0.5544532631928066,
+      "prob_min": 0.0004013350699096918,
+      "prob_max": 0.9999834299087524,
+      "prob_mean": 0.5886012284260875
+     }
+    }
+   },
+   "cldice_probe": {
+    "skel_pred_sum": 1185.25732421875,
+    "skel_true_sum": 1072.291748046875,
+    "skel_pred_on_true": 108.67645263671875,
+    "t_prec": 0.10230959951877594,
+    "t_rec": 0.6212695837020874,
+    "skeleton_delta": 0.539961040019989,
+    "skeleton_delta_max": 0.9998476505279541,
+    "pred_sum": 36572.140625,
+    "true_sum": 2845.166748046875,
+    "dice": 0.9118506908416748,
+    "cldice": 0.8286210298538208,
+    "tiles": 24,
+    "degenerate": false,
+    "verdict": "soft skeleton differs from the prediction -- clDice is measuring a real centreline"
+   },
+   "score": 0.1234996543884719,
+   "score_key": "uhcs2",
+   "is_best": true,
+   "checkpoints": {
+    "last": "/content/drive/MyDrive/phase11-persistent/checkpoints/dev/last.pt",
+    "best": "/content/drive/MyDrive/phase11-persistent/checkpoints/dev/best.pt"
+   }
+  },
+  {
+   "epoch": 2,
+   "seconds": 19.47815504700003,
+   "eta_seconds": 1200.3308674519997,
+   "lr": 0.0002995205688226078,
+   "trainable_params": 3151697,
+   "optimized_params": 3151697,
+   "encoder_frozen": true,
+   "freeze_changed": false,
+   "train": {
+    "total": 1.8837151494291093,
+    "bce": 0.9553792360756133,
+    "dice": 0.7215897854831483,
+    "cldice": 0.4134922640191184
+   },
+   "val": {
+    "total": 2.2738469140645168,
+    "bce": 0.9794329872215372,
+    "dice": 0.9041783276633544,
+    "cldice": 0.7804712755564551
+   },
+   "metrics": {
+    "pooled": {
+     "iou": 0.08126181837885695,
+     "dice": 0.15030923500229265,
+     "precision": 0.08747159034695325,
+     "recall": 0.5337264275109768,
+     "f1": 0.15030923500229265,
+     "boundary_precision": 0.21306940675536568,
+     "boundary_recall": 0.745703164759107,
+     "boundary_f": 0.33143737243097227,
+     "tiles": 454,
+     "true_fraction": 0.0478801643270753,
+     "pred_fraction": 0.2921509595694521,
+     "prob_min": 0.00010472556459717453,
+     "prob_max": 0.9999016523361206,
+     "prob_mean": 0.5054333752866359
+    },
+    "per_dataset": {
+     "Steel1": {
+      "iou": 0.13871481566868568,
+      "dice": 0.24363398764989003,
+      "precision": 0.15437334784636916,
+      "recall": 0.577622947242869,
+      "f1": 0.24363398764989003,
+      "boundary_precision": 0.3640119288268876,
+      "boundary_recall": 0.7716371978397608,
+      "boundary_f": 0.4946688869733536,
+      "tiles": 189,
+      "true_fraction": 0.038852832935474535,
+      "pred_fraction": 0.14537669994212962,
+      "prob_min": 0.007345826830714941,
+      "prob_max": 0.9992848038673401,
+      "prob_mean": 0.47098791583505256
+     },
+     "uhcs2": {
+      "iou": 0.06560341248125028,
+      "dice": 0.12312913362109675,
+      "precision": 0.06999156097082498,
+      "recall": 0.5113329912906317,
+      "f1": 0.12312913362109675,
+      "boundary_precision": 0.1736312840731607,
+      "boundary_recall": 0.7324731383407254,
+      "boundary_f": 0.28071875252608625,
+      "tiles": 265,
+      "true_fraction": 0.05431852520636792,
+      "pred_fraction": 0.39683146926591983,
+      "prob_min": 0.00010472556459717453,
+      "prob_max": 0.9999016523361206,
+      "prob_mean": 0.5300001369332368
+     }
+    }
+   },
+   "cldice_probe": {
+    "skel_pred_sum": 1088.746826171875,
+    "skel_true_sum": 1072.291748046875,
+    "skel_pred_on_true": 105.41749572753906,
+    "t_prec": 0.11942195892333984,
+    "t_rec": 0.5599573850631714,
+    "skeleton_delta": 0.4936152398586273,
+    "skeleton_delta_max": 0.9959613680839539,
+    "pred_sum": 33438.3203125,
+    "true_sum": 2845.166748046875,
+    "dice": 0.914337158203125,
+    "cldice": 0.8118898272514343,
+    "tiles": 24,
+    "degenerate": false,
+    "verdict": "soft skeleton differs from the prediction -- clDice is measuring a real centreline"
+   },
+   "score": 0.12312913362109675,
+   "score_key": "uhcs2",
+   "is_best": false,
+   "checkpoints": {
+    "last": "/content/drive/MyDrive/phase11-persistent/checkpoints/dev/last.pt"
+   }
+  },
+  {
+   "epoch": 3,
+   "seconds": 34.86902016100004,
+   "eta_seconds": 1199.3270648309997,
+   "lr": 0.00029803039865226454,
+   "trainable_params": 24430097,
+   "optimized_params": 24430097,
+   "encoder_frozen": false,
+   "freeze_changed": true,
+   "train": {
+    "total": 1.79674232006073,
+    "bce": 0.8982982569270663,
+    "dice": 0.7019586927360959,
+    "cldice": 0.3929707573519813
+   },
+   "val": {
+    "total": 2.224433580684242,
+    "bce": 0.9385861405191968,
+    "dice": 0.9010246298911813,
+    "cldice": 0.7696456481181577
+   },
+   "metrics": {
+    "pooled": {
+     "iou": 0.0859120553457028,
+     "dice": 0.1582302266979668,
+     "precision": 0.0939170366261169,
+     "recall": 0.501979158989046,
+     "f1": 0.15823022669796677,
+     "boundary_precision": 0.22684214065340855,
+     "boundary_recall": 0.6917832787564185,
+     "boundary_f": 0.3416530753572154,
+     "tiles": 454,
+     "true_fraction": 0.0478801643270753,
+     "pred_fraction": 0.25591570480279463,
+     "prob_min": 0.013070784509181976,
+     "prob_max": 0.9999508857727051,
+     "prob_mean": 0.4874759579676363
+    },
+    "per_dataset": {
+     "Steel1": {
+      "iou": 0.17065838056572505,
+      "dice": 0.29155966146717155,
+      "precision": 0.21485984704141226,
+      "recall": 0.45341958220691003,
+      "f1": 0.29155966146717155,
+      "boundary_precision": 0.4934672090227252,
+      "boundary_recall": 0.6253950706815475,
+      "boundary_f": 0.5516531670856983,
+      "tiles": 189,
+      "true_fraction": 0.038852832935474535,
+      "pred_fraction": 0.08199128650483631,
+      "prob_min": 0.036838702857494354,
+      "prob_max": 0.9991507530212402,
+      "prob_mean": 0.42887729516735784
+     },
+     "uhcs2": {
+      "iou": 0.07053180319873661,
+      "dice": 0.13176965502190296,
+      "precision": 0.07530362814090304,
+      "recall": 0.5267514141062933,
+      "f1": 0.13176965502190296,
+      "boundary_precision": 0.1858078593024558,
+      "boundary_recall": 0.7256506585028706,
+      "boundary_f": 0.29585898386794984,
+      "tiles": 265,
+      "true_fraction": 0.05431852520636792,
+      "pred_fraction": 0.3799599125700177,
+      "prob_min": 0.013070784509181976,
+      "prob_max": 0.9999508857727051,
+      "prob_mean": 0.5292689665308539
+     }
+    }
+   },
+   "cldice_probe": {
+    "skel_pred_sum": 927.771728515625,
+    "skel_true_sum": 1072.291748046875,
+    "skel_pred_on_true": 98.568359375,
+    "t_prec": 0.14191585779190063,
+    "t_rec": 0.5698145627975464,
+    "skeleton_delta": 0.4786231219768524,
+    "skeleton_delta_max": 0.9953363537788391,
+    "pred_sum": 32294.818359375,
+    "true_sum": 2845.166748046875,
+    "dice": 0.9091994166374207,
+    "cldice": 0.7873491644859314,
+    "tiles": 24,
+    "degenerate": false,
+    "verdict": "soft skeleton differs from the prediction -- clDice is measuring a real centreline"
+   },
+   "score": 0.13176965502190296,
+   "score_key": "uhcs2",
+   "is_best": true,
+   "checkpoints": {
+    "last": "/content/drive/MyDrive/phase11-persistent/checkpoints/dev/last.pt",
+    "best": "/content/drive/MyDrive/phase11-persistent/checkpoints/dev/best.pt"
+   }
+  },
+  {
+   "epoch": 4,
+   "seconds": 28.83110362100001,
+   "eta_seconds": 1154.824895637,
+   "lr": 0.00029553927727925684,
+   "trainable_params": 24430097,
+   "optimized_params": 24430097,
+   "encoder_frozen": false,
+   "freeze_changed": false,
+   "train": {
+    "total": 1.6764465040630765,
+    "bce": 0.8136906392044492,
+    "dice": 0.6724821064207289,
+    "cldice": 0.3805475069416894
+   },
+   "val": {
+    "total": 2.1825366965474537,
+    "bce": 0.9014565692599125,
+    "dice": 0.89312556031517,
+    "cldice": 0.7759091155644555
+   },
+   "metrics": {
+    "pooled": {
+     "iou": 0.08569608668307957,
+     "dice": 0.15786385846685788,
+     "precision": 0.09207299749989512,
+     "recall": 0.5530371789877123,
+     "f1": 0.15786385846685785,
+     "boundary_precision": 0.22387759688417724,
+     "boundary_recall": 0.7440233891035698,
+     "boundary_f": 0.34418844652408903,
+     "tiles": 454,
+     "true_fraction": 0.0478801643270753,
+     "pred_fraction": 0.2875925811902017,
+     "prob_min": 0.008093290030956268,
+     "prob_max": 0.9984330534934998,
+     "prob_mean": 0.4503034652592327
+    },
+    "per_dataset": {
+     "Steel1": {
+      "iou": 0.1650915478930658,
+      "dice": 0.2833966964941337,
+      "precision": 0.1854061496099128,
+      "recall": 0.6010767948832503,
+      "f1": 0.2833966964941337,
+      "boundary_precision": 0.4376815514266449,
+      "boundary_recall": 0.7741556760306124,
+      "boundary_f": 0.5592065496152164,
+      "tiles": 189,
+      "true_fraction": 0.038852832935474535,
+      "pred_fraction": 0.12595880094659392,
+      "prob_min": 0.018833130598068237,
+      "prob_max": 0.9966495633125305,
+      "prob_mean": 0.3947164517231089
+     },
+     "uhcs2": {
+      "iou": 0.06700182585653125,
+      "dice": 0.12558896195467295,
+      "precision": 0.071260971458308,
+      "recall": 0.528530177494721,
+      "f1": 0.12558896195467295,
+      "boundary_precision": 0.17620221713822148,
+      "boundary_recall": 0.7286516591897828,
+      "boundary_f": 0.28378071029922364,
+      "tiles": 265,
+      "true_fraction": 0.05431852520636792,
+      "pred_fraction": 0.4028710131375295,
+      "prob_min": 0.008093290030956268,
+      "prob_max": 0.9984330534934998,
+      "prob_mean": 0.4899485428378267
+     }
+    }
+   },
+   "cldice_probe": {
+    "skel_pred_sum": 1115.5274658203125,
+    "skel_true_sum": 1072.291748046875,
+    "skel_pred_on_true": 110.65084075927734,
+    "t_prec": 0.12880539894104004,
+    "t_rec": 0.5637510418891907,
+    "skeleton_delta": 0.43859824538230896,
+    "skeleton_delta_max": 0.9921537041664124,
+    "pred_sum": 29859.5,
+    "true_sum": 2845.166748046875,
+    "dice": 0.9031194448471069,
+    "cldice": 0.8016659617424011,
+    "tiles": 24,
+    "degenerate": false,
+    "verdict": "soft skeleton differs from the prediction -- clDice is measuring a real centreline"
+   },
+   "score": 0.12558896195467295,
+   "score_key": "uhcs2",
+   "is_best": false,
+   "checkpoints": {
+    "last": "/content/drive/MyDrive/phase11-persistent/checkpoints/dev/last.pt"
+   }
+  },
+  {
+   "epoch": 5,
+   "seconds": 29.199128761999987,
+   "eta_seconds": 1114.145830929333,
+   "lr": 0.000292064221588526,
+   "trainable_params": 24430097,
+   "optimized_params": 24430097,
+   "encoder_frozen": false,
+   "freeze_changed": false,
+   "train": {
+    "total": 1.5517332156499226,
+    "bce": 0.733695290154881,
+    "dice": 0.6284976320134269,
+    "cldice": 0.3790805811683337
+   },
+   "val": {
+    "total": 2.1429673543585555,
+    "bce": 0.8730020355022952,
+    "dice": 0.879057204145692,
+    "cldice": 0.7818161238657746
+   },
+   "metrics": {
+    "pooled": {
+     "iou": 0.0825492947485654,
+     "dice": 0.15250907307225844,
+     "precision": 0.08857991927991841,
+     "recall": 0.548025228222758,
+     "f1": 0.15250907307225844,
+     "boundary_precision": 0.21589626475605844,
+     "boundary_recall": 0.7432336909788396,
+     "boundary_f": 0.33459778159100967,
+     "tiles": 454,
+     "true_fraction": 0.0478801643270753,
+     "pred_fraction": 0.2962244512751239,
+     "prob_min": 0.00272558256983757,
+     "prob_max": 0.9981251358985901,
+     "prob_mean": 0.3817579694715891
+    },
+    "per_dataset": {
+     "Steel1": {
+      "iou": 0.16812259930448062,
+      "dice": 0.2878509488722906,
+      "precision": 0.19015599928448043,
+      "recall": 0.5919961433205262,
+      "f1": 0.2878509488722906,
+      "boundary_precision": 0.44925751495782973,
+      "boundary_recall": 0.7541512292126846,
+      "boundary_f": 0.5630806802422181,
+      "tiles": 189,
+      "true_fraction": 0.038852832935474535,
+      "pred_fraction": 0.12095714750744048,
+      "prob_min": 0.008847354911267757,
+      "prob_max": 0.9965569972991943,
+      "prob_mean": 0.2872169631971884
+     },
+     "uhcs2": {
+      "iou": 0.06386973675600169,
+      "dice": 0.1200705961441409,
+      "precision": 0.06777704629759239,
+      "recall": 0.5255938398392117,
+      "f1": 0.12007059614414091,
+      "boundary_precision": 0.16810366981907895,
+      "boundary_recall": 0.7376642016977756,
+      "boundary_f": 0.2738097989541018,
+      "tiles": 265,
+      "true_fraction": 0.05431852520636792,
+      "pred_fraction": 0.4212264150943396,
+      "prob_min": 0.00272558256983757,
+      "prob_max": 0.9981251358985901,
+      "prob_mean": 0.44918532866352007
+     }
+    }
+   },
+   "cldice_probe": {
+    "skel_pred_sum": 1251.6240234375,
+    "skel_true_sum": 1072.291748046875,
+    "skel_pred_on_true": 118.56996154785156,
+    "t_prec": 0.12363217771053314,
+    "t_rec": 0.5308471322059631,
+    "skeleton_delta": 0.3717116713523865,
+    "skeleton_delta_max": 0.9863631129264832,
+    "pred_sum": 25612.12109375,
+    "true_sum": 2845.166748046875,
+    "dice": 0.8922785520553589,
+    "cldice": 0.8104264140129089,
+    "tiles": 24,
+    "degenerate": false,
+    "verdict": "soft skeleton differs from the prediction -- clDice is measuring a real centreline"
+   },
+   "score": 0.1200705961441409,
+   "score_key": "uhcs2",
+   "is_best": false,
+   "checkpoints": {
+    "last": "/content/drive/MyDrive/phase11-persistent/checkpoints/dev/last.pt"
+   }
+  },
+  {
+   "epoch": 6,
+   "seconds": 29.17438124599994,
+   "eta_seconds": 1073.439411146143,
+   "lr": 0.00028762896973409994,
+   "trainable_params": 24430097,
+   "optimized_params": 24430097,
+   "encoder_frozen": false,
+   "freeze_changed": false,
+   "train": {
+    "total": 1.4648123648431566,
+    "bce": 0.6785964833365546,
+    "dice": 0.5972067448827956,
+    "cldice": 0.37801827987035114
+   },
+   "val": {
+    "total": 2.05003896998939,
+    "bce": 0.8058303358271258,
+    "dice": 0.8544637731518514,
+    "cldice": 0.7794896936626686
+   },
+   "metrics": {
+    "pooled": {
+     "iou": 0.08895255299331056,
+     "dice": 0.1633726882751649,
+     "precision": 0.09625253174752883,
+     "recall": 0.539778673938909,
+     "f1": 0.16337268827516493,
+     "boundary_precision": 0.23269008180825573,
+     "boundary_recall": 0.743454806453764,
+     "boundary_f": 0.3544444309747418,
+     "tiles": 454,
+     "true_fraction": 0.0478801643270753,
+     "pred_fraction": 0.26850921361982033,
+     "prob_min": 0.003736220533028245,
+     "prob_max": 0.9975656270980835,
+     "prob_mean": 0.3122286651004516
+    },
+    "per_dataset": {
+     "Steel1": {
+      "iou": 0.17872299869727235,
+      "dice": 0.303248513679291,
+      "precision": 0.2042598651939568,
+      "recall": 0.5883992078845822,
+      "f1": 0.303248513679291,
+      "boundary_precision": 0.47675446948974526,
+      "boundary_recall": 0.761081200142132,
+      "boundary_f": 0.5862633832813837,
+      "tiles": 189,
+      "true_fraction": 0.038852832935474535,
+      "pred_fraction": 0.11192103794642858,
+      "prob_min": 0.003736220533028245,
+      "prob_max": 0.9960699081420898,
+      "prob_mean": 0.19478151229796586
+     },
+     "uhcs2": {
+      "iou": 0.06880762142388122,
+      "dice": 0.128755858481276,
+      "precision": 0.07357575825499613,
+      "recall": 0.5149753220430974,
+      "f1": 0.12875585848127596,
+      "boundary_precision": 0.18144733133527968,
+      "boundary_recall": 0.7344628516184839,
+      "boundary_f": 0.29100304128358156,
+      "tiles": 265,
+      "true_fraction": 0.05431852520636792,
+      "pred_fraction": 0.3801890823076356,
+      "prob_min": 0.006314364727586508,
+      "prob_max": 0.9975656270980835,
+      "prob_mean": 0.3959928608727905
+     }
+    }
+   },
+   "cldice_probe": {
+    "skel_pred_sum": 1437.4677734375,
+    "skel_true_sum": 1072.291748046875,
+    "skel_pred_on_true": 138.1311492919922,
+    "t_prec": 0.12889879941940308,
+    "t_rec": 0.5162991285324097,
+    "skeleton_delta": 0.30278250575065613,
+    "skeleton_delta_max": 0.9805806875228882,
+    "pred_sum": 21280.62109375,
+    "true_sum": 2845.166748046875,
+    "dice": 0.8707420825958252,
+    "cldice": 0.8050920367240906,
+    "tiles": 24,
+    "degenerate": false,
+    "verdict": "soft skeleton differs from the prediction -- clDice is measuring a real centreline"
+   },
+   "score": 0.128755858481276,
+   "score_key": "uhcs2",
+   "is_best": false,
+   "checkpoints": {
+    "last": "/content/drive/MyDrive/phase11-persistent/checkpoints/dev/last.pt"
+   }
+  },
+  {
+   "epoch": 7,
+   "seconds": 30.346321734999947,
+   "eta_seconds": 1043.7396452399998,
+   "lr": 0.0002822638189834306,
+   "trainable_params": 24430097,
+   "optimized_params": 24430097,
+   "encoder_frozen": false,
+   "freeze_changed": false,
+   "train": {
+    "total": 1.4086674551169078,
+    "bce": 0.6564257939656576,
+    "dice": 0.5698910454909006,
+    "cldice": 0.3647012404269642
+   },
+   "val": {
+    "total": 2.037882060206409,
+    "bce": 0.8023519820578823,
+    "dice": 0.8461601797179503,
+    "cldice": 0.7787397656146651
+   },
+   "metrics": {
+    "pooled": {
+     "iou": 0.09177777281053348,
+     "dice": 0.16812537330609414,
+     "precision": 0.09930714906377035,
+     "recall": 0.5476103734745664,
+     "f1": 0.16812537330609414,
+     "boundary_precision": 0.23890729458945387,
+     "boundary_recall": 0.7550131791842594,
+     "boundary_f": 0.3629629548397064,
+     "tiles": 454,
+     "true_fraction": 0.0478801643270753,
+     "pred_fraction": 0.2640260536765212,
+     "prob_min": 0.0008626077906228602,
+     "prob_max": 0.9987257122993469,
+     "prob_mean": 0.2979704396807412
+    },
+    "per_dataset": {
+     "Steel1": {
+      "iou": 0.17373848989243995,
+      "dice": 0.2960429284522503,
+      "precision": 0.19417754408472562,
+      "recall": 0.6227228240202974,
+      "f1": 0.29604292845225033,
+      "boundary_precision": 0.4540751035906009,
+      "boundary_recall": 0.7977009535723117,
+      "boundary_f": 0.5787235521162039,
+      "tiles": 189,
+      "true_fraction": 0.038852832935474535,
+      "pred_fraction": 0.12460012284536211,
+      "prob_min": 0.0008626077906228602,
+      "prob_max": 0.9977830052375793,
+      "prob_mean": 0.1873148982092817
+     },
+     "uhcs2": {
+      "iou": 0.07091150961155136,
+      "dice": 0.13243206179990147,
+      "precision": 0.07611175790592464,
+      "recall": 0.509292395627507,
+      "f1": 0.13243206179990147,
+      "boundary_precision": 0.1862997188198386,
+      "boundary_recall": 0.7332363741212188,
+      "boundary_f": 0.2971101001383254,
+      "tiles": 265,
+      "true_fraction": 0.05431852520636792,
+      "pred_fraction": 0.3634656798164799,
+      "prob_min": 0.0011559007689356804,
+      "prob_max": 0.9987257122993469,
+      "prob_mean": 0.3768908069943482
+     }
+    }
+   },
+   "cldice_probe": {
+    "skel_pred_sum": 1511.927978515625,
+    "skel_true_sum": 1072.291748046875,
+    "skel_pred_on_true": 145.5582275390625,
+    "t_prec": 0.12501266598701477,
+    "t_rec": 0.5155065059661865,
+    "skeleton_delta": 0.2856600284576416,
+    "skeleton_delta_max": 0.9905874133110046,
+    "pred_sum": 20232.943359375,
+    "true_sum": 2845.166748046875,
+    "dice": 0.8652676939964294,
+    "cldice": 0.8084339499473572,
+    "tiles": 24,
+    "degenerate": false,
+    "verdict": "soft skeleton differs from the prediction -- clDice is measuring a real centreline"
+   },
+   "score": 0.13243206179990147,
+   "score_key": "uhcs2",
+   "is_best": true,
+   "checkpoints": {
+    "last": "/content/drive/MyDrive/phase11-persistent/checkpoints/dev/last.pt",
+    "best": "/content/drive/MyDrive/phase11-persistent/checkpoints/dev/best.pt"
+   }
+  },
+  {
+   "epoch": 8,
+   "seconds": 30.682598729999995,
+   "eta_seconds": 1014.2753660071111,
+   "lr": 0.0002760054187563363,
+   "trainable_params": 24430097,
+   "optimized_params": 24430097,
+   "encoder_frozen": false,
+   "freeze_changed": false,
+   "train": {
+    "total": 1.3977304697036743,
+    "bce": 0.6650077452262243,
+    "dice": 0.5530679374933243,
+    "cldice": 0.35930955989493263
+   },
+   "val": {
+    "total": 2.02023285811168,
+    "bce": 0.7900155299560614,
+    "dice": 0.8422247265929167,
+    "cldice": 0.7759851779181527
+   },
+   "metrics": {
+    "pooled": {
+     "iou": 0.09459116675611522,
+     "dice": 0.17283378420902418,
+     "precision": 0.10262793036377602,
+     "recall": 0.547083206104191,
+     "f1": 0.17283378420902418,
+     "boundary_precision": 0.24541992910069868,
+     "boundary_recall": 0.7528792393627662,
+     "boundary_f": 0.37017274056271077,
+     "tiles": 454,
+     "true_fraction": 0.0478801643270753,
+     "pred_fraction": 0.25523689034751856,
+     "prob_min": 0.00025315635139122605,
+     "prob_max": 0.9981251358985901,
+     "prob_mean": 0.2841131383397243
+    },
+    "per_dataset": {
+     "Steel1": {
+      "iou": 0.16762967661202074,
+      "dice": 0.2871281536769652,
+      "precision": 0.1842869032378231,
+      "recall": 0.6496842551476073,
+      "f1": 0.28712815367696526,
+      "boundary_precision": 0.4335943302141023,
+      "boundary_recall": 0.8242592619529011,
+      "boundary_f": 0.5682603203343045,
+      "tiles": 189,
+      "true_fraction": 0.038852832935474535,
+      "pred_fraction": 0.13697160993303573,
+      "prob_min": 0.00025315635139122605,
+      "prob_max": 0.9969245791435242,
+      "prob_mean": 0.18639417130638053
+     },
+     "uhcs2": {
+      "iou": 0.0732193689732775,
+      "dice": 0.13644809456490645,
+      "precision": 0.07913687972640977,
+      "recall": 0.49474215351215667,
+      "f1": 0.13644809456490645,
+      "boundary_precision": 0.19128730619801787,
+      "boundary_recall": 0.7164653278945717,
+      "boundary_f": 0.3019560999549867,
+      "tiles": 265,
+      "true_fraction": 0.05431852520636792,
+      "pred_fraction": 0.33958458090728183,
+      "prob_min": 0.0006462032906711102,
+      "prob_max": 0.9981251358985901,
+      "prob_mean": 0.3538070431295431
+     }
+    }
+   },
+   "cldice_probe": {
+    "skel_pred_sum": 1494.0550537109375,
+    "skel_true_sum": 1072.291748046875,
+    "skel_pred_on_true": 149.84521484375,
+    "t_prec": 0.12955188751220703,
+    "t_rec": 0.5153172016143799,
+    "skeleton_delta": 0.27131471037864685,
+    "skeleton_delta_max": 0.9896317720413208,
+    "pred_sum": 19274.935546875,
+    "true_sum": 2845.166748046875,
+    "dice": 0.8600098490715027,
+    "cldice": 0.8022603988647461,
+    "tiles": 24,
+    "degenerate": false,
+    "verdict": "soft skeleton differs from the prediction -- clDice is measuring a real centreline"
+   },
+   "score": 0.13644809456490645,
+   "score_key": "uhcs2",
+   "is_best": true,
+   "checkpoints": {
+    "last": "/content/drive/MyDrive/phase11-persistent/checkpoints/dev/last.pt",
+    "best": "/content/drive/MyDrive/phase11-persistent/checkpoints/dev/best.pt"
+   }
+  },
+  {
+   "epoch": 9,
+   "seconds": 29.557608852000044,
+   "eta_seconds": 990.518192193,
+   "lr": 0.00026889652027230253,
+   "trainable_params": 24430097,
+   "optimized_params": 24430097,
+   "encoder_frozen": false,
+   "freeze_changed": false,
+   "train": {
+    "total": 1.3722353544500139,
+    "bce": 0.6456651969088448,
+    "dice": 0.5485680666234758,
+    "cldice": 0.35600415368874866
+   },
+   "val": {
+    "total": 2.0204701822759823,
+    "bce": 0.8031086606601261,
+    "dice": 0.8328696032452688,
+    "cldice": 0.7689838183608875
+   },
+   "metrics": {
+    "pooled": {
+     "iou": 0.0956966676870387,
+     "dice": 0.17467729985717603,
+     "precision": 0.10280153965001447,
+     "recall": 0.5806513430132775,
+     "f1": 0.17467729985717603,
+     "boundary_precision": 0.2470179596008403,
+     "boundary_recall": 0.7734085827901965,
+     "boundary_f": 0.3744430434178209,
+     "tiles": 454,
+     "true_fraction": 0.0478801643270753,
+     "pred_fraction": 0.2704403242875826,
+     "prob_min": 0.0005884087877348065,
+     "prob_max": 0.9987257122993469,
+     "prob_mean": 0.2891258226650139
+    },
+    "per_dataset": {
+     "Steel1": {
+      "iou": 0.17729226103541962,
+      "dice": 0.3011864885266339,
+      "precision": 0.19457844048835793,
+      "recall": 0.6661831964309092,
+      "f1": 0.3011864885266339,
+      "boundary_precision": 0.4573585070561359,
+      "boundary_recall": 0.8220857238442949,
+      "boundary_f": 0.5877362846288058,
+      "tiles": 189,
+      "true_fraction": 0.038852832935474535,
+      "pred_fraction": 0.1330214404555225,
+      "prob_min": 0.0005884087877348065,
+      "prob_max": 0.9977481961250305,
+      "prob_mean": 0.16883395379655575
+     },
+     "uhcs2": {
+      "iou": 0.07411140036412232,
+      "dice": 0.13799574297228137,
+      "precision": 0.07916988338547803,
+      "recall": 0.5370179954036245,
+      "f1": 0.13799574297228137,
+      "boundary_precision": 0.19285732146038514,
+      "boundary_recall": 0.7485763532594408,
+      "boundary_f": 0.30669910005325307,
+      "tiles": 265,
+      "true_fraction": 0.05431852520636792,
+      "pred_fraction": 0.3684485093602594,
+      "prob_min": 0.0006312434561550617,
+      "prob_max": 0.9987257122993469,
+      "prob_mean": 0.37491889140515955
+     }
+    }
+   },
+   "cldice_probe": {
+    "skel_pred_sum": 1454.523681640625,
+    "skel_true_sum": 1072.291748046875,
+    "skel_pred_on_true": 148.86233520507812,
+    "t_prec": 0.13574865460395813,
+    "t_rec": 0.5391693115234375,
+    "skeleton_delta": 0.279097318649292,
+    "skeleton_delta_max": 0.9905874133110046,
+    "pred_sum": 19745.4453125,
+    "true_sum": 2845.166748046875,
+    "dice": 0.851298451423645,
+    "cldice": 0.7943556308746338,
+    "tiles": 24,
+    "degenerate": false,
+    "verdict": "soft skeleton differs from the prediction -- clDice is measuring a real centreline"
+   },
+   "score": 0.13799574297228137,
+   "score_key": "uhcs2",
+   "is_best": true,
+   "checkpoints": {
+    "last": "/content/drive/MyDrive/phase11-persistent/checkpoints/dev/last.pt",
+    "best": "/content/drive/MyDrive/phase11-persistent/checkpoints/dev/best.pt"
+   }
+  },
+  {
+   "epoch": 10,
+   "seconds": 31.045918942999947,
+   "eta_seconds": 975.3092066185454,
+   "lr": 0.0002609856845163034,
+   "trainable_params": 24430097,
+   "optimized_params": 24430097,
+   "encoder_frozen": false,
+   "freeze_changed": false,
+   "train": {
+    "total": 1.358392897579405,
+    "bce": 0.6423789113759995,
+    "dice": 0.5409588664770126,
+    "cldice": 0.3501102361414168
+   },
+   "val": {
+    "total": 2.018259293182306,
+    "bce": 0.8052670199440439,
+    "dice": 0.8318353917630233,
+    "cldice": 0.7623137797553109
+   },
+   "metrics": {
+    "pooled": {
+     "iou": 0.09672120835909201,
+     "dice": 0.17638248922678487,
+     "precision": 0.10562610488464654,
+     "recall": 0.5342915003913393,
+     "f1": 0.17638248922678487,
+     "boundary_precision": 0.25081608294341895,
+     "boundary_recall": 0.7214401285979524,
+     "boundary_f": 0.37222449182662826,
+     "tiles": 454,
+     "true_fraction": 0.0478801643270753,
+     "pred_fraction": 0.24219358334982447,
+     "prob_min": 0.00010804955672938377,
+     "prob_max": 0.998389720916748,
+     "prob_mean": 0.26466123301880473
+    },
+    "per_dataset": {
+     "Steel1": {
+      "iou": 0.1878016878648516,
+      "dice": 0.3162172436418018,
+      "precision": 0.2143765677504851,
+      "recall": 0.602381748929335,
+      "f1": 0.31621724364180187,
+      "boundary_precision": 0.503520783046997,
+      "boundary_recall": 0.7547538353804627,
+      "boundary_f": 0.604056120393569,
+      "tiles": 189,
+      "true_fraction": 0.038852832935474535,
+      "pred_fraction": 0.10917348710317461,
+      "prob_min": 0.00010804955672938377,
+      "prob_max": 0.996160626411438,
+      "prob_mean": 0.15268210053601594
+     },
+     "uhcs2": {
+      "iou": 0.0744963410786246,
+      "dice": 0.1386628101568816,
+      "precision": 0.08050427985998186,
+      "recall": 0.49955583917774066,
+      "f1": 0.1386628101568816,
+      "boundary_precision": 0.19244020948397225,
+      "boundary_recall": 0.7044454244014959,
+      "boundary_f": 0.3022985761396665,
+      "tiles": 265,
+      "true_fraction": 0.05431852520636792,
+      "pred_fraction": 0.33706451991818986,
+      "prob_min": 0.00021654405281879008,
+      "prob_max": 0.998389720916748,
+      "prob_mean": 0.34452559543105793
+     }
+    }
+   },
+   "cldice_probe": {
+    "skel_pred_sum": 1343.574462890625,
+    "skel_true_sum": 1072.291748046875,
+    "skel_pred_on_true": 134.091796875,
+    "t_prec": 0.14266762137413025,
+    "t_rec": 0.502204954624176,
+    "skeleton_delta": 0.2582833170890808,
+    "skeleton_delta_max": 0.9865716695785522,
+    "pred_sum": 18270.4296875,
+    "true_sum": 2845.166748046875,
+    "dice": 0.8497262001037598,
+    "cldice": 0.7905425429344177,
+    "tiles": 24,
+    "degenerate": false,
+    "verdict": "soft skeleton differs from the prediction -- clDice is measuring a real centreline"
+   },
+   "score": 0.1386628101568816,
+   "score_key": "uhcs2",
+   "is_best": true,
+   "checkpoints": {
+    "last": "/content/drive/MyDrive/phase11-persistent/checkpoints/dev/last.pt",
+    "best": "/content/drive/MyDrive/phase11-persistent/checkpoints/dev/best.pt"
+   }
+  },
+  {
+   "epoch": 11,
+   "seconds": 30.661058441000023,
+   "eta_seconds": 953.9947401459999,
+   "lr": 0.00025232695051803433,
+   "trainable_params": 24430097,
+   "optimized_params": 24430097,
+   "encoder_frozen": false,
+   "freeze_changed": false,
+   "train": {
+    "total": 1.3406583699915144,
+    "bce": 0.634161921011077,
+    "dice": 0.5340276923444536,
+    "cldice": 0.3449375099605984
+   },
+   "val": {
+    "total": 2.0165867868499086,
+    "bce": 0.8046607871412705,
+    "dice": 0.8303781674296845,
+    "cldice": 0.7630955912993342
+   },
+   "metrics": {
+    "pooled": {
+     "iou": 0.09467482719146067,
+     "dice": 0.1729734252396431,
+     "precision": 0.10247414290215073,
+     "recall": 0.5543512366672634,
+     "f1": 0.17297342523964312,
+     "boundary_precision": 0.2463557153957108,
+     "boundary_recall": 0.7509509720306473,
+     "boundary_f": 0.3710013504855299,
+     "tiles": 454,
+     "true_fraction": 0.0478801643270753,
+     "pred_fraction": 0.2590158605365501,
+     "prob_min": 0.0001387341326335445,
+     "prob_max": 0.9989182949066162,
+     "prob_mean": 0.2787244067350936
+    },
+    "per_dataset": {
+     "Steel1": {
+      "iou": 0.1849543932510134,
+      "dice": 0.3121713279505666,
+      "precision": 0.2051173259041288,
+      "recall": 0.6529632638812408,
+      "f1": 0.31217132795056657,
+      "boundary_precision": 0.48307214492170875,
+      "boundary_recall": 0.8022766045428193,
+      "boundary_f": 0.6030386388728513,
+      "tiles": 189,
+      "true_fraction": 0.038852832935474535,
+      "pred_fraction": 0.12368273861193783,
+      "prob_min": 0.0001387341326335445,
+      "prob_max": 0.9965165853500366,
+      "prob_mean": 0.15720900526595494
+     },
+     "uhcs2": {
+      "iou": 0.07158354806249959,
+      "dice": 0.13360329801988433,
+      "precision": 0.0770075418455172,
+      "recall": 0.504045149636615,
+      "f1": 0.13360329801988433,
+      "boundary_precision": 0.18762446118106776,
+      "boundary_recall": 0.7247676371068276,
+      "boundary_f": 0.298082672238873,
+      "tiles": 265,
+      "true_fraction": 0.05431852520636792,
+      "pred_fraction": 0.35553646447523585,
+      "prob_min": 0.00015843621804378927,
+      "prob_max": 0.9989182949066162,
+      "prob_mean": 0.36539010816025286
+     }
+    }
+   },
+   "cldice_probe": {
+    "skel_pred_sum": 1534.6414794921875,
+    "skel_true_sum": 1072.291748046875,
+    "skel_pred_on_true": 146.03941345214844,
+    "t_prec": 0.13807517290115356,
+    "t_rec": 0.5211695432662964,
+    "skeleton_delta": 0.2678590714931488,
+    "skeleton_delta_max": 0.9866234660148621,
+    "pred_sum": 19089.0546875,
+    "true_sum": 2845.166748046875,
+    "dice": 0.8486528396606445,
+    "cldice": 0.7939164042472839,
+    "tiles": 24,
+    "degenerate": false,
+    "verdict": "soft skeleton differs from the prediction -- clDice is measuring a real centreline"
+   },
+   "score": 0.13360329801988433,
+   "score_key": "uhcs2",
+   "is_best": false,
+   "checkpoints": {
+    "last": "/content/drive/MyDrive/phase11-persistent/checkpoints/dev/last.pt"
+   }
+  },
+  {
+   "epoch": 12,
+   "seconds": 31.275263053000003,
+   "eta_seconds": 931.334184711,
+   "lr": 0.00024297946621054423,
+   "trainable_params": 24430097,
+   "optimized_params": 24430097,
+   "encoder_frozen": false,
+   "freeze_changed": false,
+   "train": {
+    "total": 1.3255473242865667,
+    "bce": 0.6311442454655966,
+    "dice": 0.5255723413493898,
+    "cldice": 0.3376614757710033
+   },
+   "val": {
+    "total": 2.016166004315347,
+    "bce": 0.8112307193520836,
+    "dice": 0.8253533853308219,
+    "cldice": 0.7591638549308944
+   },
+   "metrics": {
+    "pooled": {
+     "iou": 0.09810112753077779,
+     "dice": 0.1786741222119876,
+     "precision": 0.10702729961466792,
+     "recall": 0.5404960708131082,
+     "f1": 0.1786741222119876,
+     "boundary_precision": 0.2554944085009356,
+     "boundary_recall": 0.7308442048441838,
+     "boundary_f": 0.3786257686692953,
+     "tiles": 454,
+     "true_fraction": 0.0478801643270753,
+     "pred_fraction": 0.24179850170790887,
+     "prob_min": 1.053351934388047e-05,
+     "prob_max": 0.9988120794296265,
+     "prob_mean": 0.26060267317925256
+    },
+    "per_dataset": {
+     "Steel1": {
+      "iou": 0.18878078573448345,
+      "dice": 0.31760403263558135,
+      "precision": 0.2100760162901635,
+      "recall": 0.6506318013976308,
+      "f1": 0.31760403263558135,
+      "boundary_precision": 0.4960904949445477,
+      "boundary_recall": 0.7887221216724192,
+      "boundary_f": 0.6090811105894258,
+      "tiles": 189,
+      "true_fraction": 0.038852832935474535,
+      "pred_fraction": 0.12033210229621362,
+      "prob_min": 1.053351934388047e-05,
+      "prob_max": 0.9977656602859497,
+      "prob_mean": 0.15072026974940425
+     },
+     "uhcs2": {
+      "iou": 0.07380490830845578,
+      "dice": 0.1374642781708257,
+      "precision": 0.0800996661199009,
+      "recall": 0.48431126451208034,
+      "f1": 0.13746427817082574,
+      "boundary_precision": 0.19262430739690636,
+      "boundary_recall": 0.7013182778008633,
+      "boundary_f": 0.3022362951783886,
+      "tiles": 265,
+      "true_fraction": 0.05431852520636792,
+      "pred_fraction": 0.3284292544958726,
+      "prob_min": 3.535625000949949e-05,
+      "prob_max": 0.9988120794296265,
+      "prob_mean": 0.3389716326065783
+     }
+    }
+   },
+   "cldice_probe": {
+    "skel_pred_sum": 1452.612060546875,
+    "skel_true_sum": 1072.291748046875,
+    "skel_pred_on_true": 146.5883026123047,
+    "t_prec": 0.14503489434719086,
+    "t_rec": 0.5149759650230408,
+    "skeleton_delta": 0.24883083999156952,
+    "skeleton_delta_max": 0.9889705181121826,
+    "pred_sum": 17759.990234375,
+    "true_sum": 2845.166748046875,
+    "dice": 0.8424363136291504,
+    "cldice": 0.7866001129150391,
+    "tiles": 24,
+    "degenerate": false,
+    "verdict": "soft skeleton differs from the prediction -- clDice is measuring a real centreline"
+   },
+   "score": 0.1374642781708257,
+   "score_key": "uhcs2",
+   "is_best": false,
+   "checkpoints": {
+    "last": "/content/drive/MyDrive/phase11-persistent/checkpoints/dev/last.pt"
+   }
+  },
+  {
+   "epoch": 13,
+   "seconds": 30.241198871999927,
+   "eta_seconds": 895.281666877,
+   "lr": 0.00023300708438987765,
+   "trainable_params": 24430097,
+   "optimized_params": 24430097,
+   "encoder_frozen": false,
+   "freeze_changed": false,
+   "train": {
+    "total": 1.329954382446077,
+    "bce": 0.6343185636732314,
+    "dice": 0.5262933100263277,
+    "cldice": 0.33868499596913654
+   },
+   "val": {
+    "total": 2.0203547435710085,
+    "bce": 0.8167060004456979,
+    "dice": 0.8256439411692682,
+    "cldice": 0.7560095527098567
+   },
+   "metrics": {
+    "pooled": {
+     "iou": 0.09779425564143587,
+     "dice": 0.17816499792904303,
+     "precision": 0.10613229157122271,
+     "recall": 0.5545246192777596,
+     "f1": 0.17816499792904303,
+     "boundary_precision": 0.2521465653744865,
+     "boundary_recall": 0.7425885953551711,
+     "boundary_f": 0.37646435191398225,
+     "tiles": 454,
+     "true_fraction": 0.0478801643270753,
+     "pred_fraction": 0.2501663678543158,
+     "prob_min": 5.5622065701754764e-05,
+     "prob_max": 0.9981324076652527,
+     "prob_mean": 0.26629604054573874
+    },
+    "per_dataset": {
+     "Steel1": {
+      "iou": 0.18894723605147615,
+      "dice": 0.3178395648220264,
+      "precision": 0.21057313113889375,
+      "recall": 0.6478618909781545,
+      "f1": 0.3178395648220264,
+      "boundary_precision": 0.4945499219584215,
+      "boundary_recall": 0.7919658052169071,
+      "boundary_f": 0.6088796567200968,
+      "tiles": 189,
+      "true_fraction": 0.038852832935474535,
+      "pred_fraction": 0.11953694984395669,
+      "prob_min": 8.156224066624418e-05,
+      "prob_max": 0.9970073103904724,
+      "prob_mean": 0.15102825199485456
+     },
+     "uhcs2": {
+      "iou": 0.07439439449406121,
+      "dice": 0.13848619254774497,
+      "precision": 0.08019803225571116,
+      "recall": 0.5069094039128554,
+      "f1": 0.13848619254774494,
+      "boundary_precision": 0.19195410106051572,
+      "boundary_recall": 0.717399231675981,
+      "boundary_f": 0.30286956601009374,
+      "tiles": 265,
+      "true_fraction": 0.05431852520636792,
+      "pred_fraction": 0.34333225466170403,
+      "prob_min": 5.5622065701754764e-05,
+      "prob_max": 0.9981324076652527,
+      "prob_mean": 0.34850589728580333
+     }
+    }
+   },
+   "cldice_probe": {
+    "skel_pred_sum": 1434.6234130859375,
+    "skel_true_sum": 1072.291748046875,
+    "skel_pred_on_true": 145.80575561523438,
+    "t_prec": 0.1429028958082199,
+    "t_rec": 0.5246589183807373,
+    "skeleton_delta": 0.2604404091835022,
+    "skeleton_delta_max": 0.9877113699913025,
+    "pred_sum": 18502.84765625,
+    "true_sum": 2845.166748046875,
+    "dice": 0.8457573652267456,
+    "cldice": 0.788325309753418,
+    "tiles": 24,
+    "degenerate": false,
+    "verdict": "soft skeleton differs from the prediction -- clDice is measuring a real centreline"
+   },
+   "score": 0.13848619254774497,
+   "score_key": "uhcs2",
+   "is_best": false,
+   "checkpoints": {
+    "last": "/content/drive/MyDrive/phase11-persistent/checkpoints/dev/last.pt"
+   }
+  },
+  {
+   "epoch": 14,
+   "seconds": 30.56665560500005,
+   "eta_seconds": 865.8976561899999,
+   "lr": 0.000222477926535732,
+   "trainable_params": 24430097,
+   "optimized_params": 24430097,
+   "encoder_frozen": false,
+   "freeze_changed": false,
+   "train": {
+    "total": 1.3128616909186046,
+    "bce": 0.6205130004220538,
+    "dice": 0.5243964195251465,
+    "cldice": 0.3359045659502347
+   },
+   "val": {
+    "total": 2.027033882519222,
+    "bce": 0.8220648287676504,
+    "dice": 0.8274957991906725,
+    "cldice": 0.7549465159487619
+   },
+   "metrics": {
+    "pooled": {
+     "iou": 0.09694832145579538,
+     "dice": 0.176760052519397,
+     "precision": 0.10557225314815732,
+     "recall": 0.5427149470551279,
+     "f1": 0.176760052519397,
+     "boundary_precision": 0.2507286563597209,
+     "boundary_recall": 0.7284210600205673,
+     "boundary_f": 0.3730502712460515,
+     "tiles": 454,
+     "true_fraction": 0.0478801643270753,
+     "pred_fraction": 0.24613740895813258,
+     "prob_min": 0.0002269338583573699,
+     "prob_max": 0.9980044960975647,
+     "prob_mean": 0.2642846205128184
+    },
+    "per_dataset": {
+     "Steel1": {
+      "iou": 0.1868596590661377,
+      "dice": 0.31488079932410096,
+      "precision": 0.207749349949138,
+      "recall": 0.6501455605588029,
+      "f1": 0.31488079932410096,
+      "boundary_precision": 0.49066821775840685,
+      "boundary_recall": 0.7895200553566494,
+      "boundary_f": 0.6052116029835701,
+      "tiles": 189,
+      "true_fraction": 0.038852832935474535,
+      "pred_fraction": 0.12158881293402778,
+      "prob_min": 0.0002269338583573699,
+      "prob_max": 0.996249258518219,
+      "prob_mean": 0.15489648578185883
+     },
+     "uhcs2": {
+      "iou": 0.0730536011996592,
+      "dice": 0.13616020880594645,
+      "precision": 0.07912004985066289,
+      "recall": 0.4879101332270457,
+      "f1": 0.13616020880594645,
+      "boundary_precision": 0.18861170201336513,
+      "boundary_recall": 0.6972519271703458,
+      "boundary_f": 0.2969077144229955,
+      "tiles": 265,
+      "true_fraction": 0.05431852520636792,
+      "pred_fraction": 0.3349664076319281,
+      "prob_min": 0.00029365462251007557,
+      "prob_max": 0.9980044960975647,
+      "prob_mean": 0.342301063773767
+     }
+    }
+   },
+   "cldice_probe": {
+    "skel_pred_sum": 1397.271240234375,
+    "skel_true_sum": 1072.291748046875,
+    "skel_pred_on_true": 142.0594940185547,
+    "t_prec": 0.14404502511024475,
+    "t_rec": 0.5119840502738953,
+    "skeleton_delta": 0.2565121650695801,
+    "skeleton_delta_max": 0.9881309270858765,
+    "pred_sum": 18208.052734375,
+    "true_sum": 2845.166748046875,
+    "dice": 0.8463963270187378,
+    "cldice": 0.7874833941459656,
+    "tiles": 24,
+    "degenerate": false,
+    "verdict": "soft skeleton differs from the prediction -- clDice is measuring a real centreline"
+   },
+   "score": 0.13616020880594645,
+   "score_key": "uhcs2",
+   "is_best": false,
+   "checkpoints": {
+    "last": "/content/drive/MyDrive/phase11-persistent/checkpoints/dev/last.pt"
+   }
+  },
+  {
+   "epoch": 15,
+   "seconds": 31.045844575000046,
+   "eta_seconds": 833.2868197425,
+   "lr": 0.00021146391747267656,
+   "trainable_params": 24430097,
+   "optimized_params": 24430097,
+   "encoder_frozen": false,
+   "freeze_changed": false,
+   "train": {
+    "total": 1.3171843489011128,
+    "bce": 0.6243290089898639,
+    "dice": 0.5239763640695148,
+    "cldice": 0.33775794754425686
+   },
+   "val": {
+    "total": 2.003351689435312,
+    "bce": 0.7999233726887977,
+    "dice": 0.8258734757679674,
+    "cldice": 0.7551096315425924
+   },
+   "metrics": {
+    "pooled": {
+     "iou": 0.10431131400234232,
+     "dice": 0.1889164996857418,
+     "precision": 0.11305205847723244,
+     "recall": 0.5743148052604424,
+     "f1": 0.18891649968574184,
+     "boundary_precision": 0.2684618491481294,
+     "boundary_recall": 0.7521042822696977,
+     "boundary_f": 0.39568490498473297,
+     "tiles": 454,
+     "true_fraction": 0.0478801643270753,
+     "pred_fraction": 0.24323561748218955,
+     "prob_min": 7.197912054834887e-05,
+     "prob_max": 0.9986801743507385,
+     "prob_mean": 0.25926547305502556
+    },
+    "per_dataset": {
+     "Steel1": {
+      "iou": 0.17677643602882182,
+      "dice": 0.3004418351974753,
+      "precision": 0.19006957952973874,
+      "recall": 0.7165215909634011,
+      "f1": 0.30044183519747536,
+      "boundary_precision": 0.45166501946055054,
+      "boundary_recall": 0.8492757297248998,
+      "boundary_f": 0.5897088537410236,
+      "tiles": 189,
+      "true_fraction": 0.038852832935474535,
+      "pred_fraction": 0.1464668556495949,
+      "prob_min": 0.00015356240328401327,
+      "prob_max": 0.9959456324577332,
+      "prob_mean": 0.1742105062597643
+     },
+     "uhcs2": {
+      "iou": 0.0803246688343611,
+      "dice": 0.14870468323384503,
+      "precision": 0.08728648377525637,
+      "recall": 0.5017692229411714,
+      "f1": 0.14870468323384503,
+      "boundary_precision": 0.20717274368464048,
+      "boundary_recall": 0.702533094751482,
+      "boundary_f": 0.31998411490715284,
+      "tiles": 265,
+      "true_fraction": 0.05431852520636792,
+      "pred_fraction": 0.31225182875147406,
+      "prob_min": 7.197912054834887e-05,
+      "prob_max": 0.9986801743507385,
+      "prob_mean": 0.3199273172976836
+     }
+    }
+   },
+   "cldice_probe": {
+    "skel_pred_sum": 1427.5101318359375,
+    "skel_true_sum": 1072.291748046875,
+    "skel_pred_on_true": 145.6304931640625,
+    "t_prec": 0.13870960474014282,
+    "t_rec": 0.5260129570960999,
+    "skeleton_delta": 0.24967841804027557,
+    "skeleton_delta_max": 0.9826908707618713,
+    "pred_sum": 17790.43359375,
+    "true_sum": 2845.166748046875,
+    "dice": 0.8466473817825317,
+    "cldice": 0.7908350825309753,
+    "tiles": 24,
+    "degenerate": false,
+    "verdict": "soft skeleton differs from the prediction -- clDice is measuring a real centreline"
+   },
+   "score": 0.14870468323384503,
+   "score_key": "uhcs2",
+   "is_best": true,
+   "checkpoints": {
+    "last": "/content/drive/MyDrive/phase11-persistent/checkpoints/dev/last.pt",
+    "best": "/content/drive/MyDrive/phase11-persistent/checkpoints/dev/best.pt"
+   }
+  },
+  {
+   "epoch": 16,
+   "seconds": 30.182576915000027,
+   "eta_seconds": 802.3480791498235,
+   "lr": 0.00020004029405067038,
+   "trainable_params": 24430097,
+   "optimized_params": 24430097,
+   "encoder_frozen": false,
+   "freeze_changed": false,
+   "train": {
+    "total": 1.2925765216350555,
+    "bce": 0.6164503345886866,
+    "dice": 0.5137381272183524,
+    "cldice": 0.324776119656033
+   },
+   "val": {
+    "total": 2.029575656689211,
+    "bce": 0.8274602564420994,
+    "dice": 0.8263638324149379,
+    "cldice": 0.7515031272619306
+   },
+   "metrics": {
+    "pooled": {
+     "iou": 0.09811131049822971,
+     "dice": 0.17869101166750595,
+     "precision": 0.10535884691911437,
+     "recall": 0.5878435625563757,
+     "f1": 0.17869101166750598,
+     "boundary_precision": 0.25304245044156437,
+     "boundary_recall": 0.7663153387453978,
+     "boundary_f": 0.3804558383406388,
+     "tiles": 454,
+     "true_fraction": 0.0478801643270753,
+     "pred_fraction": 0.26714459389842027,
+     "prob_min": 3.071818719035946e-05,
+     "prob_max": 0.9986222982406616,
+     "prob_mean": 0.2799450808290868
+    },
+    "per_dataset": {
+     "Steel1": {
+      "iou": 0.18660937222532056,
+      "dice": 0.314525363768804,
+      "precision": 0.2042621582547955,
+      "recall": 0.6834717595892303,
+      "f1": 0.314525363768804,
+      "boundary_precision": 0.4870704431074656,
+      "boundary_recall": 0.8102642531943322,
+      "boundary_f": 0.6084101041350622,
+      "tiles": 189,
+      "true_fraction": 0.038852832935474535,
+      "pred_fraction": 0.13000359106316137,
+      "prob_min": 3.071818719035946e-05,
+      "prob_max": 0.9963215589523315,
+      "prob_mean": 0.1607394214502718
+     },
+     "uhcs2": {
+      "iou": 0.07508079864048628,
+      "dice": 0.1396747086087504,
+      "precision": 0.0802316942353019,
+      "recall": 0.5390596511164444,
+      "f1": 0.1396747086087504,
+      "boundary_precision": 0.19358582533379845,
+      "boundary_recall": 0.743895173805748,
+      "boundary_f": 0.3072223571788451,
+      "tiles": 265,
+      "true_fraction": 0.05431852520636792,
+      "pred_fraction": 0.36495459214696346,
+      "prob_min": 0.00013342000602278858,
+      "prob_max": 0.9986222982406616,
+      "prob_mean": 0.36496345676341146
+     }
+    }
+   },
+   "cldice_probe": {
+    "skel_pred_sum": 1413.55224609375,
+    "skel_true_sum": 1072.291748046875,
+    "skel_pred_on_true": 139.33287048339844,
+    "t_prec": 0.1456112563610077,
+    "t_rec": 0.5460335612297058,
+    "skeleton_delta": 0.27560195326805115,
+    "skeleton_delta_max": 0.9865716695785522,
+    "pred_sum": 19475.3984375,
+    "true_sum": 2845.166748046875,
+    "dice": 0.845101535320282,
+    "cldice": 0.7839690446853638,
+    "tiles": 24,
+    "degenerate": false,
+    "verdict": "soft skeleton differs from the prediction -- clDice is measuring a real centreline"
+   },
+   "score": 0.1396747086087504,
+   "score_key": "uhcs2",
+   "is_best": false,
+   "checkpoints": {
+    "last": "/content/drive/MyDrive/phase11-persistent/checkpoints/dev/last.pt"
+   }
+  },
+  {
+   "epoch": 17,
+   "seconds": 31.136338557000045,
+   "eta_seconds": 775.38637176,
+   "lr": 0.00018828509120108738,
+   "trainable_params": 24430097,
+   "optimized_params": 24430097,
+   "encoder_frozen": false,
+   "freeze_changed": false,
+   "train": {
+    "total": 1.289948281314638,
+    "bce": 0.6152215831809573,
+    "dice": 0.5124522662825055,
+    "cldice": 0.3245488189988666
+   },
+   "val": {
+    "total": 2.025405847028489,
+    "bce": 0.8329274817185255,
+    "dice": 0.8171340298022468,
+    "cldice": 0.7506887505758176
+   },
+   "metrics": {
+    "pooled": {
+     "iou": 0.09723703824711248,
+     "dice": 0.17723980299180056,
+     "precision": 0.10678213812870112,
+     "recall": 0.5210273797114268,
+     "f1": 0.17723980299180056,
+     "boundary_precision": 0.25113215942749756,
+     "boundary_recall": 0.7083578139751999,
+     "boundary_f": 0.3708041405374282,
+     "tiles": 454,
+     "true_fraction": 0.0478801643270753,
+     "pred_fraction": 0.23362405919818627,
+     "prob_min": 2.2125668692751788e-05,
+     "prob_max": 0.9980732202529907,
+     "prob_mean": 0.2495431500909612
+    },
+    "per_dataset": {
+     "Steel1": {
+      "iou": 0.20065749517911138,
+      "dice": 0.3342460210089768,
+      "precision": 0.2347493990066267,
+      "recall": 0.5801289577199045,
+      "f1": 0.3342460210089768,
+      "boundary_precision": 0.5450839624949865,
+      "boundary_recall": 0.7290932023946323,
+      "boundary_f": 0.6238018114597954,
+      "tiles": 189,
+      "true_fraction": 0.038852832935474535,
+      "pred_fraction": 0.09601580907428076,
+      "prob_min": 2.2125668692751788e-05,
+      "prob_max": 0.9968884587287903,
+      "prob_mean": 0.1231285282386043
+     },
+     "uhcs2": {
+      "iou": 0.07418499357107178,
+      "dice": 0.13812331025859456,
+      "precision": 0.08036875873856437,
+      "recall": 0.49087721232371373,
+      "f1": 0.13812331025859456,
+      "boundary_precision": 0.19045835549069945,
+      "boundary_recall": 0.6977798319185203,
+      "boundary_f": 0.2992395534567367,
+      "tiles": 265,
+      "true_fraction": 0.05431852520636792,
+      "pred_fraction": 0.3317673017393868,
+      "prob_min": 2.7751651941798627e-05,
+      "prob_max": 0.9980732202529907,
+      "prob_mean": 0.3397030124686799
+     }
+    }
+   },
+   "cldice_probe": {
+    "skel_pred_sum": 1404.234375,
+    "skel_true_sum": 1072.291748046875,
+    "skel_pred_on_true": 142.6207275390625,
+    "t_prec": 0.14972947537899017,
+    "t_rec": 0.4974352717399597,
+    "skeleton_delta": 0.24483805894851685,
+    "skeleton_delta_max": 0.9854404330253601,
+    "pred_sum": 17449.94140625,
+    "true_sum": 2845.166748046875,
+    "dice": 0.8370170593261719,
+    "cldice": 0.786684513092041,
+    "tiles": 24,
+    "degenerate": false,
+    "verdict": "soft skeleton differs from the prediction -- clDice is measuring a real centreline"
+   },
+   "score": 0.13812331025859456,
+   "score_key": "uhcs2",
+   "is_best": false,
+   "checkpoints": {
+    "last": "/content/drive/MyDrive/phase11-persistent/checkpoints/dev/last.pt"
+   }
+  },
+  {
+   "epoch": 18,
+   "seconds": 30.43162848299994,
+   "eta_seconds": 740.1509753621053,
+   "lr": 0.00017627860887900926,
+   "trainable_params": 24430097,
+   "optimized_params": 24430097,
+   "encoder_frozen": false,
+   "freeze_changed": false,
+   "train": {
+    "total": 1.2848826812373266,
+    "bce": 0.6082335975435045,
+    "dice": 0.5132168374127812,
+    "cldice": 0.3268645405769348
+   },
+   "val": {
+    "total": 2.023266106450085,
+    "bce": 0.8283284876315079,
+    "dice": 0.8200096687556363,
+    "cldice": 0.7498559153552623
+   },
+   "metrics": {
+    "pooled": {
+     "iou": 0.09922684566436181,
+     "dice": 0.18053934191243315,
+     "precision": 0.10716405526006646,
+     "recall": 0.5725964221410296,
+     "f1": 0.18053934191243318,
+     "boundary_precision": 0.2542710311879012,
+     "boundary_recall": 0.7576651609755756,
+     "boundary_f": 0.38075978163114077,
+     "tiles": 454,
+     "true_fraction": 0.0478801643270753,
+     "pred_fraction": 0.25583215116929375,
+     "prob_min": 2.5071596610359848e-05,
+     "prob_max": 0.9987207055091858,
+     "prob_mean": 0.267808315134915
+    },
+    "per_dataset": {
+     "Steel1": {
+      "iou": 0.18804608936615594,
+      "dice": 0.3165636266964726,
+      "precision": 0.20648911171684198,
+      "recall": 0.677977653700937,
+      "f1": 0.3165636266964726,
+      "boundary_precision": 0.48579672209167435,
+      "boundary_recall": 0.8200846557768113,
+      "boundary_f": 0.6101540987809017,
+      "tiles": 189,
+      "true_fraction": 0.038852832935474535,
+      "pred_fraction": 0.1275677554821842,
+      "prob_min": 5.9673518990166485e-05,
+      "prob_max": 0.9973374009132385,
+      "prob_mean": 0.15098041686273755
+     },
+     "uhcs2": {
+      "iou": 0.07546569940676953,
+      "dice": 0.14034050448730567,
+      "precision": 0.08114468574642032,
+      "recall": 0.5188370830824549,
+      "f1": 0.14034050448730565,
+      "boundary_precision": 0.1936201469253879,
+      "boundary_recall": 0.7258223865534816,
+      "boundary_f": 0.3056935741149298,
+      "tiles": 265,
+      "true_fraction": 0.05431852520636792,
+      "pred_fraction": 0.34731128620651536,
+      "prob_min": 2.5071596610359848e-05,
+      "prob_max": 0.9987207055091858,
+      "prob_mean": 0.35113085390261883
+     }
+    }
+   },
+   "cldice_probe": {
+    "skel_pred_sum": 1446.9969482421875,
+    "skel_true_sum": 1072.291748046875,
+    "skel_pred_on_true": 153.60107421875,
+    "t_prec": 0.14685209095478058,
+    "t_rec": 0.533406674861908,
+    "skeleton_delta": 0.2609966993331909,
+    "skeleton_delta_max": 0.9866748452186584,
+    "pred_sum": 18551.67578125,
+    "true_sum": 2845.166748046875,
+    "dice": 0.8402864336967468,
+    "cldice": 0.7828994989395142,
+    "tiles": 24,
+    "degenerate": false,
+    "verdict": "soft skeleton differs from the prediction -- clDice is measuring a real centreline"
+   },
+   "score": 0.14034050448730567,
+   "score_key": "uhcs2",
+   "is_best": false,
+   "checkpoints": {
+    "last": "/content/drive/MyDrive/phase11-persistent/checkpoints/dev/last.pt"
+   }
+  },
+  {
+   "epoch": 19,
+   "seconds": 30.782210862000056,
+   "eta_seconds": 705.1119590069999,
+   "lr": 0.00016410286353310855,
+   "trainable_params": 24430097,
+   "optimized_params": 24430097,
+   "encoder_frozen": false,
+   "freeze_changed": false,
+   "train": {
+    "total": 1.2886138492160373,
+    "bce": 0.611454102728102,
+    "dice": 0.5132265413800875,
+    "cldice": 0.32786638372474247
+   },
+   "val": {
+    "total": 2.0392255972135436,
+    "bce": 0.849565845229027,
+    "dice": 0.8150823420890102,
+    "cldice": 0.7491548113885955
+   },
+   "metrics": {
+    "pooled": {
+     "iou": 0.09849050833946961,
+     "dice": 0.1793197257359147,
+     "precision": 0.10749734628158923,
+     "recall": 0.5403339194648303,
+     "f1": 0.1793197257359147,
+     "boundary_precision": 0.2521450745017217,
+     "boundary_recall": 0.7271252531421211,
+     "boundary_f": 0.37444420799868017,
+     "tiles": 454,
+     "true_fraction": 0.0478801643270753,
+     "pred_fraction": 0.24066898161094094,
+     "prob_min": 2.0785171727766283e-05,
+     "prob_max": 0.998807430267334,
+     "prob_mean": 0.2523306854939014
+    },
+    "per_dataset": {
+     "Steel1": {
+      "iou": 0.1955491554946911,
+      "dice": 0.32712859123517557,
+      "precision": 0.221931878682539,
+      "recall": 0.6219228123837646,
+      "f1": 0.3271285912351756,
+      "boundary_precision": 0.5159299240542372,
+      "boundary_recall": 0.7755208906934751,
+      "boundary_f": 0.6196355752288131,
+      "tiles": 189,
+      "true_fraction": 0.038852832935474535,
+      "pred_fraction": 0.10887783797329696,
+      "prob_min": 2.0785171727766283e-05,
+      "prob_max": 0.9967396855354309,
+      "prob_mean": 0.13050588600771137
+     },
+     "uhcs2": {
+      "iou": 0.07485452674334019,
+      "dice": 0.13928308414002588,
+      "precision": 0.08094491624646664,
+      "recall": 0.4987120396204174,
+      "f1": 0.13928308414002588,
+      "boundary_precision": 0.19093864830226115,
+      "boundary_recall": 0.7024366302292252,
+      "boundary_f": 0.30025970925551293,
+      "tiles": 265,
+      "true_fraction": 0.05431852520636792,
+      "pred_fraction": 0.3346634199034493,
+      "prob_min": 3.095910506090149e-05,
+      "prob_max": 0.998807430267334,
+      "prob_mean": 0.33921705191990115
+     }
+    }
+   },
+   "cldice_probe": {
+    "skel_pred_sum": 1440.3153076171875,
+    "skel_true_sum": 1072.291748046875,
+    "skel_pred_on_true": 156.06951904296875,
+    "t_prec": 0.153534933924675,
+    "t_rec": 0.5103198289871216,
+    "skeleton_delta": 0.24800913035869598,
+    "skeleton_delta_max": 0.9906960725784302,
+    "pred_sum": 17693.841796875,
+    "true_sum": 2845.166748046875,
+    "dice": 0.8357644081115723,
+    "cldice": 0.7801260948181152,
+    "tiles": 24,
+    "degenerate": false,
+    "verdict": "soft skeleton differs from the prediction -- clDice is measuring a real centreline"
+   },
+   "score": 0.13928308414002588,
+   "score_key": "uhcs2",
+   "is_best": false,
+   "checkpoints": {
+    "last": "/content/drive/MyDrive/phase11-persistent/checkpoints/dev/last.pt"
+   }
+  },
+  {
+   "epoch": 20,
+   "seconds": 30.787861165000095,
+   "eta_seconds": 670.4317159539048,
+   "lr": 0.00015184102785014127,
+   "trainable_params": 24430097,
+   "optimized_params": 24430097,
+   "encoder_frozen": false,
+   "freeze_changed": false,
+   "train": {
+    "total": 1.2797778281900618,
+    "bce": 0.607069174448649,
+    "dice": 0.5108260959386826,
+    "cldice": 0.3237651238838832
+   },
+   "val": {
+    "total": 2.018221681863726,
+    "bce": 0.8293174830827419,
+    "dice": 0.8156597057628211,
+    "cldice": 0.7464889991651023
+   },
+   "metrics": {
+    "pooled": {
+     "iou": 0.10215818681209203,
+     "dice": 0.18537844754858057,
+     "precision": 0.1114491171266142,
+     "recall": 0.5506498338124168,
+     "f1": 0.18537844754858054,
+     "boundary_precision": 0.26187835335251786,
+     "boundary_recall": 0.7296150835851593,
+     "boundary_f": 0.385419387667518,
+     "tiles": 454,
+     "true_fraction": 0.0478801643270753,
+     "pred_fraction": 0.23656719056520167,
+     "prob_min": 1.5689549400121905e-05,
+     "prob_max": 0.9989225268363953,
+     "prob_mean": 0.24958774376873927
+    },
+    "per_dataset": {
+     "Steel1": {
+      "iou": 0.19408239994726728,
+      "dice": 0.325073713431901,
+      "precision": 0.2182988746326837,
+      "recall": 0.6363043202706326,
+      "f1": 0.32507371343190095,
+      "boundary_precision": 0.5122659762094526,
+      "boundary_recall": 0.7784778168201927,
+      "boundary_f": 0.6179192198240386,
+      "tiles": 189,
+      "true_fraction": 0.038852832935474535,
+      "pred_fraction": 0.11324944067253638,
+      "prob_min": 1.5689549400121905e-05,
+      "prob_max": 0.9968884587287903,
+      "prob_mean": 0.13747542666852788
+     },
+     "uhcs2": {
+      "iou": 0.07838599294316918,
+      "dice": 0.14537650425008836,
+      "precision": 0.0848549563221499,
+      "recall": 0.5069539260000508,
+      "f1": 0.14537650425008836,
+      "boundary_precision": 0.19955861710672768,
+      "boundary_recall": 0.7046881757816806,
+      "boundary_f": 0.3110358786040158,
+      "tiles": 265,
+      "true_fraction": 0.05431852520636792,
+      "pred_fraction": 0.32451834048864975,
+      "prob_min": 2.0462934116949327e-05,
+      "prob_max": 0.9989225268363953,
+      "prob_mean": 0.3295470944553051
+     }
+    }
+   },
+   "cldice_probe": {
+    "skel_pred_sum": 1398.6005859375,
+    "skel_true_sum": 1072.291748046875,
+    "skel_pred_on_true": 146.32821655273438,
+    "t_prec": 0.151418074965477,
+    "t_rec": 0.5165581703186035,
+    "skeleton_delta": 0.24511460959911346,
+    "skeleton_delta_max": 0.9877113699913025,
+    "pred_sum": 17462.43359375,
+    "true_sum": 2845.166748046875,
+    "dice": 0.835862398147583,
+    "cldice": 0.7811641097068787,
+    "tiles": 24,
+    "degenerate": false,
+    "verdict": "soft skeleton differs from the prediction -- clDice is measuring a real centreline"
+   },
+   "score": 0.14537650425008836,
+   "score_key": "uhcs2",
+   "is_best": false,
+   "checkpoints": {
+    "last": "/content/drive/MyDrive/phase11-persistent/checkpoints/dev/last.pt"
+   }
+  },
+  {
+   "epoch": 21,
+   "seconds": 30.57919040899992,
+   "eta_seconds": 635.7538579426364,
+   "lr": 0.00013957686260115986,
+   "trainable_params": 24430097,
+   "optimized_params": 24430097,
+   "encoder_frozen": false,
+   "freeze_changed": false,
+   "train": {
+    "total": 1.2821970449553595,
+    "bce": 0.6062430871857537,
+    "dice": 0.5131287210517459,
+    "cldice": 0.3256504659851392
+   },
+   "val": {
+    "total": 2.0492920087822735,
+    "bce": 0.8585770676314568,
+    "dice": 0.8172261990639607,
+    "cldice": 0.7469775689856071
+   },
+   "metrics": {
+    "pooled": {
+     "iou": 0.09950808070290178,
+     "dice": 0.18100472829501627,
+     "precision": 0.10817027790168095,
+     "recall": 0.5540929176362405,
+     "f1": 0.18100472829501624,
+     "boundary_precision": 0.25573957174952877,
+     "boundary_recall": 0.7446537436955767,
+     "boundary_f": 0.3807251139611198,
+     "tiles": 454,
+     "true_fraction": 0.0478801643270753,
+     "pred_fraction": 0.2452620115574236,
+     "prob_min": 8.139691999531351e-06,
+     "prob_max": 0.998848557472229,
+     "prob_mean": 0.2553104281031613
+    },
+    "per_dataset": {
+     "Steel1": {
+      "iou": 0.19241794416307156,
+      "dice": 0.3227357406100173,
+      "precision": 0.2124433880237142,
+      "recall": 0.6711931394326774,
+      "f1": 0.3227357406100173,
+      "boundary_precision": 0.498466889146417,
+      "boundary_recall": 0.8115879088111412,
+      "boundary_f": 0.6176072952133742,
+      "tiles": 189,
+      "true_fraction": 0.038852832935474535,
+      "pred_fraction": 0.122751548807457,
+      "prob_min": 8.139691999531351e-06,
+      "prob_max": 0.9967142343521118,
+      "prob_mean": 0.14538175387988014
+     },
+     "uhcs2": {
+      "iou": 0.07456929468967344,
+      "dice": 0.13878917824691506,
+      "precision": 0.08072648312848682,
+      "recall": 0.4943552353734343,
+      "f1": 0.13878917824691506,
+      "boundary_precision": 0.19185580846010344,
+      "boundary_recall": 0.7105078486079427,
+      "boundary_f": 0.3021288737510542,
+      "tiles": 265,
+      "true_fraction": 0.05431852520636792,
+      "pred_fraction": 0.3326373981979658,
+      "prob_min": 1.892514956125524e-05,
+      "prob_max": 0.998848557472229,
+      "prob_mean": 0.3337123882095769
+     }
+    }
+   },
+   "cldice_probe": {
+    "skel_pred_sum": 1581.18212890625,
+    "skel_true_sum": 1072.291748046875,
+    "skel_pred_on_true": 163.06161499023438,
+    "t_prec": 0.14987912774085999,
+    "t_rec": 0.5252448320388794,
+    "skeleton_delta": 0.24978677928447723,
+    "skeleton_delta_max": 0.9858821630477905,
+    "pred_sum": 17951.20703125,
+    "true_sum": 2845.166748046875,
+    "dice": 0.8377525210380554,
+    "cldice": 0.780979335308075,
+    "tiles": 24,
+    "degenerate": false,
+    "verdict": "soft skeleton differs from the prediction -- clDice is measuring a real centreline"
+   },
+   "score": 0.13878917824691506,
+   "score_key": "uhcs2",
+   "is_best": false,
+   "checkpoints": {
+    "last": "/content/drive/MyDrive/phase11-persistent/checkpoints/dev/last.pt"
+   }
+  },
+  {
+   "epoch": 22,
+   "seconds": 31.193671374999894,
+   "eta_seconds": 600.8409823748696,
+   "lr": 0.0001273941444705147,
+   "trainable_params": 24430097,
+   "optimized_params": 24430097,
+   "encoder_frozen": false,
+   "freeze_changed": false,
+   "train": {
+    "total": 1.2747933036751218,
+    "bce": 0.6046406742599275,
+    "dice": 0.5088676628139284,
+    "cldice": 0.322569919957055
+   },
+   "val": {
+    "total": 2.0316386012778933,
+    "bce": 0.8455557812678132,
+    "dice": 0.8142463102739813,
+    "cldice": 0.743673045467175
+   },
+   "metrics": {
+    "pooled": {
+     "iou": 0.10275469398262495,
+     "dice": 0.18636002103337038,
+     "precision": 0.11185392948622722,
+     "recall": 0.558134066173193,
+     "f1": 0.1863600210333704,
+     "boundary_precision": 0.26229708833578674,
+     "boundary_recall": 0.7400299734310453,
+     "boundary_f": 0.3873141107654288,
+     "tiles": 454,
+     "true_fraction": 0.0478801643270753,
+     "pred_fraction": 0.2389147250137665,
+     "prob_min": 2.3873778900451725e-06,
+     "prob_max": 0.9986006617546082,
+     "prob_mean": 0.24848376568981204
+    },
+    "per_dataset": {
+     "Steel1": {
+      "iou": 0.19445821457873844,
+      "dice": 0.325600698635272,
+      "precision": 0.2164319027072984,
+      "recall": 0.6569861795392349,
+      "f1": 0.3256006986352721,
+      "boundary_precision": 0.5062139374286792,
+      "boundary_recall": 0.8011794457270028,
+      "boundary_f": 0.6204226012364612,
+      "tiles": 189,
+      "true_fraction": 0.038852832935474535,
+      "pred_fraction": 0.11793905591207837,
+      "prob_min": 2.3873778900451725e-06,
+      "prob_max": 0.9972531199455261,
+      "prob_mean": 0.1409008943687671
+     },
+     "uhcs2": {
+      "iou": 0.07836026629189033,
+      "dice": 0.1453322581354825,
+      "precision": 0.08480380361291524,
+      "recall": 0.5077055012338978,
+      "f1": 0.1453322581354825,
+      "boundary_precision": 0.19920558572426958,
+      "boundary_recall": 0.708835090189028,
+      "boundary_f": 0.3110078944007643,
+      "tiles": 265,
+      "true_fraction": 0.05431852520636792,
+      "pred_fraction": 0.3251954852410083,
+      "prob_min": 8.597225132689346e-06,
+      "prob_max": 0.9986006617546082,
+      "prob_mean": 0.32521268146217996
+     }
+    }
+   },
+   "cldice_probe": {
+    "skel_pred_sum": 1446.80859375,
+    "skel_true_sum": 1072.291748046875,
+    "skel_pred_on_true": 157.81192016601562,
+    "t_prec": 0.1533731073141098,
+    "t_rec": 0.522171139717102,
+    "skeleton_delta": 0.24529016017913818,
+    "skeleton_delta_max": 0.988711953163147,
+    "pred_sum": 17522.14453125,
+    "true_sum": 2845.166748046875,
+    "dice": 0.834862232208252,
+    "cldice": 0.7773792743682861,
+    "tiles": 24,
+    "degenerate": false,
+    "verdict": "soft skeleton differs from the prediction -- clDice is measuring a real centreline"
+   },
+   "score": 0.1453322581354825,
+   "score_key": "uhcs2",
+   "is_best": false,
+   "checkpoints": {
+    "last": "/content/drive/MyDrive/phase11-persistent/checkpoints/dev/last.pt"
+   }
+  },
+  {
+   "epoch": 23,
+   "seconds": 30.73296696600005,
+   "eta_seconds": 565.068499888,
+   "lr": 0.00011537609377615195,
+   "trainable_params": 24430097,
+   "optimized_params": 24430097,
+   "encoder_frozen": false,
+   "freeze_changed": false,
+   "train": {
+    "total": 1.2633178101645575,
+    "bce": 0.6039134363333384,
+    "dice": 0.502653772632281,
+    "cldice": 0.31350119991434944
+   },
+   "val": {
+    "total": 2.0654899580363133,
+    "bce": 0.8799359415071126,
+    "dice": 0.8116056656522372,
+    "cldice": 0.7478966802227339
+   },
+   "metrics": {
+    "pooled": {
+     "iou": 0.09633716937689671,
+     "dice": 0.17574368920037609,
+     "precision": 0.10545795079978551,
+     "recall": 0.5269378314538518,
+     "f1": 0.17574368920037609,
+     "boundary_precision": 0.24875780057966732,
+     "boundary_recall": 0.7210210621264289,
+     "boundary_f": 0.36989796433734673,
+     "tiles": 454,
+     "true_fraction": 0.0478801643270753,
+     "pred_fraction": 0.23924104127589826,
+     "prob_min": 3.0415963010455016e-06,
+     "prob_max": 0.9988213181495667,
+     "prob_mean": 0.24648729043844514
+    },
+    "per_dataset": {
+     "Steel1": {
+      "iou": 0.200904323630137,
+      "dice": 0.33458839255876127,
+      "precision": 0.23304886445217077,
+      "recall": 0.5929270659521282,
+      "f1": 0.3345883925587613,
+      "boundary_precision": 0.540935994910106,
+      "boundary_recall": 0.7453220098785852,
+      "boundary_f": 0.6268905638543428,
+      "tiles": 189,
+      "true_fraction": 0.038852832935474535,
+      "pred_fraction": 0.09885006859188988,
+      "prob_min": 3.0415963010455016e-06,
+      "prob_max": 0.9968763589859009,
+      "prob_mean": 0.11751568818060809
+     },
+     "uhcs2": {
+      "iou": 0.07302912574124804,
+      "dice": 0.13611769520384556,
+      "precision": 0.07895217272831233,
+      "recall": 0.493273984684402,
+      "f1": 0.13611769520384553,
+      "boundary_precision": 0.18806060706833616,
+      "boundary_recall": 0.7086241402996972,
+      "boundary_f": 0.2972377670060717,
+      "tiles": 265,
+      "true_fraction": 0.05431852520636792,
+      "pred_fraction": 0.33936894254864386,
+      "prob_min": 1.805851934477687e-05,
+      "prob_max": 0.9988213181495667,
+      "prob_mean": 0.3384708105393176
+     }
+    }
+   },
+   "cldice_probe": {
+    "skel_pred_sum": 1509.305419921875,
+    "skel_true_sum": 1072.291748046875,
+    "skel_pred_on_true": 158.747802734375,
+    "t_prec": 0.1550152450799942,
+    "t_rec": 0.5059947371482849,
+    "skeleton_delta": 0.2441481202840805,
+    "skeleton_delta_max": 0.9888849258422852,
+    "pred_sum": 17509.796875,
+    "true_sum": 2845.166748046875,
+    "dice": 0.8309545516967773,
+    "cldice": 0.7791275978088379,
+    "tiles": 24,
+    "degenerate": false,
+    "verdict": "soft skeleton differs from the prediction -- clDice is measuring a real centreline"
+   },
+   "score": 0.13611769520384556,
+   "score_key": "uhcs2",
+   "is_best": false,
+   "checkpoints": {
+    "last": "/content/drive/MyDrive/phase11-persistent/checkpoints/dev/last.pt"
+   }
+  },
+  {
+   "epoch": 24,
+   "seconds": 30.513756691000026,
+   "eta_seconds": 529.4116578366,
+   "lr": 0.0001036048059904571,
+   "trainable_params": 24430097,
+   "optimized_params": 24430097,
+   "encoder_frozen": false,
+   "freeze_changed": false,
+   "train": {
+    "total": 1.2712745401594374,
+    "bce": 0.606119336353408,
+    "dice": 0.5060392344991366,
+    "cldice": 0.3182319336467319
+   },
+   "val": {
+    "total": 2.018322276648971,
+    "bce": 0.8268562817888638,
+    "dice": 0.8183759886787851,
+    "cldice": 0.7461800191896077
+   },
+   "metrics": {
+    "pooled": {
+     "iou": 0.09651240865381251,
+     "dice": 0.1760352329661289,
+     "precision": 0.10437616127385071,
+     "recall": 0.5615989105675648,
+     "f1": 0.1760352329661289,
+     "boundary_precision": 0.2488274738117336,
+     "boundary_recall": 0.7465174312699399,
+     "boundary_f": 0.37324558679301517,
+     "tiles": 454,
+     "true_fraction": 0.0478801643270753,
+     "pred_fraction": 0.2576205887983549,
+     "prob_min": 4.189971150481142e-06,
+     "prob_max": 0.9988027811050415,
+     "prob_mean": 0.26858874466188154
+    },
+    "per_dataset": {
+     "Steel1": {
+      "iou": 0.19394799883648617,
+      "dice": 0.32488516924604816,
+      "precision": 0.21628030139727844,
+      "recall": 0.6525746868006391,
+      "f1": 0.3248851692460482,
+      "boundary_precision": 0.5104380948970308,
+      "boundary_recall": 0.788998489328676,
+      "boundary_f": 0.6198607775993034,
+      "tiles": 189,
+      "true_fraction": 0.038852832935474535,
+      "pred_fraction": 0.1172292396505043,
+      "prob_min": 4.189971150481142e-06,
+      "prob_max": 0.995718777179718,
+      "prob_mean": 0.1392332498358671
+     },
+     "uhcs2": {
+      "iou": 0.07285996235599594,
+      "dice": 0.13582380723015475,
+      "precision": 0.07822325860927595,
+      "recall": 0.5151883920318184,
+      "f1": 0.13582380723015477,
+      "boundary_precision": 0.18768695567079352,
+      "boundary_recall": 0.7248460807842672,
+      "boundary_f": 0.29816817320017086,
+      "tiles": 265,
+      "true_fraction": 0.05431852520636792,
+      "pred_fraction": 0.357748758567954,
+      "prob_min": 2.4682904040673748e-05,
+      "prob_max": 0.9988027811050415,
+      "prob_mean": 0.3608460598396805
+     }
+    }
+   },
+   "cldice_probe": {
+    "skel_pred_sum": 1455.51953125,
+    "skel_true_sum": 1072.291748046875,
+    "skel_pred_on_true": 153.4874267578125,
+    "t_prec": 0.15555980801582336,
+    "t_rec": 0.5316867232322693,
+    "skeleton_delta": 0.2636665105819702,
+    "skeleton_delta_max": 0.9857181310653687,
+    "pred_sum": 18735.16796875,
+    "true_sum": 2845.166748046875,
+    "dice": 0.8374441862106323,
+    "cldice": 0.7744040489196777,
+    "tiles": 24,
+    "degenerate": false,
+    "verdict": "soft skeleton differs from the prediction -- clDice is measuring a real centreline"
+   },
+   "score": 0.13582380723015475,
+   "score_key": "uhcs2",
+   "is_best": false,
+   "checkpoints": {
+    "last": "/content/drive/MyDrive/phase11-persistent/checkpoints/dev/last.pt"
+   }
+  },
+  {
+   "epoch": 25,
+   "seconds": 31.016029265000043,
+   "eta_seconds": 494.86208377038463,
+   "lr": 9.216069094493519e-05,
+   "trainable_params": 24430097,
+   "optimized_params": 24430097,
+   "encoder_frozen": false,
+   "freeze_changed": false,
+   "train": {
+    "total": 1.2516961461967893,
+    "bce": 0.589224691192309,
+    "dice": 0.5039697214961052,
+    "cldice": 0.3170034657749865
+   },
+   "val": {
+    "total": 2.0407386151704494,
+    "bce": 0.8480202243191555,
+    "dice": 0.8186381320071116,
+    "cldice": 0.7481605833322467
+   },
+   "metrics": {
+    "pooled": {
+     "iou": 0.0989156261562465,
+     "dice": 0.18002405972191068,
+     "precision": 0.10684850965193984,
+     "recall": 0.5712388433203823,
+     "f1": 0.18002405972191066,
+     "boundary_precision": 0.25338969709598214,
+     "boundary_recall": 0.7600482944275391,
+     "boundary_f": 0.38006944423662276,
+     "tiles": 454,
+     "true_fraction": 0.0478801643270753,
+     "pred_fraction": 0.2559793279034451,
+     "prob_min": 1.6187581422855146e-05,
+     "prob_max": 0.9987157583236694,
+     "prob_mean": 0.2639826793666716
+    },
+    "per_dataset": {
+     "Steel1": {
+      "iou": 0.18664387769920798,
+      "dice": 0.31457437434572716,
+      "precision": 0.20335030576545426,
+      "recall": 0.6943602296552885,
+      "f1": 0.31457437434572716,
+      "boundary_precision": 0.4775418027534409,
+      "boundary_recall": 0.8352183823972504,
+      "boundary_f": 0.6076535478976485,
+      "tiles": 189,
+      "true_fraction": 0.038852832935474535,
+      "pred_fraction": 0.13266693599640378,
+      "prob_min": 1.6187581422855146e-05,
+      "prob_max": 0.9967396855354309,
+      "prob_mean": 0.15231836839485421
+     },
+     "uhcs2": {
+      "iou": 0.07451444153474632,
+      "dice": 0.1386941648328451,
+      "precision": 0.08029950838675719,
+      "recall": 0.5084295151756715,
+      "f1": 0.13869416483284513,
+      "boundary_precision": 0.19172230046335267,
+      "boundary_recall": 0.7217009133388174,
+      "boundary_f": 0.30296177557359133,
+      "tiles": 265,
+      "true_fraction": 0.05431852520636792,
+      "pred_fraction": 0.3439266564711085,
+      "prob_min": 1.9373936083866283e-05,
+      "prob_max": 0.9987157583236694,
+      "prob_mean": 0.34362250870128846
+     }
+    }
+   },
+   "cldice_probe": {
+    "skel_pred_sum": 1555.5286865234375,
+    "skel_true_sum": 1072.291748046875,
+    "skel_pred_on_true": 166.05120849609375,
+    "t_prec": 0.14922906458377838,
+    "t_rec": 0.5350393056869507,
+    "skeleton_delta": 0.258836567401886,
+    "skeleton_delta_max": 0.9875203371047974,
+    "pred_sum": 18518.640625,
+    "true_sum": 2845.166748046875,
+    "dice": 0.8400243520736694,
+    "cldice": 0.7794736623764038,
+    "tiles": 24,
+    "degenerate": false,
+    "verdict": "soft skeleton differs from the prediction -- clDice is measuring a real centreline"
+   },
+   "score": 0.1386941648328451,
+   "score_key": "uhcs2",
+   "is_best": false,
+   "checkpoints": {
+    "last": "/content/drive/MyDrive/phase11-persistent/checkpoints/dev/last.pt"
+   }
+  },
+  {
+   "epoch": 26,
+   "seconds": 30.870489894000002,
+   "eta_seconds": 459.7728218195185,
+   "lr": 8.112192354952723e-05,
+   "trainable_params": 24430097,
+   "optimized_params": 24430097,
+   "encoder_frozen": false,
+   "freeze_changed": false,
+   "train": {
+    "total": 1.256455722782347,
+    "bce": 0.5975876732005013,
+    "dice": 0.5020016961627536,
+    "cldice": 0.31373270104328793
+   },
+   "val": {
+    "total": 2.0146580131043423,
+    "bce": 0.8262387424838701,
+    "dice": 0.8162038384030044,
+    "cldice": 0.7444307819862198
+   },
+   "metrics": {
+    "pooled": {
+     "iou": 0.09954448989050912,
+     "dice": 0.1810649606373301,
+     "precision": 0.10748222093808577,
+     "recall": 0.5740873722005202,
+     "f1": 0.18106496063733007,
+     "boundary_precision": 0.2558175477202205,
+     "boundary_recall": 0.7579269897760416,
+     "boundary_f": 0.3825244264286662,
+     "tiles": 454,
+     "true_fraction": 0.0478801643270753,
+     "pred_fraction": 0.25573901878054445,
+     "prob_min": 8.597225132689346e-06,
+     "prob_max": 0.9985730648040771,
+     "prob_mean": 0.2643232559908329
+    },
+    "per_dataset": {
+     "Steel1": {
+      "iou": 0.19030559168121364,
+      "dice": 0.3197592164755302,
+      "precision": 0.20782942190458267,
+      "recall": 0.692968001612491,
+      "f1": 0.3197592164755302,
+      "boundary_precision": 0.4901509023353903,
+      "boundary_recall": 0.8257699332769516,
+      "boundary_f": 0.6151614397514853,
+      "tiles": 189,
+      "true_fraction": 0.038852832935474535,
+      "pred_fraction": 0.12954744207795965,
+      "prob_min": 8.597225132689346e-06,
+      "prob_max": 0.9972955584526062,
+      "prob_mean": 0.14855864218303136
+     },
+     "uhcs2": {
+      "iou": 0.07493742141415304,
+      "dice": 0.13942657483366386,
+      "precision": 0.08066580986154165,
+      "recall": 0.5134414301342447,
+      "f1": 0.13942657483366389,
+      "boundary_precision": 0.19319517753169843,
+      "boundary_recall": 0.7233174891238902,
+      "boundary_f": 0.30494166814518237,
+      "tiles": 265,
+      "true_fraction": 0.05431852520636792,
+      "pred_fraction": 0.3457398036740861,
+      "prob_min": 2.265035072923638e-05,
+      "prob_max": 0.9985730648040771,
+      "prob_mean": 0.34688745225375556
+     }
+    }
+   },
+   "cldice_probe": {
+    "skel_pred_sum": 1481.7620849609375,
+    "skel_true_sum": 1072.291748046875,
+    "skel_pred_on_true": 159.50936889648438,
+    "t_prec": 0.15404820442199707,
+    "t_rec": 0.5385137796401978,
+    "skeleton_delta": 0.2594369649887085,
+    "skeleton_delta_max": 0.9849274158477783,
+    "pred_sum": 18484.22265625,
+    "true_sum": 2845.166748046875,
+    "dice": 0.8360581398010254,
+    "cldice": 0.7743427157402039,
+    "tiles": 24,
+    "degenerate": false,
+    "verdict": "soft skeleton differs from the prediction -- clDice is measuring a real centreline"
+   },
+   "score": 0.13942657483366386,
+   "score_key": "uhcs2",
+   "is_best": false,
+   "checkpoints": {
+    "last": "/content/drive/MyDrive/phase11-persistent/checkpoints/dev/last.pt"
+   }
+  },
+  {
+   "epoch": 27,
+   "seconds": 31.133247530999824,
+   "eta_seconds": 424.69806122400007,
+   "lr": 7.056390977870674e-05,
+   "trainable_params": 24430097,
+   "optimized_params": 24430097,
+   "encoder_frozen": false,
+   "freeze_changed": false,
+   "train": {
+    "total": 1.2580791513125102,
+    "bce": 0.6050117446316613,
+    "dice": 0.49774154937929577,
+    "cldice": 0.31065168893999523
+   },
+   "val": {
+    "total": 2.0506989567290317,
+    "bce": 0.8606480711882335,
+    "dice": 0.8176034759844978,
+    "cldice": 0.7448947526809928
+   },
+   "metrics": {
+    "pooled": {
+     "iou": 0.1013648264776689,
+     "dice": 0.1840712977948441,
+     "precision": 0.10992095673115944,
+     "recall": 0.5656400591045174,
+     "f1": 0.18407129779484407,
+     "boundary_precision": 0.260269998001581,
+     "boundary_recall": 0.7494207125533924,
+     "boundary_f": 0.38635935800856336,
+     "tiles": 454,
+     "true_fraction": 0.0478801643270753,
+     "pred_fraction": 0.24638558274323719,
+     "prob_min": 2.2252811504586134e-06,
+     "prob_max": 0.9989433884620667,
+     "prob_mean": 0.2558621598924572
+    },
+    "per_dataset": {
+     "Steel1": {
+      "iou": 0.18999555370529278,
+      "dice": 0.31932145143518065,
+      "precision": 0.20709854591433538,
+      "recall": 0.6970283204119333,
+      "f1": 0.31932145143518065,
+      "boundary_precision": 0.48921289710763394,
+      "boundary_recall": 0.8276567139677876,
+      "boundary_f": 0.6149437050492856,
+      "tiles": 189,
+      "true_fraction": 0.038852832935474535,
+      "pred_fraction": 0.13076636904761904,
+      "prob_min": 2.2252811504586134e-06,
+      "prob_max": 0.9971439242362976,
+      "prob_mean": 0.15280881457070195
+     },
+     "uhcs2": {
+      "iou": 0.07606127165181102,
+      "dice": 0.14136977820055346,
+      "precision": 0.08236056103544634,
+      "recall": 0.49861345499877036,
+      "f1": 0.14136977820055346,
+      "boundary_precision": 0.19533983309295277,
+      "boundary_recall": 0.7095092817951305,
+      "boundary_f": 0.30633930542310106,
+      "tiles": 265,
+      "true_fraction": 0.05431852520636792,
+      "pred_fraction": 0.3288460785487913,
+      "prob_min": 1.4397558516066056e-05,
+      "prob_max": 0.9989433884620667,
+      "prob_mean": 0.3293605835370298
+     }
+    }
+   },
+   "cldice_probe": {
+    "skel_pred_sum": 1511.813232421875,
+    "skel_true_sum": 1072.291748046875,
+    "skel_pred_on_true": 157.6013641357422,
+    "t_prec": 0.15155285596847534,
+    "t_rec": 0.5303500890731812,
+    "skeleton_delta": 0.2480240911245346,
+    "skeleton_delta_max": 0.9897909760475159,
+    "pred_sum": 17766.3203125,
+    "true_sum": 2845.166748046875,
+    "dice": 0.8366276025772095,
+    "cldice": 0.7777131795883179,
+    "tiles": 24,
+    "degenerate": false,
+    "verdict": "soft skeleton differs from the prediction -- clDice is measuring a real centreline"
+   },
+   "score": 0.14136977820055346,
+   "score_key": "uhcs2",
+   "is_best": false,
+   "checkpoints": {
+    "last": "/content/drive/MyDrive/phase11-persistent/checkpoints/dev/last.pt"
+   }
+  },
+  {
+   "epoch": 28,
+   "seconds": 31.603589459999966,
+   "eta_seconds": 389.6757367390345,
+   "lr": 6.055877157221349e-05,
+   "trainable_params": 24430097,
+   "optimized_params": 24430097,
+   "encoder_frozen": false,
+   "freeze_changed": false,
+   "train": {
+    "total": 1.251418348815706,
+    "bce": 0.588493330611123,
+    "dice": 0.5043154325750139,
+    "cldice": 0.31721917705403435
+   },
+   "val": {
+    "total": 2.0341681866918893,
+    "bce": 0.8496059132042435,
+    "dice": 0.8122707400553026,
+    "cldice": 0.7445830416574352
+   },
+   "metrics": {
+    "pooled": {
+     "iou": 0.09915857633364812,
+     "dice": 0.1804263342317745,
+     "precision": 0.10817018737769729,
+     "recall": 0.5434295361137726,
+     "f1": 0.1804263342317745,
+     "boundary_precision": 0.2547568197838879,
+     "boundary_recall": 0.7319125786627076,
+     "boundary_f": 0.3779578472657545,
+     "tiles": 454,
+     "true_fraction": 0.0478801643270753,
+     "pred_fraction": 0.24054220594498554,
+     "prob_min": 1.4174349416862242e-05,
+     "prob_max": 0.9987106323242188,
+     "prob_mean": 0.2493588309160676
+    },
+    "per_dataset": {
+     "Steel1": {
+      "iou": 0.19779746851901212,
+      "dice": 0.3302686367563859,
+      "precision": 0.22351450326722963,
+      "recall": 0.6322336117096768,
+      "f1": 0.33026863675638596,
+      "boundary_precision": 0.5222843793732943,
+      "boundary_recall": 0.779577053588312,
+      "boundary_f": 0.6255057678155225,
+      "tiles": 189,
+      "true_fraction": 0.038852832935474535,
+      "pred_fraction": 0.1098992080284805,
+      "prob_min": 1.4174349416862242e-05,
+      "prob_max": 0.9966885447502136,
+      "prob_mean": 0.12754444419233887
+     },
+     "uhcs2": {
+      "iou": 0.0749559787613375,
+      "dice": 0.13945869457409524,
+      "precision": 0.081079043220048,
+      "recall": 0.4981268921887058,
+      "f1": 0.13945869457409527,
+      "boundary_precision": 0.19192210073347607,
+      "boundary_recall": 0.7075969521451165,
+      "boundary_f": 0.30194689727517093,
+      "tiles": 265,
+      "true_fraction": 0.05431852520636792,
+      "pred_fraction": 0.3337177780439269,
+      "prob_min": 1.6964426322374493e-05,
+      "prob_max": 0.9987106323242188,
+      "prob_mean": 0.336237770881293
+     }
+    }
+   },
+   "cldice_probe": {
+    "skel_pred_sum": 1468.48828125,
+    "skel_true_sum": 1072.291748046875,
+    "skel_pred_on_true": 153.37362670898438,
+    "t_prec": 0.1545419692993164,
+    "t_rec": 0.5185418128967285,
+    "skeleton_delta": 0.24774086475372314,
+    "skeleton_delta_max": 0.9888418912887573,
+    "pred_sum": 17704.43359375,
+    "true_sum": 2845.166748046875,
+    "dice": 0.8318995833396912,
+    "cldice": 0.7778169512748718,
+    "tiles": 24,
+    "degenerate": false,
+    "verdict": "soft skeleton differs from the prediction -- clDice is measuring a real centreline"
+   },
+   "score": 0.13945869457409524,
+   "score_key": "uhcs2",
+   "is_best": false,
+   "checkpoints": {
+    "last": "/content/drive/MyDrive/phase11-persistent/checkpoints/dev/last.pt"
+   }
+  },
+  {
+   "epoch": 29,
+   "seconds": 31.181507495000005,
+   "eta_seconds": 354.77692991333333,
+   "lr": 5.1174854169074455e-05,
+   "trainable_params": 24430097,
+   "optimized_params": 24430097,
+   "encoder_frozen": false,
+   "freeze_changed": false,
+   "train": {
+    "total": 1.2310896383391485,
+    "bce": 0.5841457760996289,
+    "dice": 0.49410809328158695,
+    "cldice": 0.3056715346044964
+   },
+   "val": {
+    "total": 2.034912659733306,
+    "bce": 0.8474201420855417,
+    "dice": 0.8158953623099474,
+    "cldice": 0.7431943366706109
+   },
+   "metrics": {
+    "pooled": {
+     "iou": 0.10122769327659446,
+     "dice": 0.1838451646187746,
+     "precision": 0.1105185077471632,
+     "recall": 0.5463103548727885,
+     "f1": 0.1838451646187746,
+     "boundary_precision": 0.26029562352838265,
+     "boundary_recall": 0.7317841211010848,
+     "boundary_f": 0.3840018005030814,
+     "tiles": 454,
+     "true_fraction": 0.0478801643270753,
+     "pred_fraction": 0.23667917797744012,
+     "prob_min": 4.289332991902484e-06,
+     "prob_max": 0.998745322227478,
+     "prob_mean": 0.2488511353402936
+    },
+    "per_dataset": {
+     "Steel1": {
+      "iou": 0.19845164536692708,
+      "dice": 0.33118006243158454,
+      "precision": 0.2204453182112928,
+      "recall": 0.6654517572203648,
+      "f1": 0.3311800624315846,
+      "boundary_precision": 0.5174046646483754,
+      "boundary_recall": 0.8029332374704671,
+      "boundary_f": 0.6292955792630845,
+      "tiles": 189,
+      "true_fraction": 0.038852832935474535,
+      "pred_fraction": 0.11728389679439484,
+      "prob_min": 4.289332991902484e-06,
+      "prob_max": 0.9963783621788025,
+      "prob_mean": 0.141553855210385
+     },
+     "uhcs2": {
+      "iou": 0.0754002562799114,
+      "dice": 0.1402273355238736,
+      "precision": 0.08194736247923035,
+      "recall": 0.4855313817111746,
+      "f1": 0.1402273355238736,
+      "boundary_precision": 0.19347025369801457,
+      "boundary_recall": 0.6954880044776499,
+      "boundary_f": 0.30272791648587744,
+      "tiles": 265,
+      "true_fraction": 0.05431852520636792,
+      "pred_fraction": 0.32183279361364975,
+      "prob_min": 1.373825580230914e-05,
+      "prob_max": 0.998745322227478,
+      "prob_mean": 0.32537636531973785
+     }
+    }
+   },
+   "cldice_probe": {
+    "skel_pred_sum": 1486.83740234375,
+    "skel_true_sum": 1072.291748046875,
+    "skel_pred_on_true": 155.28024291992188,
+    "t_prec": 0.1552174687385559,
+    "t_rec": 0.5152575373649597,
+    "skeleton_delta": 0.24113821983337402,
+    "skeleton_delta_max": 0.9888418912887573,
+    "pred_sum": 17290.072265625,
+    "true_sum": 2845.166748046875,
+    "dice": 0.8346354961395264,
+    "cldice": 0.7765868902206421,
+    "tiles": 24,
+    "degenerate": false,
+    "verdict": "soft skeleton differs from the prediction -- clDice is measuring a real centreline"
+   },
+   "score": 0.1402273355238736,
+   "score_key": "uhcs2",
+   "is_best": false,
+   "checkpoints": {
+    "last": "/content/drive/MyDrive/phase11-persistent/checkpoints/dev/last.pt"
+   }
+  },
+  {
+   "epoch": 30,
+   "seconds": 31.459155959999862,
+   "eta_seconds": 319.9172047890968,
+   "lr": 4.2476259240320215e-05,
+   "trainable_params": 24430097,
+   "optimized_params": 24430097,
+   "encoder_frozen": false,
+   "freeze_changed": false,
+   "train": {
+    "total": 1.2588318884372711,
+    "bce": 0.5989345593584908,
+    "dice": 0.5020425551467471,
+    "cldice": 0.31570954372485477
+   },
+   "val": {
+    "total": 2.046001150744602,
+    "bce": 0.8581785620046607,
+    "dice": 0.8161710414067239,
+    "cldice": 0.7433030618444938
+   },
+   "metrics": {
+    "pooled": {
+     "iou": 0.09984965516389749,
+     "dice": 0.18156964398741948,
+     "precision": 0.10893464670589607,
+     "recall": 0.5448874943404968,
+     "f1": 0.1815696439874195,
+     "boundary_precision": 0.25685198961460626,
+     "boundary_recall": 0.7333347372411106,
+     "boundary_f": 0.38045043668077777,
+     "tiles": 454,
+     "true_fraction": 0.0478801643270753,
+     "pred_fraction": 0.2394949959238195,
+     "prob_min": 3.69763802154921e-06,
+     "prob_max": 0.9989637136459351,
+     "prob_mean": 0.25009785257772205
+    },
+    "per_dataset": {
+     "Steel1": {
+      "iou": 0.1952363237655167,
+      "dice": 0.32669074706571327,
+      "precision": 0.21674037656235884,
+      "recall": 0.6630496443584634,
+      "f1": 0.32669074706571327,
+      "boundary_precision": 0.5099044771374794,
+      "boundary_recall": 0.7977134212861278,
+      "boundary_f": 0.6221353278764656,
+      "tiles": 189,
+      "true_fraction": 0.038852832935474535,
+      "pred_fraction": 0.11885813556650959,
+      "prob_min": 3.69763802154921e-06,
+      "prob_max": 0.9969005584716797,
+      "prob_mean": 0.14045632263970753
+     },
+     "uhcs2": {
+      "iou": 0.07445828501439795,
+      "dice": 0.13859688375598536,
+      "precision": 0.08086155918638226,
+      "recall": 0.48460807842671666,
+      "f1": 0.1385968837559854,
+      "boundary_precision": 0.19095600580448016,
+      "boundary_recall": 0.7004924990883573,
+      "boundary_f": 0.3001031444614764,
+      "tiles": 265,
+      "true_fraction": 0.05431852520636792,
+      "pred_fraction": 0.32553411519752357,
+      "prob_min": 7.827869012544397e-06,
+      "prob_max": 0.9989637136459351,
+      "prob_mean": 0.3282950192127588
+     }
+    }
+   },
+   "cldice_probe": {
+    "skel_pred_sum": 1521.0726318359375,
+    "skel_true_sum": 1072.291748046875,
+    "skel_pred_on_true": 156.76303100585938,
+    "t_prec": 0.1535583734512329,
+    "t_rec": 0.5155668258666992,
+    "skeleton_delta": 0.24386322498321533,
+    "skeleton_delta_max": 0.988711953163147,
+    "pred_sum": 17502.89453125,
+    "true_sum": 2845.166748046875,
+    "dice": 0.8364760875701904,
+    "cldice": 0.7782406210899353,
+    "tiles": 24,
+    "degenerate": false,
+    "verdict": "soft skeleton differs from the prediction -- clDice is measuring a real centreline"
+   },
+   "score": 0.13859688375598536,
+   "score_key": "uhcs2",
+   "is_best": false,
+   "checkpoints": {
+    "last": "/content/drive/MyDrive/phase11-persistent/checkpoints/dev/last.pt"
+   }
+  },
+  {
+   "epoch": 31,
+   "seconds": 31.25710468500006,
+   "eta_seconds": 284.76224040424995,
+   "lr": 3.452240700957342e-05,
+   "trainable_params": 24430097,
+   "optimized_params": 24430097,
+   "encoder_frozen": false,
+   "freeze_changed": false,
+   "train": {
+    "total": 1.2304302487108443,
+    "bce": 0.5758226480748918,
+    "dice": 0.49915764066908097,
+    "cldice": 0.31089989509847427
+   },
+   "val": {
+    "total": 2.030687309046674,
+    "bce": 0.8457752219380786,
+    "dice": 0.8139850476239746,
+    "cldice": 0.7418541217690523
+   },
+   "metrics": {
+    "pooled": {
+     "iou": 0.10064652736055522,
+     "dice": 0.18288619435690082,
+     "precision": 0.10943459444289762,
+     "recall": 0.5562093086105174,
+     "f1": 0.18288619435690082,
+     "boundary_precision": 0.25838783151912104,
+     "boundary_recall": 0.7422804375980542,
+     "boundary_f": 0.3833362934936167,
+     "tiles": 454,
+     "true_fraction": 0.0478801643270753,
+     "pred_fraction": 0.24335442765693832,
+     "prob_min": 2.6220211566396756e-06,
+     "prob_max": 0.9988530874252319,
+     "prob_mean": 0.2527728061712786
+    },
+    "per_dataset": {
+     "Steel1": {
+      "iou": 0.19497458680555968,
+      "dice": 0.3263242397928668,
+      "precision": 0.2144237906566364,
+      "recall": 0.6824951220069695,
+      "f1": 0.3263242397928668,
+      "boundary_precision": 0.5040623178158995,
+      "boundary_recall": 0.8168700635645609,
+      "boundary_f": 0.6234284561401463,
+      "tiles": 189,
+      "true_fraction": 0.038852832935474535,
+      "pred_fraction": 0.12366570366753472,
+      "prob_min": 2.6220211566396756e-06,
+      "prob_max": 0.9968396425247192,
+      "prob_mean": 0.14235091430169564
+     },
+     "uhcs2": {
+      "iou": 0.074968747333666,
+      "dice": 0.13948079424563214,
+      "precision": 0.08126457058667012,
+      "recall": 0.4917856749124399,
+      "f1": 0.13948079424563217,
+      "boundary_precision": 0.1924700381705798,
+      "boundary_recall": 0.7042291742636895,
+      "boundary_f": 0.30231545689308587,
+      "tiles": 265,
+      "true_fraction": 0.05431852520636792,
+      "pred_fraction": 0.32871732891730543,
+      "prob_min": 8.530320883437525e-06,
+      "prob_max": 0.9988530874252319,
+      "prob_mean": 0.331526532825434
+     }
+    }
+   },
+   "cldice_probe": {
+    "skel_pred_sum": 1520.97802734375,
+    "skel_true_sum": 1072.291748046875,
+    "skel_pred_on_true": 161.4202880859375,
+    "t_prec": 0.15524575114250183,
+    "t_rec": 0.5224984884262085,
+    "skeleton_delta": 0.24385452270507812,
+    "skeleton_delta_max": 0.9879462122917175,
+    "pred_sum": 17502.23046875,
+    "true_sum": 2845.166748046875,
+    "dice": 0.8339554667472839,
+    "cldice": 0.7750305533409119,
+    "tiles": 24,
+    "degenerate": false,
+    "verdict": "soft skeleton differs from the prediction -- clDice is measuring a real centreline"
+   },
+   "score": 0.13948079424563214,
+   "score_key": "uhcs2",
+   "is_best": false,
+   "checkpoints": {
+    "last": "/content/drive/MyDrive/phase11-persistent/checkpoints/dev/last.pt"
+   }
+  },
+  {
+   "epoch": 32,
+   "seconds": 31.745885430999806,
+   "eta_seconds": 249.4882845059394,
+   "lr": 2.7367630352670086e-05,
+   "trainable_params": 24430097,
+   "optimized_params": 24430097,
+   "encoder_frozen": false,
+   "freeze_changed": false,
+   "train": {
+    "total": 1.2521349787712097,
+    "bce": 0.5968418932623334,
+    "dice": 0.4986041833957036,
+    "cldice": 0.3133778182996644
+   },
+   "val": {
+    "total": 2.046851251618978,
+    "bce": 0.8650544015321437,
+    "dice": 0.8107652291327321,
+    "cldice": 0.7420632303548804
+   },
+   "metrics": {
+    "pooled": {
+     "iou": 0.10068529454981967,
+     "dice": 0.18295019484384037,
+     "precision": 0.10992688381297276,
+     "recall": 0.5449647092682481,
+     "f1": 0.18295019484384037,
+     "boundary_precision": 0.2583576426224411,
+     "boundary_recall": 0.7341833994924873,
+     "boundary_f": 0.3822147081016027,
+     "tiles": 454,
+     "true_fraction": 0.0478801643270753,
+     "pred_fraction": 0.2373668653849463,
+     "prob_min": 4.495181656238856e-06,
+     "prob_max": 0.9987404942512512,
+     "prob_mean": 0.24493959368030144
+    },
+    "per_dataset": {
+     "Steel1": {
+      "iou": 0.19774360744413028,
+      "dice": 0.3301935509655462,
+      "precision": 0.22103388189738626,
+      "recall": 0.6523752033795817,
+      "f1": 0.3301935509655462,
+      "boundary_precision": 0.5170324738185338,
+      "boundary_recall": 0.7953383218041613,
+      "boundary_f": 0.6266761519178313,
+      "tiles": 189,
+      "true_fraction": 0.038852832935474535,
+      "pred_fraction": 0.11467302917803406,
+      "prob_min": 4.495181656238856e-06,
+      "prob_max": 0.9974983334541321,
+      "prob_mean": 0.13092530315751752
+     },
+     "uhcs2": {
+      "iou": 0.07551863194574192,
+      "dice": 0.14043202916739744,
+      "precision": 0.08195607898714004,
+      "recall": 0.49017015917706225,
+      "f1": 0.14043202916739747,
+      "boundary_precision": 0.19323714309059262,
+      "boundary_recall": 0.7029857359713023,
+      "boundary_f": 0.30314547514056606,
+      "tiles": 265,
+      "true_fraction": 0.05431852520636792,
+      "pred_fraction": 0.3248730353589328,
+      "prob_min": 8.076349331531674e-06,
+      "prob_max": 0.9987404942512512,
+      "prob_mean": 0.32625544616636243
+     }
+    }
+   },
+   "cldice_probe": {
+    "skel_pred_sum": 1531.854736328125,
+    "skel_true_sum": 1072.291748046875,
+    "skel_pred_on_true": 159.58377075195312,
+    "t_prec": 0.1547534465789795,
+    "t_rec": 0.5125964283943176,
+    "skeleton_delta": 0.23856300115585327,
+    "skeleton_delta_max": 0.9894702434539795,
+    "pred_sum": 17166.3203125,
+    "true_sum": 2845.166748046875,
+    "dice": 0.8318420648574829,
+    "cldice": 0.7774947881698608,
+    "tiles": 24,
+    "degenerate": false,
+    "verdict": "soft skeleton differs from the prediction -- clDice is measuring a real centreline"
+   },
+   "score": 0.14043202916739744,
+   "score_key": "uhcs2",
+   "is_best": false,
+   "checkpoints": {
+    "last": "/content/drive/MyDrive/phase11-persistent/checkpoints/dev/last.pt"
+   }
+  },
+  {
+   "epoch": 33,
+   "seconds": 32.036131754999815,
+   "eta_seconds": 214.2297965495294,
+   "lr": 2.1060803649024913e-05,
+   "trainable_params": 24430097,
+   "optimized_params": 24430097,
+   "encoder_frozen": false,
+   "freeze_changed": false,
+   "train": {
+    "total": 1.243193702565299,
+    "bce": 0.5890477101008097,
+    "dice": 0.4985234323475096,
+    "cldice": 0.3112451169225905
+   },
+   "val": {
+    "total": 2.0287674355611927,
+    "bce": 0.84162676281866,
+    "dice": 0.8151495301775995,
+    "cldice": 0.7439823951490125
+   },
+   "metrics": {
+    "pooled": {
+     "iou": 0.09702089914026973,
+     "dice": 0.17688067604966243,
+     "precision": 0.10526746688075041,
+     "recall": 0.5532667179093005,
+     "f1": 0.17688067604966243,
+     "boundary_precision": 0.2504245458344558,
+     "boundary_recall": 0.7434098814048905,
+     "boundary_f": 0.3746460714523653,
+     "tiles": 454,
+     "true_fraction": 0.0478801643270753,
+     "pred_fraction": 0.2516494616537892,
+     "prob_min": 6.289878911047708e-06,
+     "prob_max": 0.9985449314117432,
+     "prob_mean": 0.26052115685285976
+    },
+    "per_dataset": {
+     "Steel1": {
+      "iou": 0.1998282493575242,
+      "dice": 0.3330947566279205,
+      "precision": 0.2235391157188162,
+      "recall": 0.6532500212990111,
+      "f1": 0.3330947566279205,
+      "boundary_precision": 0.5240169518039735,
+      "boundary_recall": 0.790675396836941,
+      "boundary_f": 0.6303030693762063,
+      "tiles": 189,
+      "true_fraction": 0.038852832935474535,
+      "pred_fraction": 0.11353992280505952,
+      "prob_min": 6.289878911047708e-06,
+      "prob_max": 0.9968024492263794,
+      "prob_mean": 0.13395288393453317
+     },
+     "uhcs2": {
+      "iou": 0.0723304495332958,
+      "dice": 0.13490328389868209,
+      "precision": 0.0779153613186357,
+      "recall": 0.5022610859997116,
+      "f1": 0.13490328389868209,
+      "boundary_precision": 0.18715216870443752,
+      "boundary_recall": 0.7192977806799583,
+      "boundary_f": 0.29702277481501826,
+      "tiles": 265,
+      "true_fraction": 0.05431852520636792,
+      "pred_fraction": 0.3501502270968455,
+      "prob_min": 1.3007129382458515e-05,
+      "prob_max": 0.9985449314117432,
+      "prob_mean": 0.3507906043304587
+     }
+    }
+   },
+   "cldice_probe": {
+    "skel_pred_sum": 1560.752685546875,
+    "skel_true_sum": 1072.291748046875,
+    "skel_pred_on_true": 160.27520751953125,
+    "t_prec": 0.1560894250869751,
+    "t_rec": 0.5209517478942871,
+    "skeleton_delta": 0.2532222867012024,
+    "skeleton_delta_max": 0.9869794845581055,
+    "pred_sum": 18155.9296875,
+    "true_sum": 2845.166748046875,
+    "dice": 0.8358473777770996,
+    "cldice": 0.7758746147155762,
+    "tiles": 24,
+    "degenerate": false,
+    "verdict": "soft skeleton differs from the prediction -- clDice is measuring a real centreline"
+   },
+   "score": 0.13490328389868209,
+   "score_key": "uhcs2",
+   "is_best": false,
+   "checkpoints": {
+    "last": "/content/drive/MyDrive/phase11-persistent/checkpoints/dev/last.pt"
+   }
+  },
+  {
+   "epoch": 34,
+   "seconds": 31.055450945000075,
+   "eta_seconds": 178.57938914585716,
+   "lr": 1.5645008920062016e-05,
+   "trainable_params": 24430097,
+   "optimized_params": 24430097,
+   "encoder_frozen": false,
+   "freeze_changed": false,
+   "train": {
+    "total": 1.2409884300496843,
+    "bce": 0.5876045243607627,
+    "dice": 0.49800990439123577,
+    "cldice": 0.31074800507889855
+   },
+   "val": {
+    "total": 2.0399931306881003,
+    "bce": 0.8532444979125707,
+    "dice": 0.8151142817761929,
+    "cldice": 0.7432685827893832
+   },
+   "metrics": {
+    "pooled": {
+     "iou": 0.09871138499871313,
+     "dice": 0.17968574158140493,
+     "precision": 0.10687513349111623,
+     "recall": 0.5637518031440515,
+     "f1": 0.17968574158140493,
+     "boundary_precision": 0.2539775861346229,
+     "boundary_recall": 0.7506596611668579,
+     "boundary_f": 0.3795414300313718,
+     "tiles": 454,
+     "true_fraction": 0.0478801643270753,
+     "pred_fraction": 0.2525613591534451,
+     "prob_min": 4.356879799161106e-06,
+     "prob_max": 0.9987257122993469,
+     "prob_mean": 0.26041288813370966
+    },
+    "per_dataset": {
+     "Steel1": {
+      "iou": 0.195511474637122,
+      "dice": 0.32707586465695165,
+      "precision": 0.21540455864113323,
+      "recall": 0.6791807880841904,
+      "f1": 0.3270758646569517,
+      "boundary_precision": 0.5068717040270677,
+      "boundary_recall": 0.8122466196910916,
+      "boundary_f": 0.6242121283746391,
+      "tiles": 189,
+      "true_fraction": 0.038852832935474535,
+      "pred_fraction": 0.12250482468377977,
+      "prob_min": 4.356879799161106e-06,
+      "prob_max": 0.9973989725112915,
+      "prob_mean": 0.14127772711414507
+     },
+     "uhcs2": {
+      "iou": 0.07367709283430958,
+      "dice": 0.1372425533263742,
+      "precision": 0.07941538357386652,
+      "recall": 0.5048666881503405,
+      "f1": 0.13724255332637422,
+      "boundary_precision": 0.18999116749036168,
+      "boundary_recall": 0.7192415980461164,
+      "boundary_f": 0.3005821085644384,
+      "tiles": 265,
+      "true_fraction": 0.05431852520636792,
+      "pred_fraction": 0.3453186610959611,
+      "prob_min": 1.0953123819490429e-05,
+      "prob_max": 0.9987257122993469,
+      "prob_mean": 0.3453809841061538
+     }
+    }
+   },
+   "cldice_probe": {
+    "skel_pred_sum": 1543.22900390625,
+    "skel_true_sum": 1072.291748046875,
+    "skel_pred_on_true": 159.6978759765625,
+    "t_prec": 0.1541232168674469,
+    "t_rec": 0.5299975275993347,
+    "skeleton_delta": 0.25538307428359985,
+    "skeleton_delta_max": 0.9893062710762024,
+    "pred_sum": 18280.015625,
+    "true_sum": 2845.166748046875,
+    "dice": 0.8359243273735046,
+    "cldice": 0.7763261795043945,
+    "tiles": 24,
+    "degenerate": false,
+    "verdict": "soft skeleton differs from the prediction -- clDice is measuring a real centreline"
+   },
+   "score": 0.1372425533263742,
+   "score_key": "uhcs2",
+   "is_best": false,
+   "checkpoints": {
+    "last": "/content/drive/MyDrive/phase11-persistent/checkpoints/dev/last.pt"
+   }
+  },
+  {
+   "epoch": 35,
+   "seconds": 31.278483052000183,
+   "eta_seconds": 142.98110041744445,
+   "lr": 1.115724153532375e-05,
+   "trainable_params": 24430097,
+   "optimized_params": 24430097,
+   "encoder_frozen": false,
+   "freeze_changed": false,
+   "train": {
+    "total": 1.2354787058300443,
+    "bce": 0.5807476970884535,
+    "dice": 0.4985666283302837,
+    "cldice": 0.3123287732402484
+   },
+   "val": {
+    "total": 2.0490580613392564,
+    "bce": 0.8657388781660978,
+    "dice": 0.8118333774516235,
+    "cldice": 0.7429716054038329
+   },
+   "metrics": {
+    "pooled": {
+     "iou": 0.10137803892988922,
+     "dice": 0.1840930822052512,
+     "precision": 0.1106689370259335,
+     "recall": 0.5470130107153262,
+     "f1": 0.1840930822052512,
+     "boundary_precision": 0.2607885853380047,
+     "boundary_recall": 0.7362590771412226,
+     "boundary_f": 0.3851530280758763,
+     "tiles": 454,
+     "true_fraction": 0.0478801643270753,
+     "pred_fraction": 0.23666146568264732,
+     "prob_min": 4.15736440118053e-06,
+     "prob_max": 0.9988927245140076,
+     "prob_mean": 0.24545700011143076
+    },
+    "per_dataset": {
+     "Steel1": {
+      "iou": 0.19773897919593283,
+      "dice": 0.3301870985758168,
+      "precision": 0.21979253657666764,
+      "recall": 0.6633821167268926,
+      "f1": 0.3301870985758168,
+      "boundary_precision": 0.5151618213325053,
+      "boundary_recall": 0.8010630803980525,
+      "boundary_f": 0.6270617049677523,
+      "tiles": 189,
+      "true_fraction": 0.038852832935474535,
+      "pred_fraction": 0.11726637744398975,
+      "prob_min": 4.15736440118053e-06,
+      "prob_max": 0.9969245791435242,
+      "prob_mean": 0.1355598666680553
+     },
+     "uhcs2": {
+      "iou": 0.07575777287720091,
+      "dice": 0.14084541109023205,
+      "precision": 0.08230921852726789,
+      "recall": 0.4876483009523486,
+      "f1": 0.14084541109023205,
+      "boundary_precision": 0.19468048959978873,
+      "boundary_recall": 0.7031998660097185,
+      "boundary_f": 0.30493883365639873,
+      "tiles": 265,
+      "true_fraction": 0.05431852520636792,
+      "pred_fraction": 0.32181494370946345,
+      "prob_min": 1.1659530173346866e-05,
+      "prob_max": 0.9988927245140076,
+      "prob_mean": 0.323836465095574
+     }
+    }
+   },
+   "cldice_probe": {
+    "skel_pred_sum": 1554.132568359375,
+    "skel_true_sum": 1072.291748046875,
+    "skel_pred_on_true": 162.63340759277344,
+    "t_prec": 0.15535788238048553,
+    "t_rec": 0.5179027318954468,
+    "skeleton_delta": 0.23883318901062012,
+    "skeleton_delta_max": 0.9894702434539795,
+    "pred_sum": 17206.3046875,
+    "true_sum": 2845.166748046875,
+    "dice": 0.8323091268539429,
+    "cldice": 0.7761292457580566,
+    "tiles": 24,
+    "degenerate": false,
+    "verdict": "soft skeleton differs from the prediction -- clDice is measuring a real centreline"
+   },
+   "score": 0.14084541109023205,
+   "score_key": "uhcs2",
+   "is_best": false,
+   "checkpoints": {
+    "last": "/content/drive/MyDrive/phase11-persistent/checkpoints/dev/last.pt"
+   }
+  },
+  {
+   "epoch": 36,
+   "seconds": 31.335849772999836,
+   "eta_seconds": 107.4052709002703,
+   "lr": 7.628157496584203e-06,
+   "trainable_params": 24430097,
+   "optimized_params": 24430097,
+   "encoder_frozen": false,
+   "freeze_changed": false,
+   "train": {
+    "total": 1.2236614392863379,
+    "bce": 0.5714659359720018,
+    "dice": 0.4977296334173944,
+    "cldice": 0.3089317563507292
+   },
+   "val": {
+    "total": 2.0322700282025443,
+    "bce": 0.8460376000089267,
+    "dice": 0.8141976035639052,
+    "cldice": 0.7440696377061012
+   },
+   "metrics": {
+    "pooled": {
+     "iou": 0.09963568747179605,
+     "dice": 0.1812158128495653,
+     "precision": 0.10836923542645632,
+     "recall": 0.5528364201755587,
+     "f1": 0.18121581284956534,
+     "boundary_precision": 0.25641745041245556,
+     "boundary_recall": 0.7426482614357063,
+     "boundary_f": 0.38121210945837725,
+     "tiles": 454,
+     "true_fraction": 0.0478801643270753,
+     "pred_fraction": 0.24425657835300799,
+     "prob_min": 6.7480518737284e-06,
+     "prob_max": 0.9987648725509644,
+     "prob_mean": 0.2537929538620989
+    },
+    "per_dataset": {
+     "Steel1": {
+      "iou": 0.19701447317142895,
+      "dice": 0.3291764261620816,
+      "precision": 0.21816479717421758,
+      "recall": 0.6702061120889031,
+      "f1": 0.32917642616208165,
+      "boundary_precision": 0.5110732169587531,
+      "boundary_recall": 0.8093187848966115,
+      "boundary_f": 0.6265126634530588,
+      "tiles": 189,
+      "true_fraction": 0.038852832935474535,
+      "pred_fraction": 0.11935658934255125,
+      "prob_min": 6.7480518737284e-06,
+      "prob_max": 0.9964619278907776,
+      "prob_mean": 0.13861870982501873
+     },
+     "uhcs2": {
+      "iou": 0.07419943807451249,
+      "dice": 0.138148346470026,
+      "precision": 0.08033009832506573,
+      "recall": 0.49296127002433876,
+      "f1": 0.13814834647002597,
+      "boundary_precision": 0.19138451248500837,
+      "boundary_recall": 0.7086368608960388,
+      "boundary_f": 0.3013753321035321,
+      "tiles": 265,
+      "true_fraction": 0.05431852520636792,
+      "pred_fraction": 0.3333361931566922,
+      "prob_min": 1.5206839634629432e-05,
+      "prob_max": 0.9987648725509644,
+      "prob_mean": 0.33593609394892204
+     }
+    }
+   },
+   "cldice_probe": {
+    "skel_pred_sum": 1542.8994140625,
+    "skel_true_sum": 1072.291748046875,
+    "skel_pred_on_true": 163.519775390625,
+    "t_prec": 0.15501746535301208,
+    "t_rec": 0.521084189414978,
+    "skeleton_delta": 0.24703679978847504,
+    "skeleton_delta_max": 0.988447368144989,
+    "pred_sum": 17732.703125,
+    "true_sum": 2845.166748046875,
+    "dice": 0.834985613822937,
+    "cldice": 0.7759103775024414,
+    "tiles": 24,
+    "degenerate": false,
+    "verdict": "soft skeleton differs from the prediction -- clDice is measuring a real centreline"
+   },
+   "score": 0.138148346470026,
+   "score_key": "uhcs2",
+   "is_best": false,
+   "checkpoints": {
+    "last": "/content/drive/MyDrive/phase11-persistent/checkpoints/dev/last.pt"
+   }
+  },
+  {
+   "epoch": 37,
+   "seconds": 31.317583873000103,
+   "eta_seconds": 71.71473057442105,
+   "lr": 5.081864026272056e-06,
+   "trainable_params": 24430097,
+   "optimized_params": 24430097,
+   "encoder_frozen": false,
+   "freeze_changed": false,
+   "train": {
+    "total": 1.2285382648309071,
+    "bce": 0.5847838835583793,
+    "dice": 0.4919797902305921,
+    "cldice": 0.3035491796003448
+   },
+   "val": {
+    "total": 2.0279146301588824,
+    "bce": 0.8427353052315733,
+    "dice": 0.8134638667106628,
+    "cldice": 0.7434308584041007
+   },
+   "metrics": {
+    "pooled": {
+     "iou": 0.0998343052477322,
+     "dice": 0.1815442649340621,
+     "precision": 0.10850239765442021,
+     "recall": 0.5554905078285407,
+     "f1": 0.18154426493406206,
+     "boundary_precision": 0.25721839729135115,
+     "boundary_recall": 0.7435523780442863,
+     "boundary_f": 0.3822160992232835,
+     "tiles": 454,
+     "true_fraction": 0.0478801643270753,
+     "pred_fraction": 0.2451280098129474,
+     "prob_min": 7.766951966914348e-06,
+     "prob_max": 0.9987695813179016,
+     "prob_mean": 0.2539865385396365
+    },
+    "per_dataset": {
+     "Steel1": {
+      "iou": 0.19724950884086445,
+      "dice": 0.3295044305874631,
+      "precision": 0.21850784884174243,
+      "recall": 0.6696907799178378,
+      "f1": 0.32950443058746304,
+      "boundary_precision": 0.5126178783956673,
+      "boundary_recall": 0.8066527720922694,
+      "boundary_f": 0.6268685390355447,
+      "tiles": 189,
+      "true_fraction": 0.038852832935474535,
+      "pred_fraction": 0.1190775714854084,
+      "prob_min": 7.766951966914348e-06,
+      "prob_max": 0.997065007686615,
+      "prob_mean": 0.13719648753524458
+     },
+     "uhcs2": {
+      "iou": 0.0745407322159176,
+      "dice": 0.13873970521750204,
+      "precision": 0.08061687250910766,
+      "recall": 0.4972322102460163,
+      "f1": 0.138739705217502,
+      "boundary_precision": 0.1924766179016497,
+      "boundary_recall": 0.7113622486622173,
+      "boundary_f": 0.3029756846946587,
+      "tiles": 265,
+      "true_fraction": 0.05431852520636792,
+      "pred_fraction": 0.3350281337522111,
+      "prob_min": 1.4854579603706952e-05,
+      "prob_max": 0.9987695813179016,
+      "prob_mean": 0.33728208435031604
+     }
+    }
+   },
+   "cldice_probe": {
+    "skel_pred_sum": 1526.719482421875,
+    "skel_true_sum": 1072.291748046875,
+    "skel_pred_on_true": 160.26010131835938,
+    "t_prec": 0.15599721670150757,
+    "t_rec": 0.5230032801628113,
+    "skeleton_delta": 0.24744360148906708,
+    "skeleton_delta_max": 0.9883127808570862,
+    "pred_sum": 17743.18359375,
+    "true_sum": 2845.166748046875,
+    "dice": 0.833739161491394,
+    "cldice": 0.7749950885772705,
+    "tiles": 24,
+    "degenerate": false,
+    "verdict": "soft skeleton differs from the prediction -- clDice is measuring a real centreline"
+   },
+   "score": 0.13873970521750204,
+   "score_key": "uhcs2",
+   "is_best": false,
+   "checkpoints": {
+    "last": "/content/drive/MyDrive/phase11-persistent/checkpoints/dev/last.pt"
+   }
+  },
+  {
+   "epoch": 38,
+   "seconds": 31.421904283999993,
+   "eta_seconds": 35.89207298871794,
+   "lr": 3.5357548906971832e-06,
+   "trainable_params": 24430097,
+   "optimized_params": 24430097,
+   "encoder_frozen": false,
+   "freeze_changed": false,
+   "train": {
+    "total": 1.2277179194821253,
+    "bce": 0.5860936161544588,
+    "dice": 0.4904678331481086,
+    "cldice": 0.3023129411869579
+   },
+   "val": {
+    "total": 2.0259178546031666,
+    "bce": 0.8380634611398639,
+    "dice": 0.8156433205247451,
+    "cldice": 0.7444221962916169
+   },
+   "metrics": {
+    "pooled": {
+     "iou": 0.09801891887930053,
+     "dice": 0.17853775958495163,
+     "precision": 0.10659642017582333,
+     "recall": 0.5491687111073673,
+     "f1": 0.17853775958495158,
+     "boundary_precision": 0.2533241934958638,
+     "boundary_recall": 0.7405487173547569,
+     "boundary_f": 0.3775108558049558,
+     "tiles": 454,
+     "true_fraction": 0.0478801643270753,
+     "pred_fraction": 0.246671399355985,
+     "prob_min": 6.3889292505336925e-06,
+     "prob_max": 0.9986541271209717,
+     "prob_mean": 0.2563677828775366
+    },
+    "per_dataset": {
+     "Steel1": {
+      "iou": 0.19675115658021486,
+      "dice": 0.32880880122554895,
+      "precision": 0.21775691229168043,
+      "recall": 0.671012357582344,
+      "f1": 0.32880880122554895,
+      "boundary_precision": 0.5106558736777936,
+      "boundary_recall": 0.8082756528406647,
+      "boundary_f": 0.6258864867130193,
+      "tiles": 189,
+      "true_fraction": 0.038852832935474535,
+      "pred_fraction": 0.11972401129505622,
+      "prob_min": 6.3889292505336925e-06,
+      "prob_max": 0.9969245791435242,
+      "prob_mean": 0.13871548238097045
+     },
+     "uhcs2": {
+      "iou": 0.07246088112688852,
+      "dice": 0.13513011505044403,
+      "precision": 0.07844854509481229,
+      "recall": 0.4870112110855757,
+      "f1": 0.13513011505044403,
+      "boundary_precision": 0.1881630930880115,
+      "boundary_recall": 0.705998397204861,
+      "boundary_f": 0.2971338926478124,
+      "tiles": 265,
+      "true_fraction": 0.05431852520636792,
+      "pred_fraction": 0.33721123461453417,
+      "prob_min": 1.373825580230914e-05,
+      "prob_max": 0.9986541271209717,
+      "prob_mean": 0.34027829153357814
+     }
+    }
+   },
+   "cldice_probe": {
+    "skel_pred_sum": 1552.147216796875,
+    "skel_true_sum": 1072.291748046875,
+    "skel_pred_on_true": 161.68643188476562,
+    "t_prec": 0.15614891052246094,
+    "t_rec": 0.5199052095413208,
+    "skeleton_delta": 0.24755534529685974,
+    "skeleton_delta_max": 0.9874721169471741,
+    "pred_sum": 17775.93359375,
+    "true_sum": 2845.166748046875,
+    "dice": 0.8353651762008667,
+    "cldice": 0.775079607963562,
+    "tiles": 24,
+    "degenerate": false,
+    "verdict": "soft skeleton differs from the prediction -- clDice is measuring a real centreline"
+   },
+   "score": 0.13513011505044403,
+   "score_key": "uhcs2",
+   "is_best": false,
+   "checkpoints": {
+    "last": "/content/drive/MyDrive/phase11-persistent/checkpoints/dev/last.pt"
+   }
+  },
+  {
+   "epoch": 39,
+   "seconds": 31.007699628999944,
+   "eta_seconds": 0.0,
+   "lr": 3.000391582989588e-06,
+   "trainable_params": 24430097,
+   "optimized_params": 24430097,
+   "encoder_frozen": false,
+   "freeze_changed": false,
+   "train": {
+    "total": 1.2461381488376193,
+    "bce": 0.588238439626164,
+    "dice": 0.5008154859145483,
+    "cldice": 0.31416845156086814
+   },
+   "val": {
+    "total": 2.0486028814105737,
+    "bce": 0.8639672128114406,
+    "dice": 0.813302736975548,
+    "cldice": 0.7426658679735293
+   },
+   "metrics": {
+    "pooled": {
+     "iou": 0.10054426194858383,
+     "dice": 0.18271734345434468,
+     "precision": 0.10938783539115172,
+     "recall": 0.554297888171726,
+     "f1": 0.18271734345434468,
+     "boundary_precision": 0.2581300796114595,
+     "boundary_recall": 0.7419119118065134,
+     "boundary_f": 0.38300347885944497,
+     "tiles": 454,
+     "true_fraction": 0.0478801643270753,
+     "pred_fraction": 0.24262180412393308,
+     "prob_min": 3.875090897054179e-06,
+     "prob_max": 0.9988969564437866,
+     "prob_mean": 0.25113056473729367
+    },
+    "per_dataset": {
+     "Steel1": {
+      "iou": 0.19583569100914155,
+      "dice": 0.32752942980633026,
+      "precision": 0.2162665936535916,
+      "recall": 0.6745822796383532,
+      "f1": 0.3275294298063303,
+      "boundary_precision": 0.5075701102057756,
+      "boundary_recall": 0.8108065987453325,
+      "boundary_f": 0.6243150260264503,
+      "tiles": 189,
+      "true_fraction": 0.038852832935474535,
+      "pred_fraction": 0.12119038899739583,
+      "prob_min": 3.875090897054179e-06,
+      "prob_max": 0.9971103668212891,
+      "prob_mean": 0.1392525066695516
+     },
+     "uhcs2": {
+      "iou": 0.0750497615496585,
+      "dice": 0.1396210003181175,
+      "precision": 0.08132837820182874,
+      "recall": 0.49293582883165565,
+      "f1": 0.1396210003181175,
+      "boundary_precision": 0.1926432422496493,
+      "boundary_recall": 0.7067658731841349,
+      "boundary_f": 0.3027624848029907,
+      "tiles": 265,
+      "true_fraction": 0.05431852520636792,
+      "pred_fraction": 0.32922760585568983,
+      "prob_min": 8.870127203408629e-06,
+      "prob_max": 0.9988969564437866,
+      "prob_mean": 0.33092284011390977
+     }
+    }
+   },
+   "cldice_probe": {
+    "skel_pred_sum": 1536.8133544921875,
+    "skel_true_sum": 1072.291748046875,
+    "skel_pred_on_true": 160.77867126464844,
+    "t_prec": 0.15510104596614838,
+    "t_rec": 0.5225002765655518,
+    "skeleton_delta": 0.24480488896369934,
+    "skeleton_delta_max": 0.9901782274246216,
+    "pred_sum": 17580.34765625,
+    "true_sum": 2845.166748046875,
+    "dice": 0.8337434530258179,
+    "cldice": 0.775995671749115,
+    "tiles": 24,
+    "degenerate": false,
+    "verdict": "soft skeleton differs from the prediction -- clDice is measuring a real centreline"
+   },
+   "score": 0.1396210003181175,
+   "score_key": "uhcs2",
+   "is_best": false,
+   "checkpoints": {
+    "last": "/content/drive/MyDrive/phase11-persistent/checkpoints/dev/last.pt"
+   }
+  }
+ ]
+}
