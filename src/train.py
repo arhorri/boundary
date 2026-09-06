@@ -90,7 +90,16 @@ DEFAULTS = {
     # Never a literal and never the other host's value.
     "num_workers": None,
     "sampler": True,               # WeightedRandomSampler from fold_stats
+    # The fixed operating point every epoch is also reported at, and the
+    # reference the sweep is compared against. Must fall on the sweep grid.
     "threshold": 0.5,
+    # Validation is ALSO evaluated across this grid, per dataset, and the
+    # best-Dice point is reported alongside the fixed one. A single fixed
+    # threshold measures the model and the operating point together and
+    # reports the sum as if it were the model.
+    "threshold_sweep_min": 0.05,
+    "threshold_sweep_max": 0.95,
+    "threshold_sweep_step": 0.05,
     "boundary_tolerance_px": 2,    # for the boundary F-score
     "cldice_probe_tiles": 24,      # fixed val tiles for the clDice diagnostic
     "log_every": 20,               # train steps between progress updates
@@ -110,6 +119,11 @@ HASHED_TRAIN_KEYS = (
     "epochs", "batch_size", "optimizer", "lr", "encoder_lr_scale",
     "weight_decay", "scheduler", "warmup_epochs", "min_lr_scale", "grad_clip",
     "seed", "deterministic", "sampler", "threshold", "boundary_tolerance_px",
+    # In the hash because they change WHICH CHECKPOINT is selected: best.pt is
+    # chosen on best-threshold Dice, so a run started under a different sweep
+    # grid produced a different `best`, and resuming into it would leave two
+    # incompatible selection criteria in one curve.
+    "threshold_sweep_min", "threshold_sweep_max", "threshold_sweep_step",
 )
 
 
@@ -259,42 +273,64 @@ def _safe_div(numerator: float, denominator: float) -> float:
     return float(numerator) / float(denominator) if denominator > 0 else 0.0
 
 
-def boundary_counts(pred: np.ndarray, true: np.ndarray,
-                    tolerance_px: int = 2) -> tuple:
-    """Counts for the boundary F-score with a tolerance (Csurka et al.).
+def euclidean_disk(radius: int) -> np.ndarray:
+    """The exact set of offsets within Euclidean distance ``radius``.
 
-    A predicted boundary pixel counts as correct if a TRUE boundary pixel lies
-    within ``tolerance_px``, and vice versa. Two pixels of slack is the right
-    amount here because the ground truth was skeletonized and re-dilated to a
-    uniform 2 px in step 2 -- its exact placement is accurate to about that,
-    so scoring it at exactly one pixel would be measuring the convention.
-
-    Returns ``(hits_precision, n_pred, hits_recall, n_true)``.
+    Dilating with this is identical to thresholding a Euclidean distance
+    transform at ``radius``, and it is what lets the boundary F-score be
+    evaluated at every threshold in one pass -- see :class:`MetricAccumulator`.
     """
-    import cv2
+    r = int(radius)
+    if r < 0:
+        raise TrainError(f"tolerance must be >= 0, got {radius}")
+    if r == 0:
+        return np.ones((1, 1), dtype=np.uint8)
+    yy, xx = np.mgrid[-r:r + 1, -r:r + 1]
+    return ((yy ** 2 + xx ** 2) <= r * r).astype(np.uint8)
 
-    pred = np.ascontiguousarray(pred > 0).astype(np.uint8)
-    true = np.ascontiguousarray(true > 0).astype(np.uint8)
-    n_pred, n_true = int(pred.sum()), int(true.sum())
-    if n_pred == 0 and n_true == 0:
-        return 0, 0, 0, 0
-    tol = float(tolerance_px)
 
-    # distanceTransform measures the distance to the nearest ZERO pixel, so the
-    # mask is inverted: dist_to_true[y, x] is how far (y, x) is from the true
-    # boundary. An empty mask gives large distances everywhere, which scores 0
-    # hits -- correct, and finite.
-    if n_true:
-        dist_to_true = cv2.distanceTransform(1 - true, cv2.DIST_L2, 3)
-        hits_p = int((pred.astype(bool) & (dist_to_true <= tol)).sum())
-    else:
-        hits_p = 0
-    if n_pred:
-        dist_to_pred = cv2.distanceTransform(1 - pred, cv2.DIST_L2, 3)
-        hits_r = int((true.astype(bool) & (dist_to_pred <= tol)).sum())
-    else:
-        hits_r = 0
-    return hits_p, n_pred, hits_r, n_true
+def threshold_grid(settings: dict) -> np.ndarray:
+    """The sweep grid, with ``train.threshold`` guaranteed to be in it.
+
+    The fixed threshold has to be a grid point so that the "at 0.5" row and the
+    "at the best threshold" row are computed from the same counts and are
+    genuinely comparable.
+    """
+    lo = float(settings["threshold_sweep_min"])
+    hi = float(settings["threshold_sweep_max"])
+    step = float(settings["threshold_sweep_step"])
+    if not (0.0 < lo < hi < 1.0):
+        raise TrainError(
+            f"threshold sweep must satisfy 0 < min < max < 1, got {lo}..{hi}")
+    if step <= 0 or step > (hi - lo):
+        raise TrainError(
+            f"train.threshold_sweep_step is {step}, which cannot span "
+            f"{lo}..{hi}")
+    n = int(round((hi - lo) / step)) + 1
+    grid = np.round(np.linspace(lo, hi, n), 6)
+    fixed = round(float(settings["threshold"]), 6)
+    if not (0.0 < fixed < 1.0):
+        raise TrainError(f"train.threshold must be in (0, 1), got {fixed}")
+    return np.unique(np.append(grid, fixed))
+
+
+def ge_counts(values: np.ndarray, thresholds: np.ndarray) -> np.ndarray:
+    """``#{v >= t}`` for every ``t``, in one pass rather than one pass each.
+
+    A sweep over 19 thresholds on 454 validation tiles is 19 comparisons over
+    65,536 pixels per tile if written naively. ``searchsorted`` gives, for each
+    value, how many thresholds it clears; the reverse cumulative sum of those
+    counts is the answer for all thresholds at once. Exact, not approximate:
+    the ordering is the same one ``prob >= t`` would produce.
+    """
+    thresholds = np.asarray(thresholds, dtype=np.float64)
+    values = np.asarray(values, dtype=np.float64).ravel()
+    if values.size == 0:
+        return np.zeros(thresholds.size, dtype=np.int64)
+    cleared = np.searchsorted(thresholds, values, side="right")
+    counts = np.bincount(cleared, minlength=thresholds.size + 1)
+    tail = np.cumsum(counts[::-1])[::-1]
+    return tail[1:].astype(np.int64)
 
 
 def metrics_from_counts(counts: dict) -> dict:
@@ -329,32 +365,68 @@ def metrics_from_counts(counts: dict) -> dict:
 
 
 class MetricAccumulator:
-    """Pixel and boundary counts, kept per dataset AND pooled.
+    """Counts at EVERY threshold, kept per dataset and pooled.
 
-    Counts are accumulated over pixels and the metric computed once at the end,
-    rather than averaging per-tile metrics. Per-tile averaging gives a nearly
-    empty tile the same weight as a dense one and makes Dice jump around on
-    tiles with a handful of boundary pixels; pooling the counts weights each
-    dataset by how much boundary it actually contains.
+    A single fixed threshold measures the model and the threshold together and
+    reports the sum as if it were the model. On uhcs2 at 0.5 the model paints
+    0.312 of the tile against a true 0.054 and precision reads 0.087 -- most of
+    which is the threshold. The operating point is a free parameter that step 7
+    will choose anyway, so it is swept here instead of guessed: every metric is
+    reported twice, once at ``train.threshold`` and once at the threshold that
+    maximised Dice, with that threshold named.
+
+    Both are needed. The fixed row is what the loss is actually optimising and
+    is comparable across epochs and folds without qualification; the best row
+    is what the model can do once its operating point is set, which is the
+    thing step 7 inherits.
+
+    **The chosen threshold is itself a measurement.** If the held-out dataset
+    wants 0.85 and Steel1 wants 0.35, that gap IS the domain shift, stated in
+    the units of the decision the downstream watershed has to make -- and a
+    single global threshold will not serve both.
+
+    Counts are accumulated over pixels and the metrics computed once at the
+    end, rather than averaging per-tile metrics: per-tile averaging gives a
+    nearly empty tile the same weight as a dense one.
     """
 
     POOLED = "__pooled__"
 
-    def __init__(self, threshold: float = 0.5, tolerance_px: int = 2):
-        self.threshold = float(threshold)
+    def __init__(self, thresholds, fixed_threshold: float = 0.5,
+                 tolerance_px: int = 2):
+        self.thresholds = np.asarray(thresholds, dtype=np.float64)
+        if self.thresholds.ndim != 1 or self.thresholds.size < 2:
+            raise TrainError(
+                f"the threshold sweep needs at least 2 points, got "
+                f"{self.thresholds}")
+        self.fixed_threshold = float(fixed_threshold)
+        matches = np.nonzero(np.isclose(self.thresholds,
+                                        self.fixed_threshold))[0]
+        if matches.size != 1:
+            raise TrainError(
+                f"the fixed threshold {self.fixed_threshold} is not a unique "
+                f"point of the sweep grid {self.thresholds}; the two rows "
+                "would not be comparable.")
+        self.fixed_index = int(matches[0])
         self.tolerance_px = int(tolerance_px)
+        self._disk = euclidean_disk(self.tolerance_px)
         self.counts = {}
 
     def _slot(self, key: str) -> dict:
+        k = self.thresholds.size
         return self.counts.setdefault(key, {
-            "tp": 0, "fp": 0, "fn": 0, "tiles": 0, "total_px": 0,
-            "true_px": 0, "pred_px": 0, "prob_sum": 0.0,
+            "tiles": 0, "total_px": 0, "true_px": 0, "prob_sum": 0.0,
             "prob_min": float("inf"), "prob_max": float("-inf"),
-            "bf_hits_p": 0, "bf_n_pred": 0, "bf_hits_r": 0, "bf_n_true": 0,
+            "tp": np.zeros(k, dtype=np.int64),
+            "n_pred": np.zeros(k, dtype=np.int64),
+            "bf_hits_p": np.zeros(k, dtype=np.int64),
+            "bf_hits_r": np.zeros(k, dtype=np.int64),
         })
 
     def update(self, probs, targets, dataset_names: Sequence[str]) -> None:
         """One batch. ``probs`` are probabilities, ``targets`` are 0/1."""
+        import cv2
+
         probs = np.asarray(probs, dtype=np.float32)
         targets = np.asarray(targets, dtype=np.float32)
         if probs.shape != targets.shape:
@@ -364,47 +436,98 @@ class MetricAccumulator:
             raise TrainError(
                 f"{len(dataset_names)} dataset names for {probs.shape[0]} tiles")
 
+        height, width = probs.shape[-2], probs.shape[-1]
         for i, name in enumerate(dataset_names):
-            prob = probs[i].reshape(probs.shape[-2], probs.shape[-1])
-            true = targets[i].reshape(prob.shape) > 0.5
-            pred = prob >= self.threshold
-            tp = int((pred & true).sum())
-            fp = int((pred & ~true).sum())
-            fn = int((~pred & true).sum())
-            hits_p, n_pred, hits_r, n_true = boundary_counts(
-                pred, true, self.tolerance_px)
+            prob = np.ascontiguousarray(probs[i].reshape(height, width))
+            true = targets[i].reshape(height, width) > 0.5
+
+            # Threshold-independent, computed once per tile:
+            #   true_dilated -- a predicted pixel here is within tolerance of a
+            #     true boundary, so counting predictions inside it gives the
+            #     boundary-precision hits at every threshold at once;
+            #   prob_dilated -- the max probability within the tolerance disk,
+            #     so a true pixel is within tolerance of SOME prediction at
+            #     threshold t exactly when prob_dilated >= t.
+            true_dilated = cv2.dilate(true.astype(np.uint8), self._disk) > 0
+            prob_dilated = cv2.dilate(prob, self._disk)
+
+            tp = ge_counts(prob[true], self.thresholds)
+            n_pred = ge_counts(prob, self.thresholds)
+            hits_p = ge_counts(prob[true_dilated], self.thresholds)
+            hits_r = ge_counts(prob_dilated[true], self.thresholds)
+
             for key in (name, self.POOLED):
                 slot = self._slot(key)
-                slot["tp"] += tp
-                slot["fp"] += fp
-                slot["fn"] += fn
                 slot["tiles"] += 1
                 slot["total_px"] += int(prob.size)
                 slot["true_px"] += int(true.sum())
-                slot["pred_px"] += int(pred.sum())
                 slot["prob_sum"] += float(prob.sum())
                 slot["prob_min"] = min(slot["prob_min"], float(prob.min()))
                 slot["prob_max"] = max(slot["prob_max"], float(prob.max()))
+                slot["tp"] += tp
+                slot["n_pred"] += n_pred
                 slot["bf_hits_p"] += hits_p
-                slot["bf_n_pred"] += n_pred
                 slot["bf_hits_r"] += hits_r
-                slot["bf_n_true"] += n_true
+
+    def _counts_at(self, slot: dict, index: int) -> dict:
+        tp = int(slot["tp"][index])
+        n_pred = int(slot["n_pred"][index])
+        return {
+            "tp": tp,
+            "fp": n_pred - tp,
+            "fn": int(slot["true_px"]) - tp,
+            "tiles": slot["tiles"],
+            "total_px": slot["total_px"],
+            "true_px": slot["true_px"],
+            "pred_px": n_pred,
+            "prob_sum": slot["prob_sum"],
+            "prob_min": slot["prob_min"],
+            "prob_max": slot["prob_max"],
+            "bf_hits_p": int(slot["bf_hits_p"][index]),
+            "bf_n_pred": n_pred,
+            "bf_hits_r": int(slot["bf_hits_r"][index]),
+            "bf_n_true": int(slot["true_px"]),
+        }
+
+    def _sweep(self, slot: dict) -> list:
+        return [dict(metrics_from_counts(self._counts_at(slot, k)),
+                     threshold=float(self.thresholds[k]))
+                for k in range(self.thresholds.size)]
+
+    def _summarise(self, slot: dict) -> dict:
+        sweep = self._sweep(slot)
+        dice = np.array([row["dice"] for row in sweep])
+        # Ties go to the HIGHER threshold. This model is a prior for a
+        # watershed, where a false boundary splits a region permanently and a
+        # missed one can still be recovered downstream, so when two operating
+        # points score the same, take the conservative one.
+        best_index = int(dice.size - 1 - np.argmax(dice[::-1]))
+        fixed = dict(sweep[self.fixed_index])
+        best = dict(sweep[best_index])
+        return {
+            "fixed": fixed,
+            "best": best,
+            "fixed_threshold": float(self.thresholds[self.fixed_index]),
+            "best_threshold": float(self.thresholds[best_index]),
+            "sweep": sweep,
+        }
 
     def result(self) -> dict:
-        """``{"pooled": {...}, "per_dataset": {name: {...}}}``.
+        """Per dataset and pooled, each with ``fixed``, ``best`` and ``sweep``.
 
-        The per-dataset breakdown is the headline. The pooled number is a
+        The per-dataset breakdown is the headline. The pooled entry is a
         footnote and is labelled as one everywhere it is printed.
         """
         if not self.counts:
             raise TrainError("no batches were accumulated; validation ran on "
                              "an empty loader.")
-        per_dataset = {name: metrics_from_counts(counts)
-                       for name, counts in sorted(self.counts.items())
-                       if name != self.POOLED}
         return {
-            "pooled": metrics_from_counts(self.counts[self.POOLED]),
-            "per_dataset": per_dataset,
+            "thresholds": [float(t) for t in self.thresholds],
+            "fixed_threshold": float(self.thresholds[self.fixed_index]),
+            "pooled": self._summarise(self.counts[self.POOLED]),
+            "per_dataset": {name: self._summarise(slot)
+                            for name, slot in sorted(self.counts.items())
+                            if name != self.POOLED},
         }
 
 
@@ -692,7 +815,9 @@ class Trainer:
         self.probe_loader = None
         self.history = []
         self.start_epoch = 0
-        self.best = {"metric": float("-inf"), "epoch": None, "key": None}
+        self.best = {"metric": float("-inf"), "epoch": None, "key": None,
+                     "threshold": None,
+                     "criterion": "best-threshold Dice on the held-out dataset"}
         self.seed_report = None
         self.num_workers = None
         self.sources = {}
@@ -1102,7 +1227,8 @@ class Trainer:
     def validate(self, progress: Optional[Callable] = None) -> dict:
         self.model.eval()
         accumulator = MetricAccumulator(
-            threshold=float(self.settings["threshold"]),
+            threshold_grid(self.settings),
+            fixed_threshold=float(self.settings["threshold"]),
             tolerance_px=int(self.settings["boundary_tolerance_px"]))
         totals = {"total": 0.0, "bce": 0.0, "dice": 0.0, "cldice": 0.0}
         seen = 0
@@ -1202,11 +1328,25 @@ class Trainer:
         return self.held_out or MetricAccumulator.POOLED
 
     def _score(self, metrics: dict) -> tuple:
+        """Best-THRESHOLD Dice on the held-out dataset.
+
+        Not the value at 0.5. A checkpoint selected at a fixed operating point
+        is selected partly on how well 0.5 happens to suit it that epoch, which
+        moves as the model's confidence calibrates; the best-threshold value
+        asks what the model can do once step 7 sets the threshold it is going
+        to set anyway. The threshold that achieved it travels with the score.
+        """
         key = self.best_key()
         per_dataset = metrics["per_dataset"]
-        if key in per_dataset:
-            return float(per_dataset[key]["dice"]), key
-        return float(metrics["pooled"]["dice"]), "pooled (held-out dataset absent)"
+        entry = per_dataset.get(key)
+        if entry is None:
+            entry = metrics["pooled"]
+            key = "pooled (held-out dataset absent)"
+        return float(entry["best"]["dice"]), key
+
+    def _score_threshold(self, metrics: dict, key: str) -> float:
+        entry = metrics["per_dataset"].get(key) or metrics["pooled"]
+        return float(entry["best_threshold"])
 
     def fit(self, epochs: Optional[int] = None,
             on_epoch_end: Optional[Callable] = None,
@@ -1226,7 +1366,12 @@ class Trainer:
 
             is_best = score > self.best["metric"]
             if is_best:
-                self.best = {"metric": score, "epoch": epoch, "key": score_key}
+                self.best = {
+                    "metric": score, "epoch": epoch, "key": score_key,
+                    "threshold": self._score_threshold(val_stats["metrics"],
+                                                       score_key),
+                    "criterion": "best-threshold Dice on the held-out dataset",
+                }
 
             elapsed = time.perf_counter() - epoch_started
             done = epoch - self.start_epoch + 1
@@ -1247,6 +1392,11 @@ class Trainer:
                 "cldice_probe": probe,
                 "score": score,
                 "score_key": score_key,
+                "score_threshold": self._score_threshold(val_stats["metrics"],
+                                                         score_key),
+                "best_thresholds": {
+                    name: entry["best_threshold"] for name, entry
+                    in val_stats["metrics"]["per_dataset"].items()},
                 "is_best": is_best,
             }
             self.history.append(record)
@@ -1267,13 +1417,19 @@ class Trainer:
         for split in ("train", "val"):
             for key, value in record[split].items():
                 self.writer.add_scalar(f"loss_{split}/{key}", value, epoch)
-        for key, value in record["metrics"]["pooled"].items():
-            if isinstance(value, (int, float)):
-                self.writer.add_scalar(f"val_pooled/{key}", value, epoch)
-        for name, metrics in record["metrics"]["per_dataset"].items():
-            for key, value in metrics.items():
-                if isinstance(value, (int, float)):
-                    self.writer.add_scalar(f"val_{name}/{key}", value, epoch)
+        for label, entry in ([("pooled", record["metrics"]["pooled"])]
+                             + list(record["metrics"]["per_dataset"].items())):
+            for row in ("fixed", "best"):
+                for key, value in entry[row].items():
+                    if isinstance(value, (int, float)):
+                        self.writer.add_scalar(f"val_{label}_{row}/{key}",
+                                               value, epoch)
+            # The chosen threshold is a measurement in its own right: a
+            # held-out dataset that wants a very different operating point from
+            # the training-side datasets IS the domain shift, in the units of
+            # the decision step 7 has to make.
+            self.writer.add_scalar(f"val_{label}/best_threshold",
+                                   entry["best_threshold"], epoch)
         for key in ("skeleton_delta", "skel_pred_sum", "skel_true_sum",
                     "t_prec", "t_rec", "cldice", "dice"):
             self.writer.add_scalar(f"cldice_probe/{key}",
@@ -1284,7 +1440,8 @@ class Trainer:
 
     # -- figures ----------------------------------------------------------
     @torch.no_grad()
-    def example_predictions(self, per_dataset: int = 1) -> list:
+    def example_predictions(self, per_dataset: int = 1,
+                            thresholds: Optional[dict] = None) -> list:
         """One representative val tile per dataset: raw, ground truth, prediction.
 
         The tile is the one whose boundary fraction is the MEDIAN for its
@@ -1311,13 +1468,18 @@ class Trainer:
             with autocast(self.device.type, self.amp_enabled):
                 logits = self.model(image)
             prob = torch.sigmoid(logits.float())[0, 0].cpu().numpy()
+            fixed = float(self.settings["threshold"])
+            tuned = float((thresholds or {}).get(name, fixed))
             out.append({
                 "dataset": name,
                 "tile_id": sample["tile_id"],
                 "image": sample["image"][0],
                 "truth": sample["mask"][0],
                 "prob": prob,
-                "pred": (prob >= float(self.settings["threshold"])),
+                "threshold": fixed,
+                "best_threshold": tuned,
+                "pred": (prob >= fixed),
+                "pred_best": (prob >= tuned),
             })
         return out
 
@@ -1383,29 +1545,89 @@ def write_report(trainer: Trainer, reports_dir: Optional[Path] = None) -> tuple:
         f"{summary['warmup_epochs']} epochs, grad clip {summary['grad_clip']}",
         f"- pos_weight {summary['pos_weight']} "
         f"({summary['sources'].get('pos_weight')})",
-        f"- best epoch {trainer.best['epoch']} by Dice on "
-        f"`{trainer.best['key']}` = {trainer.best['metric']:.4f}",
+        f"- best epoch {trainer.best['epoch']} by best-threshold Dice on "
+        f"`{trainer.best['key']}` = {trainer.best['metric']:.4f} "
+        f"at threshold {trainer.best.get('threshold')}",
+        f"- validation threshold swept over "
+        f"{final['metrics']['thresholds'][0]:.2f}.."
+        f"{final['metrics']['thresholds'][-1]:.2f} "
+        f"({len(final['metrics']['thresholds'])} points); fixed reference "
+        f"{final['metrics']['fixed_threshold']:.2f}",
         "",
         "## Per-dataset validation metrics (the headline)",
         "",
         "Validation is a mixture. The pooled row is a footnote; the held-out "
         "dataset's row is the measurement this fold exists to make.",
         "",
-        "| epoch | dataset | tiles | IoU | Dice | Precision | Recall | boundary-F |",
-        "| --- | --- | --- | --- | --- | --- | --- | --- |",
+        "Every row appears twice: at the fixed `train.threshold` and at the "
+        "threshold that maximised Dice for that dataset. A single fixed "
+        "threshold measures the model and the operating point together and "
+        "reports the sum as if it were the model. `best.pt` is selected on the "
+        "best-threshold Dice of the held-out dataset.",
+        "",
+        "| epoch | dataset | thr | tiles | IoU | Dice | Precision | Recall | "
+        "boundary-F | pred frac | true frac |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
     ]
     for label, record in (("best", best_epoch), ("final", final)):
-        for name, metrics in record["metrics"]["per_dataset"].items():
+        entries = list(record["metrics"]["per_dataset"].items()) + [
+            ("_pooled (footnote)_", record["metrics"]["pooled"])]
+        for name, entry in entries:
             marker = " (held out)" if name == trainer.held_out else ""
-            lines.append(
-                f"| {record['epoch']} ({label}) | {name}{marker} | "
-                f"{metrics['tiles']} | " + " | ".join(
-                    f"{metrics[k]:.4f}" for k in METRIC_ORDER) + " |")
-        pooled = record["metrics"]["pooled"]
+            for row in ("fixed", "best"):
+                metrics = entry[row]
+                tag = "fixed" if row == "fixed" else "**best**"
+                lines.append(
+                    f"| {record['epoch']} ({label}) | {name}{marker} {tag} | "
+                    f"{metrics['threshold']:.2f} | {metrics['tiles']} | "
+                    + " | ".join(f"{metrics[k]:.4f}" for k in METRIC_ORDER)
+                    + f" | {metrics['pred_fraction']:.4f} "
+                    f"| {metrics['true_fraction']:.4f} |")
+
+    lines += [
+        "",
+        "## The chosen threshold, per epoch, per dataset",
+        "",
+        "This table is a measurement, not bookkeeping. If the held-out "
+        "dataset's optimal threshold sits far from the training-side "
+        "datasets', that gap IS the domain shift, expressed in the units of "
+        "the decision the downstream watershed has to make -- and one global "
+        "threshold will not serve both.",
+        "",
+        "| epoch | " + " | ".join(
+            sorted(final["metrics"]["per_dataset"])) + " | spread |",
+        "| --- | " + " | ".join(
+            "---" for _ in final["metrics"]["per_dataset"]) + " | --- |",
+    ]
+    names = sorted(final["metrics"]["per_dataset"])
+    for record in history:
+        chosen = record["best_thresholds"]
+        values = [chosen.get(name) for name in names]
+        present = [v for v in values if v is not None]
+        spread = (max(present) - min(present)) if len(present) > 1 else 0.0
         lines.append(
-            f"| {record['epoch']} ({label}) | _pooled (footnote)_ | "
-            f"{pooled['tiles']} | " + " | ".join(
-                f"{pooled[k]:.4f}" for k in METRIC_ORDER) + " |")
+            f"| {record['epoch']} | "
+            + " | ".join("-" if v is None else f"{v:.2f}" for v in values)
+            + f" | {spread:.2f} |")
+    if trainer.held_out in names and len(names) > 1:
+        final_chosen = final["best_thresholds"]
+        held = final_chosen.get(trainer.held_out)
+        others = {k: v for k, v in final_chosen.items() if k != trainer.held_out}
+        if held is not None and others:
+            gap = max(abs(held - v) for v in others.values())
+            lines += [
+                "",
+                f"**Final epoch.** {trainer.held_out} (held out) wants "
+                f"{held:.2f}; the others want "
+                + ", ".join(f"{k} {v:.2f}" for k, v in sorted(others.items()))
+                + f" -- a gap of {gap:.2f}. "
+                + ("That is a domain-shift finding: the held-out microscope "
+                   "needs a materially different operating point, so step 7 "
+                   "should set the threshold PER DATASET rather than globally."
+                   if gap >= 0.15 else
+                   "Close enough that one global threshold serves both, which "
+                   "is the easy case for step 7."),
+            ]
 
     lines += [
         "",

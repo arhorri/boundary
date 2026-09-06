@@ -75,7 +75,17 @@ train:
   # by notebooks/04 ON THIS HOST. Never a literal, never the other host's value.
   num_workers: null
   sampler: true             # WeightedRandomSampler from fold_stats
+  # The fixed operating point every epoch is reported at, and the reference
+  # the sweep is compared against. Must land on the sweep grid below.
   threshold: 0.5
+  # Validation is ALSO swept across this grid, per dataset, and the best-Dice
+  # point reported next to the fixed one. At a fixed 0.5 on uhcs2 the model
+  # painted 5.8x too much boundary and precision read 0.087 -- most of which
+  # was the threshold, not the model. best.pt is selected on best-threshold
+  # Dice for the held-out dataset.
+  threshold_sweep_min: 0.05
+  threshold_sweep_max: 0.95
+  threshold_sweep_step: 0.05
   boundary_tolerance_px: 2  # slack for the boundary F-score; the GT is 2 px wide
   cldice_probe_tiles: 24    # fixed val tiles for the clDice diagnostic
   log_every: 20
