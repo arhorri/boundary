@@ -18,7 +18,14 @@ session:
   branch: kaggle          # this checkout stays on this branch when it re-syncs
 
   kaggle:
-    input_root: /kaggle/input
+    # NOT /kaggle/input. This account's notebooks mount attached datasets
+    # nested by owner -- /kaggle/input/datasets/<owner>/<slug>/ -- rather than
+    # flat at /kaggle/input/<slug>/. resolve_paths() builds both data_root and
+    # gt_boundaries_root as `input_root / <slug>`, so pointing input_root at the
+    # owner directory fixes both with one key and keeps the slugs meaningful.
+    # If a session ever mounts flat instead, this is the line to change back;
+    # the bootstrap prints the listing of what it actually found.
+    input_root: /kaggle/input/datasets/alirezahorri
     working_dir: /kaggle/working
     dataset_slug: phase11-microstructure-data
     gt_dataset_slug: phase11-gt-boundaries
