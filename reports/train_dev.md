@@ -1,6 +1,6 @@
 # Training report -- dev
 
-Held-out dataset: **uhcs2**. Generated 2026-09-06T09:47:38Z on colab (Tesla T4).
+Held-out dataset: **uhcs2**. Generated 2026-09-06T14:24:00Z on colab (cpu).
 
 - config hash `830d000d24237f0d`, seed 0 (statistically reproducible; cudnn.benchmark picks algorithms by timing, so bitwise equality across runs is not claimed)
 - 40 epochs, batch 64, 4 workers (configs/dataloader.yaml hosts.colab.num_workers, measured 2026-09-06T07:14:10Z)

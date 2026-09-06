@@ -1,13 +1,13 @@
 {
  "fold": "dev",
  "held_out": "uhcs2",
- "generated_utc": "2026-09-06T09:47:38Z",
+ "generated_utc": "2026-09-06T14:24:00Z",
  "summary": {
   "fold": "dev",
   "held_out": "uhcs2",
   "platform": "colab",
-  "device": "cuda",
-  "gpu": "Tesla T4",
+  "device": "cpu",
+  "gpu": null,
   "config_hash": "830d000d24237f0d",
   "seed": {
    "seed": 0,
@@ -15,7 +15,7 @@
    "cudnn_benchmark": true,
    "note": "statistically reproducible; cudnn.benchmark picks algorithms by timing, so bitwise equality across runs is not claimed"
   },
-  "amp": true,
+  "amp": false,
   "num_workers": 4,
   "batch_size": 64,
   "epochs": 40,
@@ -66,12 +66,12 @@
   "cache": {
    "train": {
     "source": "warm",
-    "seconds": 6.57,
+    "seconds": 4.24,
     "images": 779
    },
    "val": {
     "source": "warm",
-    "seconds": 2.29,
+    "seconds": 2.17,
     "images": 212
    }
   },
@@ -3943,10 +3943,7 @@
    },
    "score": 0.1396210003181175,
    "score_key": "uhcs2",
-   "is_best": false,
-   "checkpoints": {
-    "last": "/content/drive/MyDrive/phase11-persistent/checkpoints/dev/last.pt"
-   }
+   "is_best": false
   }
  ]
 }
