@@ -29,7 +29,7 @@ fail loudly with a clear message, never fail silently.
 
 ## Pipeline architecture
 
-Four steps so far, each one step of the chain `src/<module>.py` ->
+Six steps so far, each one step of the chain `src/<module>.py` ->
 `scripts/<cli>.py` -> `notebooks/NN_*.ipynb`. Steps communicate ONLY through
 committed artefacts in `reports/` and `configs/`; a later step reads the
 earlier step's JSON and never re-derives its decisions.
@@ -41,6 +41,8 @@ earlier step's JSON and never re-derives its decisions.
 | 2 boundary GT | `boundary_gt.py` | `extract_boundaries.py` | `02_boundary_gt.ipynb` | `reports/audit.json` | boundary PNGs in GT_BOUNDARIES_ROOT, `configs/hsv_ranges.yaml`, `reports/gt_extraction.{json,md}` |
 | 3 tiling/folds | `tiling.py` | `build_tiles.py` | `03_tiling.ipynb` | `reports/audit.json`, `reports/gt_extraction.json` | `reports/manifests/*.csv`, `reports/parents.md`, `reports/tiling.{json,md}`, `configs/fold_stats.yaml` |
 | 4 dataset/loader | `dataset.py` | — | `04_dataset.ipynb` | manifests, `configs/fold_stats.yaml` | `configs/dataloader.yaml` |
+| 5 model/loss | `model.py`, `losses.py` | — | `05_model_and_loss.ipynb` | `configs/fold_stats.yaml` | `configs/default.yaml` `model:`/`loss:`/`train.batch_size` |
+| 6 training | `train.py` | `train.py` | `06_train.ipynb` | manifests, `configs/fold_stats.yaml`, `configs/dataloader.yaml` | `PERSISTENT_DIR/checkpoints/<fold>/{last,best}.pt`, `reports/train_<fold>.{json,md}` |
 
 Key consequences of that contract:
 
@@ -164,6 +166,8 @@ Every notebook under notebooks/ must:
     python scripts/extract_boundaries.py [--datasets uhcs2] [--limit 5] [--mode uhcs2=A]
     # step 3
     python scripts/build_tiles.py [--datasets Steel1] [--quiet]
+    # step 6 (the notebook calls src.train.Trainer directly; this is for headless runs)
+    python scripts/train.py --fold dev [--resume] [--epochs 2] [--no-amp]
     # push generated reports/configs/notebooks back to the repo
     python scripts/push_results.py -m "step N: <description>"
 
@@ -173,6 +177,7 @@ out, so progress bars render inline.
 Tests live in `tests/` and are run BY the notebook on the host, not locally:
 
     pytest tests/test_dataset.py -q
+    pytest tests/test_losses.py -q
     pytest tests/test_dataset.py -q -k binary        # one test
 
 Tests that need real data skip themselves when it is absent; notebook 04's

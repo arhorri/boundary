@@ -50,17 +50,44 @@ loss:
   eps: 1.0e-6             # division guard inside the clDice harmonic mean only
 
 train:
-  epochs: null
+  epochs: 40
   # Measured by notebooks/05_model_and_loss.ipynb: the largest batch that fits
   # at patch 256 WITH the optimizer state, on the host that ran it.
   batch_size: 64   # measured on colab / Tesla T4, patch 256, peak 9.83 GB incl. AdamW state
-  lr: null
-  optimizer: null
-  scheduler: null
-  weight_decay: null
+  val_batch_size: null      # null -> batch_size
+  optimizer: adamw
+  lr: 3.0e-4
+  # The encoder is pretrained and the decoder is random. One learning rate for
+  # both either crawls the decoder or walks the pretrained filters off before
+  # the decoder produces a useful gradient.
+  encoder_lr_scale: 0.1
+  weight_decay: 1.0e-4
+  scheduler: cosine
+  warmup_epochs: 2
+  min_lr_scale: 0.01        # final LR = lr * this
+  grad_clip: 1.0
+  amp: true
+  seed: 0
+  # cudnn.benchmark is worth 20-30% and makes runs non-bitwise-reproducible.
+  # true trades that speed back for exactness.
+  deterministic: false
+  # null -> configs/dataloader.yaml hosts.<this platform>.num_workers, measured
+  # by notebooks/04 ON THIS HOST. Never a literal, never the other host's value.
   num_workers: null
-  seed: null
-  val_split: null
+  sampler: true             # WeightedRandomSampler from fold_stats
+  threshold: 0.5
+  boundary_tolerance_px: 2  # slack for the boundary F-score; the GT is 2 px wide
+  cldice_probe_tiles: 24    # fixed val tiles for the clDice diagnostic
+  log_every: 20
+  checkpoint_subdir: checkpoints
+  log_subdir: logs
+  # last.pt must be resumable and carries optimizer + scaler + RNG (~3x the
+  # model). best.pt is a deliverable for step 7, not a resume point, so it
+  # carries weights only and stays ~93 MB. Both live on a free Drive.
+  best_includes_optimizer: false
+  # val_split is deliberately absent: the split is defined by the fold
+  # manifests from step 3, BY PARENT, and re-deriving it here would silently
+  # let tiles of one micrograph straddle train and val.
 
 inference:
   tile_size: null
