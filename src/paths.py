@@ -250,3 +250,86 @@ def resolve_paths(
         "reports_dir": REPO_ROOT / "reports",
         "expected_datasets": expected_datasets(config),
     }
+
+
+def set_config_scalar(
+    section: str,
+    key: str,
+    value,
+    config_path: Optional[os.PathLike] = None,
+    note: Optional[str] = None,
+) -> dict:
+    """Rewrite ONE scalar under ONE top-level section, in place, by text.
+
+    ``configs/default.yaml`` is hand-maintained and its comments carry as much
+    of the reasoning as the values do. Round-tripping it through
+    ``yaml.safe_dump`` would silently delete every one of them, so a notebook
+    that has MEASURED a value edits the single line instead of rewriting the
+    file.
+
+    Fails loudly rather than guessing: an unknown section, a key that is not
+    inside it, or the same key twice inside it are all errors. Returns what
+    changed, so the caller can show it.
+
+    ``note`` becomes a trailing ``# comment`` on the line -- the place to
+    record which host and GPU produced a measured number.
+    """
+    import yaml
+
+    path = Path(config_path) if config_path else DEFAULT_CONFIG
+    if not path.is_file():
+        raise PathConfigError(f"config not found: {path}")
+    lines = path.read_text().splitlines()
+
+    start = None
+    for i, line in enumerate(lines):
+        if line.strip().startswith("#"):
+            continue
+        if line.rstrip() == f"{section}:" and not line.startswith((" ", "\t")):
+            if start is not None:
+                raise PathConfigError(
+                    f"{path}: section {section!r} appears more than once.")
+            start = i
+    if start is None:
+        raise PathConfigError(
+            f"{path}: no top-level section named {section!r}.")
+
+    end = len(lines)
+    for i in range(start + 1, len(lines)):
+        line = lines[i]
+        if line.strip() and not line.startswith((" ", "\t")) \
+                and not line.strip().startswith("#"):
+            end = i
+            break
+
+    hits = [i for i in range(start + 1, end)
+            if lines[i].strip().startswith(f"{key}:")
+            and not lines[i].strip().startswith("#")]
+    if not hits:
+        raise PathConfigError(
+            f"{path}: section {section!r} has no key {key!r}. Add it to the "
+            "file deliberately; this function edits, it does not invent keys.")
+    if len(hits) > 1:
+        raise PathConfigError(
+            f"{path}: key {key!r} appears {len(hits)} times in section "
+            f"{section!r} (lines {[h + 1 for h in hits]}). Refusing to guess "
+            "which one was meant.")
+
+    idx = hits[0]
+    indent = lines[idx][:len(lines[idx]) - len(lines[idx].lstrip())]
+    before = lines[idx]
+    rendered = yaml.safe_dump(value, default_flow_style=True).strip()
+    if rendered.endswith("..."):                     # scalar dumps as "8\n..."
+        rendered = rendered[:-3].strip()
+    lines[idx] = f"{indent}{key}: {rendered}" + (f"   # {note}" if note else "")
+
+    path.write_text("\n".join(lines) + "\n")
+
+    check = load_config(path, platform="local").get(section, {}) or {}
+    if check.get(key) != value:
+        raise PathConfigError(
+            f"{path}: wrote {key}={value!r} into {section!r} but reading it "
+            f"back gives {check.get(key)!r}. The file was not updated as "
+            "intended; inspect it before trusting anything downstream.")
+    return {"path": str(path), "section": section, "key": key,
+            "line": idx + 1, "before": before.strip(), "after": lines[idx].strip()}

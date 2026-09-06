@@ -18,19 +18,41 @@ augment:
   spatial: null
   photometric: null
 
+# The network (step 5). Consumed by src/model.py. No value here is a
+# placeholder any more: these are the decisions step 5 made.
 model:
-  arch: null
-  encoder: null
-  encoder_weights: null
-  in_channels: null
-  classes: null
+  arch: unet
+  encoder: resnet34
+  # ImageNet weights on grayscale SEM images are still worth having: the early
+  # filters are edge and texture detectors, which is exactly what a phase
+  # boundary is. null here means random init.
+  encoder_weights: imagenet
+  in_channels: 1            # micrographs are single-channel; see src/model.py
+  classes: 1                # one boundary logit map, no activation
+  # The decoder starts random and its first gradients are noise. Letting that
+  # into a pretrained encoder in epoch 1 erases the pretraining before it is
+  # used. A starting value for step 6 to confirm, not a measured one.
+  freeze_encoder_epochs: 3
 
+# The compound loss (step 5). Consumed by src/losses.py.
+#   L = w_bce * BCEWithLogits(pos_weight) + w_dice * SoftDice + w_cldice * clDice
+# pos_weight is NOT here: it is a property of the fold being trained and is
+# read from configs/fold_stats.yaml, which differs by 2.2x across the folds.
 loss:
-  name: null
-  params: null
+  w_bce: 1.0
+  w_dice: 1.0
+  w_cldice: 0.5           # supports the other two, does not dominate them
+  cldice_iters: 3         # soft-skeletonize depth; each iteration is erode+open
+  # O(1), not O(eps). sigmoid(-20) over a 256x256 tile sums to 1.3e-4, which
+  # dwarfs a 1e-6 epsilon and would score a correct empty prediction on an
+  # empty val tile at ~0.99. See the src/losses.py docstring.
+  smooth: 1.0
+  eps: 1.0e-6             # division guard inside the clDice harmonic mean only
 
 train:
   epochs: null
+  # Measured by notebooks/05_model_and_loss.ipynb: the largest batch that fits
+  # at patch 256 WITH the optimizer state, on the host that ran it.
   batch_size: null
   lr: null
   optimizer: null
