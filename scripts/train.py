@@ -47,14 +47,29 @@ def _print_epoch(record: dict, trainer) -> None:
     print(f"        val   total {record['val']['total']:.4f} "
           f"(bce {record['val']['bce']:.4f} dice {record['val']['dice']:.4f} "
           f"cldice {record['val']['cldice']:.4f})")
-    print(f"  {'dataset':<14}{'IoU':>8}{'Dice':>8}{'Prec':>8}{'Rec':>8}{'bF':>8}")
-    for name, metrics in record["metrics"]["per_dataset"].items():
+    print(f"  {'dataset':<14}{'row':<7}{'thr':>6}{'IoU':>8}{'Dice':>8}"
+          f"{'Prec':>8}{'Rec':>8}{'bF':>8}{'predf':>8}{'truef':>8}")
+    entries = list(record["metrics"]["per_dataset"].items()) + [
+        ("pooled (fn)", record["metrics"]["pooled"])]
+    for name, entry in entries:
         marker = "  <- held out" if name == trainer.held_out else ""
-        print(f"  {name:<14}" + "".join(
-            f"{metrics[k]:>8.4f}" for k in train_mod.METRIC_ORDER) + marker)
-    pooled = record["metrics"]["pooled"]
-    print(f"  {'pooled (fn)':<14}" + "".join(
-        f"{pooled[k]:>8.4f}" for k in train_mod.METRIC_ORDER))
+        for row in ("fixed", "best"):
+            metrics = entry[row]
+            print(f"  {name if row == 'fixed' else '':<14}{row:<7}"
+                  f"{metrics['threshold']:>6.2f}"
+                  + "".join(f"{metrics[k]:>8.4f}"
+                            for k in train_mod.METRIC_ORDER)
+                  + f"{metrics['pred_fraction']:>8.4f}"
+                  f"{metrics['true_fraction']:>8.4f}"
+                  + (marker if row == "fixed" else ""))
+    chosen = record["best_thresholds"]
+    if len(chosen) > 1:
+        spread = max(chosen.values()) - min(chosen.values())
+        print("  chosen thresholds: "
+              + ", ".join(f"{k} {v:.2f}" for k, v in sorted(chosen.items()))
+              + f"  (spread {spread:.2f}"
+              + ("; a gap this wide IS the domain shift -- step 7 should "
+                 "threshold per dataset)" if spread >= 0.15 else ")"))
     probe = record["cldice_probe"]
     print(f"  clDice probe: skeleton delta {probe['skeleton_delta']:.6f} "
           f"({'DEGENERATE' if probe['degenerate'] else 'active'}), "
@@ -136,8 +151,9 @@ def main(argv=None) -> int:
 
     md_path, json_path = train_mod.write_report(
         trainer, reports_dir=args.reports_dir)
-    print(f"\nbest epoch {trainer.best['epoch']} by Dice on "
-          f"{trainer.best['key']}: {trainer.best['metric']:.4f}")
+    print(f"\nbest epoch {trainer.best['epoch']} by best-threshold Dice on "
+          f"{trainer.best['key']}: {trainer.best['metric']:.4f} "
+          f"at threshold {trainer.best.get('threshold')}")
     print(f"checkpoints: {trainer.last_path}, {trainer.best_path}")
     for path in (md_path, json_path):
         print(f"wrote {path}")
