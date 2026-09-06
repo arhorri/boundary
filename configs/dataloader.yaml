@@ -11,22 +11,27 @@
 # instead of being hidden behind the cache.
 hosts:
   colab:
-    measured_utc: '2026-09-05T10:23:46Z'
+    measured_utc: '2026-09-06T07:14:10Z'
     gpu: Tesla T4
     cpu_count: 2
     batch_size: 8
     batches_timed: 200
-    num_workers: 0
+    num_workers: 4
     cache_images: true
     cache_mb: 165.7
     cached_tiles_per_second:
-      0: 361.7
-      2: 327.3
-      4: 304.5
+      0: 364.7
+      2: 393.3
+      4: 477.9
     uncached_tiles_per_second:
-      0: 52.6
-      2: 66.3
-      4: 55.8
+      0: 3.6
+      2: 10.8
+      4: 25.6
+    cache_cold_seconds: 7.17
+    cache_cold_source: warm
+    cache_warm_seconds: 0.24
+    cache_key: 9c8476cbb16fc035
+    cache_dir: /content/drive/MyDrive/phase11-persistent/tile_cache
   kaggle:
     measured_utc: null
     cpu_count: 2
