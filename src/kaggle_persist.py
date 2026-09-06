@@ -246,31 +246,60 @@ def input_roots(resolved: Optional[dict] = None,
         config = paths_mod.load_config()
 
     kaggle_cfg = ((config.get("session") or {}).get("kaggle") or {})
-    root = Path(kaggle_cfg.get("input_root") or "/kaggle/input")
-    if not root.is_dir():
+    configured = Path(kaggle_cfg.get("input_root") or "/kaggle/input")
+
+    # Two mount shapes are in play and a session can contain BOTH. Datasets
+    # here mount owner-nested (/kaggle/input/datasets/<owner>/<slug>/), which
+    # is what session.kaggle.input_root points at; a notebook-output
+    # attachment may instead mount flat at /kaggle/input/<slug>/. Searching
+    # only the configured root would find the data and miss the checkpoint --
+    # silently, as a clean start. So both shapes are enumerated.
+    literal = Path(os.sep, "kaggle", "input")
+    attached, seen = [], set()
+
+    def offer(path: Path) -> None:
+        if not path.is_dir():
+            return
+        key = str(path.resolve())
+        if key not in seen:
+            seen.add(key)
+            attached.append(path)
+
+    for base in (configured, literal):
+        if not base.is_dir():
+            continue
+        for child in sorted(base.iterdir()):
+            if not child.is_dir():
+                continue
+            offer(child)
+            # /kaggle/input/datasets/<owner>/<slug> -- one more level down.
+            if child.name == "datasets" or base == literal:
+                for grandchild in sorted(
+                        c for c in child.iterdir() if c.is_dir()):
+                    offer(grandchild)
+
+    if not attached:
         raise KagglePersistError(
-            f"input root does not exist: {root}. On Kaggle this is "
-            "/kaggle/input and it exists whenever any dataset is attached; if "
-            "it is missing, no dataset is attached to this notebook.")
+            f"no attached datasets found under {configured} or {literal}. On "
+            "Kaggle at least one is mounted whenever anything is attached; if "
+            "there are none, nothing is attached to this notebook.")
 
     wanted = list(slugs) if slugs is not None else list(
         settings(config)["resume_input_slugs"] or [])
 
-    ordered, seen = [], set()
+    ordered, claimed = [], set()
     for slug in wanted:
-        candidate = root / str(slug)
-        if not candidate.is_dir():
+        hits = [p for p in attached if p.name == str(slug)]
+        if not hits:
             raise KagglePersistError(
                 f"session.kaggle.persist.resume_input_slugs names {slug!r} but "
-                f"{candidate} is not attached to this notebook. Attached: "
-                + (", ".join(sorted(p.name for p in root.iterdir() if p.is_dir()))
-                   or "(nothing)"))
-        ordered.append(candidate)
-        seen.add(candidate.name)
+                "nothing by that name is attached to this notebook. Attached: "
+                + (", ".join(sorted(p.name for p in attached)) or "(nothing)"))
+        for hit in hits:
+            ordered.append(hit)
+            claimed.add(str(hit.resolve()))
 
-    for child in sorted(root.iterdir()):
-        if child.is_dir() and child.name not in seen:
-            ordered.append(child)
+    ordered.extend(p for p in attached if str(p.resolve()) not in claimed)
     return ordered
 
 

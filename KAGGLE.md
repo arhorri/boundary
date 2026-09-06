@@ -68,6 +68,18 @@ The slugs must match `session.kaggle.dataset_slug` and
 `session.kaggle.gt_dataset_slug` in `configs/kaggle.yaml`. If you name them
 differently, change that file — never a path inside a notebook.
 
+> **Mount shape.** This account's notebooks mount attached datasets nested by
+> owner — `/kaggle/input/datasets/<owner>/<slug>/` — not flat at
+> `/kaggle/input/<slug>/`. `session.kaggle.input_root` is set to the owner
+> directory accordingly, and both `data_root` and `gt_boundaries_root` are
+> derived from it. If a session ever mounts flat instead, that one key is what
+> to change; the bootstrap prints the listing of what it actually found.
+>
+> One wrapping folder inside each dataset is fine and needs no configuration:
+> `phase11-microstructure-data/data/MetalDam/...` and
+> `phase11-gt-boundaries/gt_boundaries/MetalDam/...` are both accepted, because
+> `verify_data_root` and `verify_gt_root` each retry one directory down.
+
 > One wrapping folder is tolerated: an upload that produces
 > `phase11-microstructure-data/data/MetalDam/...` is accepted, because
 > `verify_data_root` accepts either the root or a single subdirectory of it.
@@ -210,6 +222,7 @@ back.
 | clone or pip hangs, then fails | Internet is off in Settings |
 | `GT_BOUNDARIES_ROOT does not exist` | the `phase11-gt-boundaries` dataset is not attached, or the slug differs from `configs/kaggle.yaml` |
 | `DATA_ROOT is missing expected dataset folders` | the upload is incomplete, or nested more than one level deep |
+| `DATA_ROOT does not exist` and the listing shows `datasets/` | the mount is owner-nested; `session.kaggle.input_root` must point at `/kaggle/input/datasets/<owner>` |
 | `platform detected as 'colab'` on Kaggle | should be impossible — `detect_platform` tests `KAGGLE_*` env vars first. Report it; do not edit a path to work around it |
 | resume refuses with a config-hash diff | something in `model:`, `loss:`, `train:` or `dataset:` changed since the checkpoint. Start clean, or accept it deliberately with `allow_config_change=True` |
 | checkpoint gone after a session | no version was saved. `/kaggle/working` is not storage |
