@@ -153,29 +153,86 @@ def test_loss_decreases_monotonically_toward_the_target(criterion):
 # --------------------------------------------------------------------------
 # clDice and the broken line
 # --------------------------------------------------------------------------
-def test_cldice_weights_a_gap_more_than_dice_does(criterion, dense_tile):
-    """The claim clDice is in the loss for, measured on a real boundary tile.
+def test_soft_skeleton_of_an_isolated_two_pixel_line_is_the_line(settings):
+    """Half of what soft_skeletonize does to 2 px lines, measured.
 
-    Two errors are compared, both applied to the ground truth itself:
+    On a line with no junctions, one erosion removes it entirely -- every line
+    pixel's 3x1 min-pool reaches a background row -- so ``open(x)`` is empty and
+    ``skel = relu(x - 0) = x``. This half was reasoned about correctly the
+    first time; the other half was not, and the test below is the one that
+    caught it.
+    """
+    mask = np.zeros((128, 128), dtype=np.uint8)
+    mask[64:66, 20:120] = 1
+    target = losses.as_target(mask)
+    skel = losses.soft_skeletonize(target, int(settings["cldice_iters"]))
+    assert torch.allclose(skel, target, atol=1e-6), (
+        "an isolated 2 px line no longer comes back unchanged; max |diff| "
+        f"{float((skel - target).abs().max()):.4f}")
 
-    * **gap** -- the line is severed periodically. Topology destroyed.
-    * **dilated** -- the line is one pixel fatter all round. Topology intact,
-      and far MORE pixels are wrong than in the gap case.
 
-    Dice counts pixels, so it charges much more for the harmless error than for
-    the destructive one. clDice compares skeletons, so dilation is nearly free
-    to it while the break is not. The assertion is the cross-ratio, written
-    without division so a near-zero clDice penalty on the dilated case cannot
-    blow it up.
+def test_soft_skeleton_carves_junctions_out_of_a_two_pixel_grid(settings):
+    """The other half: a JUNCTION survives erosion, and the skeleton loses it.
 
-    On the gap case the two terms come out ALMOST EQUAL rather than clDice
-    coming out larger, and that is a real property of this data, not a weak
-    test: ``boundary_gt.line_width_px`` is 2, and one erosion removes a 2 px
-    line entirely, so the soft skeleton of the ground truth IS the ground
-    truth and clDice reduces to a harmonic mean of precision and recall. What
-    clDice contributes here is therefore the RELATIVE weighting -- it refuses
-    to be dominated by thickness the way Dice is -- plus real skeletonization
-    of the model's own soft, over-thick predictions during training.
+    Where two 2 px lines cross, the shape is 3+ pixels thick in both
+    directions, so erosion survives on the 2x2 core, ``open`` dilates that core
+    back out to a 4x4 block, and ``relu(x - open(x))`` removes every line pixel
+    inside that block. The skeleton of a boundary NETWORK is therefore the mask
+    minus a patch at each junction -- which is why "skeleton(g) == g on this
+    data" was wrong, and why the clDice claim resting on it had to be redone.
+
+    Both halves are asserted: that the difference is real, and that it is
+    confined to the junctions rather than being a general thinning.
+    """
+    size, offsets = 128, list(range(12, 126, 29))
+    mask = np.zeros((size, size), dtype=np.uint8)
+    for k in offsets:
+        mask[k:k + 2, :] = 1
+        mask[:, k:k + 2] = 1
+
+    target = losses.as_target(mask)
+    skel = losses.soft_skeletonize(target, int(settings["cldice_iters"]))
+    diff = (target - skel).abs()[0, 0].numpy()
+    differing = np.argwhere(diff > 1e-6)
+
+    assert len(differing) > 0, (
+        "the skeleton of a 2 px GRID came back identical to the grid; the "
+        "junction behaviour this project's clDice reasoning depends on is gone")
+    assert len(differing) < 0.25 * mask.sum(), (
+        f"{len(differing)} of {int(mask.sum())} boundary pixels differ -- that "
+        "is a general thinning, not junctions being carved out")
+
+    # Every difference must sit at a junction. The opening can only reach one
+    # pixel beyond the eroded 2x2 core, so 3 is a generous bound.
+    junctions = np.array([(r, c) for r in offsets for c in offsets], dtype=int)
+    for y, x in differing:
+        chebyshev = np.max(np.abs(junctions - np.array([y, x])), axis=1).min()
+        assert chebyshev <= 3, (
+            f"pixel ({y}, {x}) differs but is {chebyshev} px from the nearest "
+            "junction; the skeleton is being changed away from junctions too")
+
+
+def test_cldice_is_far_less_sensitive_to_thickness_than_dice(criterion, dense_tile):
+    """The claim clDice actually earns its place with, on a real tile.
+
+    Two errors are applied to the ground truth itself:
+
+    * **gap** -- the line severed periodically. Topology destroyed, ~3% of the
+      pixels wrong.
+    * **dilated** -- the line one pixel fatter all round. Topology intact, and
+      roughly 100% MORE pixels wrong than in the gap case.
+
+    Dice counts pixels, so it charges an order of magnitude more for the
+    harmless error than for the destructive one. clDice compares skeletons, and
+    a dilated line has the same centreline, so it charges almost nothing for
+    it. That is the property: **clDice does not add gap sensitivity, it removes
+    Dice's thickness bias.** Notebook 05 measures 0.335 / 0.390 for Dice on the
+    dilated case against 0.007 / 0.000 for clDice.
+
+    Thickness invariance is only meaningful if the skeletons are real, so that
+    is checked too: a clDice of exactly 0 with an EMPTY predicted skeleton is
+    ``smooth / smooth = 1`` -- degenerate, not invariant. The two are
+    indistinguishable from the loss value alone.
     """
     truth = dense_tile
     gapped = losses.cut_gaps(truth, spacing=180, gap=3)
@@ -189,35 +246,53 @@ def test_cldice_weights_a_gap_more_than_dice_does(criterion, dense_tile):
     assert added > 0.2, f"dilate_mask only added {added:.1%}"
 
     target = losses.as_target(truth)
-    scores = {}
+    scores, parts = {}, {}
     for name, mask in (("gap", gapped), ("dilated", dilated)):
-        terms = criterion.components(losses.as_logits(mask, MAGNITUDE), target)
-        scores[name] = {k: float(terms[k]) for k in ("dice", "cldice", "total")}
+        logits = losses.as_logits(mask, MAGNITUDE)
+        terms = criterion.components(logits, target)
+        scores[name] = {k: float(terms[k]) for k in ("dice", "cldice")}
+        parts[name] = losses.cldice_parts(
+            logits, target, iters=criterion.cldice_iters,
+            smooth=criterion.smooth, eps=criterion.eps)
 
     dice_gap, cl_gap = scores["gap"]["dice"], scores["gap"]["cldice"]
     dice_dil, cl_dil = scores["dilated"]["dice"], scores["dilated"]["cldice"]
     detail = (f"gap: dice={dice_gap:.5f} cldice={cl_gap:.5f} "
               f"(removed {removed:.1%}); dilated: dice={dice_dil:.5f} "
-              f"cldice={cl_dil:.5f} (added {added:.1%})")
+              f"cldice={cl_dil:.5f} (added {added:.1%}); dilated skeletons: "
+              f"pred={parts['dilated']['skel_pred_sum']:.0f} px, "
+              f"true={parts['dilated']['skel_true_sum']:.0f} px, "
+              f"overlap={parts['dilated']['skel_pred_on_true']:.0f} px")
 
-    assert cl_gap >= 0.9 * dice_gap, (
-        "clDice charges LESS than Dice for a severed line -- " + detail)
+    # Dice is dominated by thickness.
     assert dice_dil > 3.0 * dice_gap, (
-        "Dice was expected to be dominated by the thickness error -- " + detail)
-    # Cross-multiplied: cl_gap / cl_dil  >  1.5 * (dice_gap / dice_dil)
-    assert cl_gap * dice_dil > 1.5 * cl_dil * dice_gap, (
-        "clDice does not weight the break above the thickness error more than "
-        "Dice does -- " + detail)
-
-
-def test_soft_skeleton_of_a_two_pixel_line_is_the_line(settings):
-    """The property the test above rests on, isolated and stated outright."""
-    mask = _synthetic_mask()
-    target = losses.as_target(mask)
-    skel = losses.soft_skeletonize(target, int(settings["cldice_iters"]))
-    assert torch.allclose(skel, target, atol=1e-6), (
-        "the soft skeleton of a 2 px line is no longer the line itself; the "
-        "clDice reasoning in notebook 05 needs re-deriving")
+        "Dice was expected to charge far more for fattening the line than for "
+        "cutting it -- " + detail)
+    # clDice is not. This is the property being asserted.
+    assert cl_dil < 0.25 * dice_dil, (
+        "clDice charges nearly as much as Dice for a topology-preserving "
+        "thickness change; its whole contribution here is not doing that -- "
+        + detail)
+    # ... and it is invariance, not degeneracy: both skeletons carry real
+    # pixels and the predicted one lies on the true boundary.
+    assert parts["dilated"]["skel_pred_sum"] > 0.25 * parts["dilated"]["true_sum"], (
+        "the dilated prediction's skeleton is essentially empty, so t_prec is "
+        "smooth/smooth = 1 and the low clDice is degenerate rather than "
+        "topology-invariant -- " + detail)
+    assert parts["dilated"]["skel_true_sum"] > 0.25 * parts["dilated"]["true_sum"], (
+        "the ground truth's own skeleton is essentially empty -- " + detail)
+    assert (parts["dilated"]["skel_pred_on_true"]
+            > 0.8 * parts["dilated"]["skel_pred_sum"]), (
+        "the dilated prediction's skeleton does not lie on the true boundary, "
+        "so its low clDice is not centreline agreement -- " + detail)
+    # Consequence of the two above, stated as the ranking it produces: relative
+    # to the thickness error, clDice puts the break far higher than Dice does.
+    # Cross-multiplied, so a clDice of exactly 0 on the dilated case cannot
+    # blow the ratio up.
+    assert cl_gap > 0.0, "clDice charged nothing at all for a severed line"
+    assert cl_gap * dice_dil > 3.0 * cl_dil * dice_gap, (
+        "clDice does not rank the break above the thickness error more "
+        "strongly than Dice does -- " + detail)
 
 
 def test_cut_gaps_actually_severs_the_line():
