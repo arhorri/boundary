@@ -9,8 +9,9 @@ the Colab path — nothing here alters how Colab behaves.
 
 | | Colab | Kaggle |
 | --- | --- | --- |
-| `DATA_ROOT` | Drive folder | `/kaggle/input/<dataset_slug>` (read-only) |
-| `GT_BOUNDARIES_ROOT` | `PERSISTENT_DIR/gt_boundaries` | `/kaggle/input/<gt_dataset_slug>` (read-only) |
+| `DATA_ROOT` | Drive folder | `<input_root>/<dataset_slug>` (read-only) |
+| `GT_BOUNDARIES_ROOT` | `PERSISTENT_DIR/gt_boundaries` | `<input_root>/<gt_dataset_slug>` (read-only) |
+| `input_root` | — | `/kaggle/input/datasets/<owner>` on this account, not flat `/kaggle/input` |
 | `PERSISTENT_DIR` | Drive — **survives** | `/kaggle/working` — **deleted when the kernel stops** |
 | secret store | `google.colab.userdata` | `kaggle_secrets.UserSecretsClient` |
 | branch | `main` | `kaggle` (the bootstrap switches to it by itself) |
@@ -79,10 +80,6 @@ differently, change that file — never a path inside a notebook.
 > `phase11-microstructure-data/data/MetalDam/...` and
 > `phase11-gt-boundaries/gt_boundaries/MetalDam/...` are both accepted, because
 > `verify_data_root` and `verify_gt_root` each retry one directory down.
-
-> One wrapping folder is tolerated: an upload that produces
-> `phase11-microstructure-data/data/MetalDam/...` is accepted, because
-> `verify_data_root` accepts either the root or a single subdirectory of it.
 
 ---
 
