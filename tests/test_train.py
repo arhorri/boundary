@@ -581,3 +581,186 @@ def test_load_checkpoint_model_loads_a_matching_checkpoint(tmp_path):
         path, settings, fold="dev", expected_hash="abc")
     assert state["fold"] == "dev"
     assert not model.training, "a model returned for evaluation must be in eval mode"
+
+
+# --------------------------------------------------------------------------
+# placement vs thickness -- the decomposition must tell the two apart
+# --------------------------------------------------------------------------
+RADII = (0, 1, 2, 3)
+DISTS = (0, 1, 2, 3, 5)
+
+
+def _grid(size=96):
+    """A 2-px grid, the width boundary_gt.line_width_px actually produces."""
+    true = np.zeros((size, size), dtype=bool)
+    for offset in range(size // 8, size - 2, size // 4):
+        true[offset:offset + 2, :] = True
+        true[:, offset:offset + 2] = True
+    return true
+
+
+def _summarise_one(pred, true):
+    slot = train_mod._decomposition_slot(RADII, DISTS)
+    train_mod._accumulate_decomposition(
+        slot, train_mod.decomposition_counts(pred, true, RADII, DISTS))
+    return train_mod.summarise_decomposition(slot, RADII, DISTS)
+
+
+def test_decomposition_k0_reproduces_the_plain_pixel_dice():
+    """The k=0 row is the anchor: it must equal the ordinary Dice exactly."""
+    import cv2
+
+    true = _grid()
+    pred = cv2.dilate(true.astype(np.uint8),
+                      train_mod.euclidean_disk(1)).astype(bool)
+    entry = _summarise_one(pred, true)
+
+    tp = int((pred & true).sum())
+    expected = 2 * tp / (int(pred.sum()) + int(true.sum()))
+    assert entry["pixel_dice"] == pytest.approx(expected)
+    assert entry["dilated_dice"][0] == pytest.approx(expected), (
+        "dilating by 0 must be the identity, or the sweep has no anchor")
+
+
+def test_decomposition_of_a_perfect_prediction_is_one_everywhere():
+    true = _grid()
+    entry = _summarise_one(true.copy(), true)
+    assert entry["pixel_dice"] == pytest.approx(1.0)
+    assert entry["skeleton_dice"] == pytest.approx(1.0)
+    for d in DISTS:
+        assert entry["pred_within"][d] == pytest.approx(1.0)
+        assert entry["skeleton_pred_within"][d] == pytest.approx(1.0)
+    assert entry["placement_ok"]
+
+
+def test_a_fat_but_correctly_placed_prediction_reads_as_a_thickness_problem():
+    """The case the whole diagnostic exists to identify.
+
+    Pixel Dice collapses while the skeletons stay on top of each other. If this
+    ever stops holding, the notebook's verdict is worthless.
+    """
+    import cv2
+
+    true = _grid()
+    for k in (1, 2, 3):
+        pred = cv2.dilate(true.astype(np.uint8),
+                          train_mod.euclidean_disk(k)).astype(bool)
+        entry = _summarise_one(pred, true)
+        assert entry["pixel_dice"] < 0.75, f"k={k} should hurt the pixel Dice"
+        assert entry["skeleton_dice"] > 0.90, (
+            f"k={k}: thickness must not move the skeletons "
+            f"(got {entry['skeleton_dice']:.3f})")
+        assert entry["skeleton_lift"] > 1.2, f"k={k}"
+        assert entry["skeleton_pred_within"][1] > 0.95, f"k={k}"
+        assert entry["placement_ok"], f"k={k} verdict: {entry['verdict']}"
+        # width is measured as pooled area / skeleton length, and must rise
+        assert entry["width_pred"] > entry["width_true"], f"k={k}"
+
+
+def test_a_misplaced_prediction_reads_as_a_placement_problem():
+    true = _grid()
+    # Diagonal, so nothing lands back on itself: a purely axial shift leaves
+    # the full-width lines overlapping themselves and measures as half-placed.
+    pred = np.zeros_like(true)
+    pred[4:, 4:] = true[:-4, :-4]
+    entry = _summarise_one(pred, true)
+
+    assert entry["skeleton_dice"] < 0.5
+    assert entry["skeleton_lift"] < 1.2, (
+        "a misplaced prediction's skeleton Dice must track its pixel Dice "
+        "rather than lifting above it")
+    assert entry["skeleton_pred_within"][1] < train_mod.PLACEMENT_NEAR1_BAD
+    assert not entry["placement_ok"]
+    assert entry["width_pred"] == pytest.approx(entry["width_true"], rel=0.1), (
+        "a shifted copy has the same thickness as the truth, so the width "
+        "columns must NOT be what distinguishes it")
+
+
+def test_dilated_dice_alone_cannot_tell_the_two_apart():
+    """Why measurement (b) is reported with a caveat instead of on its own.
+
+    Dilating both masks by 3 px makes almost anything overlap at this boundary
+    density, to the point that a correctly-placed-but-fat prediction and a
+    misplaced one land within a hundredth of each other -- close enough that
+    which of the two comes out ahead is not stable. What is asserted here is
+    that (b) FAILS TO SEPARATE them, which is the claim the notebook makes;
+    asserting a particular ordering would be pinning a coin flip.
+    """
+    import cv2
+
+    true = _grid()
+    fat = cv2.dilate(true.astype(np.uint8),
+                     train_mod.euclidean_disk(3)).astype(bool)
+    shifted = np.zeros_like(true)
+    shifted[2:, 2:] = true[:-2, :-2]
+
+    fat_entry = _summarise_one(fat, true)
+    shifted_entry = _summarise_one(shifted, true)
+
+    gap = abs(shifted_entry["dilated_dice"][3] - fat_entry["dilated_dice"][3])
+    assert gap < 0.10, (
+        f"measurement (b) now separates placed from misplaced by {gap:.3f} at "
+        "k=3; the notebook's warning that it cannot needs rewriting from the "
+        "new numbers")
+    # ... while the instruments that DO work separate them by a mile.
+    assert fat_entry["skeleton_dice"] - shifted_entry["skeleton_dice"] > 0.5, (
+        "skeleton Dice must separate placed from misplaced by far more than "
+        "the dilated Dice does, or the diagnostic has no instrument at all")
+    assert (fat_entry["skeleton_pred_within"][1]
+            - shifted_entry["skeleton_pred_within"][1] > 0.5)
+
+
+def test_noise_scores_near_zero_on_the_instruments_that_work():
+    true = _grid()
+    rng = np.random.default_rng(0)
+    pred = rng.random(true.shape) < true.mean()
+    entry = _summarise_one(pred, true)
+    assert entry["skeleton_dice"] < 0.2
+    assert entry["skeleton_pred_within"][1] < 0.4
+    assert not entry["placement_ok"]
+
+
+def test_reference_decomposition_classifies_every_case_it_is_named_for():
+    """The calibration table the notebook prints must actually calibrate."""
+    reference = train_mod.reference_decomposition(size=128, seed=0)
+    assert "perfect" in reference
+    for name, entry in reference.items():
+        if name.startswith("placed") or name == "perfect":
+            assert entry["placement_ok"], (
+                f"{name} is placed by construction but was classified "
+                f"otherwise: {entry['verdict']}")
+        else:
+            assert not entry["placement_ok"], (
+                f"{name} is misplaced by construction but was classified "
+                f"otherwise: {entry['verdict']}")
+
+
+def test_decompose_error_requires_a_threshold_for_every_dataset():
+    val_ds = _FakeValDataset([np.zeros((8, 8), dtype=np.float32)],
+                             datasets=["A"])
+    model = _ConstantLogits([torch.full((1, 8, 8), -10.0)])
+    with pytest.raises(train_mod.TrainError):
+        train_mod.decompose_error(model, val_ds, {},
+                                  device=torch.device("cpu"))
+
+
+def test_decompose_error_groups_by_dataset_and_keeps_row_order():
+    size = 24
+    band = np.zeros((size, size), dtype=np.float32)
+    band[8:10, :] = 1.0
+    exact = torch.where(torch.from_numpy(band) > 0,
+                        torch.tensor(10.0), torch.tensor(-10.0))
+    empty = torch.full((size, size), -10.0)
+
+    val_ds = _FakeValDataset([band, band, band], datasets=["A", "B", "B"])
+    model = _ConstantLogits([exact[None], exact[None], empty[None]])
+
+    out = train_mod.decompose_error(
+        model, val_ds, {"A": 0.5, "B": 0.5}, device=torch.device("cpu"),
+        dilations=(1,), distances=(1,), batch_size=2)
+
+    assert set(out) == {"A", "B"}
+    assert out["A"]["tiles"] == 1 and out["B"]["tiles"] == 2
+    # A predicted its one tile exactly; B got one exact and one empty.
+    assert out["A"]["pixel_dice"] == pytest.approx(1.0)
+    assert 0.0 < out["B"]["pixel_dice"] < 1.0

@@ -1712,6 +1712,310 @@ def tile_prediction(model: "nn.Module", val_ds, row_index: int, device,
     }
 
 
+# --------------------------------------------------------------------------
+# placement vs thickness -- splitting a low pixel Dice into its two causes
+# --------------------------------------------------------------------------
+#: Verdict thresholds, calibrated against reference_decomposition() rather than
+#: guessed. On synthetic cases where the answer is known, a correctly-placed but
+#: fat prediction scores skeleton Dice 0.93-0.97 and 1-px skeleton proximity
+#: 0.99+ no matter HOW fat it is, while a prediction misplaced by 3-5 px scores
+#: 0.38-0.59 and 0.43-0.64, and pure noise at the same density scores 0.11 and
+#: 0.20. Both cuts below sit in the gap between those regimes.
+PLACEMENT_NEAR1_OK = 0.80
+PLACEMENT_SKELETON_DICE_OK = 0.70
+PLACEMENT_NEAR1_BAD = 0.50
+
+
+def decomposition_counts(pred: np.ndarray, true: np.ndarray,
+                         radii: Sequence, distances: Sequence) -> dict:
+    """Every count the placement/thickness split needs, for ONE tile.
+
+    Shared by the real evaluation and by :func:`reference_decomposition`, so
+    the calibration table a notebook prints beside its results is produced by
+    the same arithmetic as the results -- not by a parallel implementation that
+    can drift.
+    """
+    import cv2
+    from skimage.morphology import skeletonize
+
+    pred = np.ascontiguousarray(pred).astype(bool)
+    true = np.ascontiguousarray(true).astype(bool)
+    pred_u8 = pred.astype(np.uint8)
+    true_u8 = true.astype(np.uint8)
+
+    # skeletonize() on an all-False array is a no-op, but guarding says so.
+    skel_pred = skeletonize(pred) if pred.any() else np.zeros_like(pred)
+    skel_true = skeletonize(true) if true.any() else np.zeros_like(true)
+    skel_pred_u8 = skel_pred.astype(np.uint8)
+    skel_true_u8 = skel_true.astype(np.uint8)
+
+    disks = {r: euclidean_disk(r) for r in set(radii) | set(distances) if r > 0}
+
+    def grow(mask_u8, base, r):
+        return base if r == 0 else cv2.dilate(mask_u8, disks[r]).astype(bool)
+
+    grown_pred = {r: grow(pred_u8, pred, r) for r in radii}
+    grown_true = {r: grow(true_u8, true, r) for r in radii}
+    near_pred = {d: grow(pred_u8, pred, d) for d in distances}
+    near_true = {d: grow(true_u8, true, d) for d in distances}
+    near_skel_pred = {d: grow(skel_pred_u8, skel_pred, d) for d in distances}
+    near_skel_true = {d: grow(skel_true_u8, skel_true, d) for d in distances}
+
+    return {
+        "tiles": 1,
+        "skel_tp": int((skel_pred & skel_true).sum()),
+        "skel_pred_px": int(skel_pred.sum()),
+        "skel_true_px": int(skel_true.sum()),
+        # k = 0 is the identity, so this row IS the ordinary pixel Dice and must
+        # reproduce what MetricAccumulator reported. It is kept as the anchor
+        # the rest of the sweep is read against.
+        "dil_tp": {r: int((grown_pred[r] & grown_true[r]).sum()) for r in radii},
+        "dil_pred": {r: int(grown_pred[r].sum()) for r in radii},
+        "dil_true": {r: int(grown_true[r].sum()) for r in radii},
+        # (c): how much of each mask sits within d px of the other one.
+        "pred_near": {d: int((pred & near_true[d]).sum()) for d in distances},
+        "true_near": {d: int((true & near_pred[d]).sum()) for d in distances},
+        "skel_pred_near": {d: int((skel_pred & near_skel_true[d]).sum())
+                          for d in distances},
+        "skel_true_near": {d: int((skel_true & near_skel_pred[d]).sum())
+                          for d in distances},
+    }
+
+
+def _decomposition_slot(radii: Sequence, distances: Sequence) -> dict:
+    return {
+        "tiles": 0, "skel_tp": 0, "skel_pred_px": 0, "skel_true_px": 0,
+        "dil_tp": {r: 0 for r in radii},
+        "dil_pred": {r: 0 for r in radii},
+        "dil_true": {r: 0 for r in radii},
+        "pred_near": {d: 0 for d in distances},
+        "true_near": {d: 0 for d in distances},
+        "skel_pred_near": {d: 0 for d in distances},
+        "skel_true_near": {d: 0 for d in distances},
+    }
+
+
+def _accumulate_decomposition(slot: dict, counts: dict) -> None:
+    for key in ("tiles", "skel_tp", "skel_pred_px", "skel_true_px"):
+        slot[key] += counts[key]
+    for key in ("dil_tp", "dil_pred", "dil_true", "pred_near", "true_near",
+                "skel_pred_near", "skel_true_near"):
+        for index, value in counts[key].items():
+            slot[key][index] += value
+
+
+def summarise_decomposition(slot: dict, radii: Sequence,
+                            distances: Sequence) -> dict:
+    """Turn accumulated counts into the three measurements, plus a verdict.
+
+    Counts are pooled over the dataset and the metric computed once, exactly as
+    :class:`MetricAccumulator` does -- so ``pixel_dice`` here is directly
+    comparable to the Dice the training loop reported, rather than being a mean
+    of per-tile Dices, which is a different and larger number.
+    """
+    pred_px, true_px = slot["dil_pred"][0], slot["dil_true"][0]
+    pixel_dice = _safe_div(2 * slot["dil_tp"][0], pred_px + true_px)
+    skeleton_dice = _safe_div(2 * slot["skel_tp"],
+                             slot["skel_pred_px"] + slot["skel_true_px"])
+    skeleton_pred_within = {d: _safe_div(slot["skel_pred_near"][d],
+                                        slot["skel_pred_px"])
+                            for d in distances}
+    near1 = skeleton_pred_within.get(1, skeleton_pred_within.get(
+        min(distances, key=lambda d: abs(d - 1)), 0.0))
+
+    if near1 >= PLACEMENT_NEAR1_OK and skeleton_dice >= PLACEMENT_SKELETON_DICE_OK:
+        verdict = ("PLACEMENT IS FINE -- the boundaries are where they belong "
+                   "and the pixel Dice is being spent on THICKNESS")
+        placement_ok = True
+    elif near1 >= PLACEMENT_NEAR1_OK:
+        verdict = ("centrelines land within 1 px but do not coincide: "
+                   "placement is broadly right, and the skeleton Dice "
+                   "understates it because a 1-px line has no tolerance")
+        placement_ok = True
+    elif near1 < PLACEMENT_NEAR1_BAD:
+        verdict = ("MISPLACED -- the predicted centreline is not near the true "
+                   "one, so thickness is not the problem and thinning the "
+                   "prediction would not help")
+        placement_ok = False
+    else:
+        verdict = ("MIXED -- some boundaries land on the truth and some do "
+                   "not; neither thickness alone nor placement alone explains "
+                   "the score")
+        placement_ok = False
+
+    return {
+        "tiles": slot["tiles"],
+        "pred_px": pred_px,
+        "true_px": true_px,
+        # (a) thickness removed from both sides
+        "pixel_dice": pixel_dice,
+        "skeleton_dice": skeleton_dice,
+        "skeleton_lift": (skeleton_dice / pixel_dice) if pixel_dice > 0 else float("inf"),
+        "skeleton_pred_px": slot["skel_pred_px"],
+        "skeleton_true_px": slot["skel_true_px"],
+        # pooled area / skeleton length -- the same quantity
+        # boundary_gt.measured_line_width computes per tile.
+        "width_pred": _safe_div(pred_px, slot["skel_pred_px"]),
+        "width_true": _safe_div(true_px, slot["skel_true_px"]),
+        # (b) tolerance added symmetrically; r = 0 is the pixel Dice itself
+        "dilated_dice": {r: _safe_div(2 * slot["dil_tp"][r],
+                                     slot["dil_pred"][r] + slot["dil_true"][r])
+                         for r in radii},
+        # (c) proximity, both directions, on the masks and on the skeletons
+        "pred_within": {d: _safe_div(slot["pred_near"][d], pred_px)
+                        for d in distances},
+        "true_within": {d: _safe_div(slot["true_near"][d], true_px)
+                        for d in distances},
+        "skeleton_pred_within": skeleton_pred_within,
+        "skeleton_true_within": {d: _safe_div(slot["skel_true_near"][d],
+                                             slot["skel_true_px"])
+                                 for d in distances},
+        "verdict": verdict,
+        "placement_ok": placement_ok,
+    }
+
+
+@torch.no_grad()
+def decompose_error(model: "nn.Module", val_ds, thresholds: dict, device,
+                    amp_enabled: bool = False, dilations: Sequence = (1, 2, 3),
+                    distances: Sequence = (1, 2, 3, 5),
+                    batch_size: int = 32, num_workers: int = 0) -> dict:
+    """Split a low pixel Dice into PLACEMENT error and THICKNESS error.
+
+    A pixel Dice of 0.146 has two very different explanations that no single
+    number can tell apart: boundaries drawn in the right place but far too
+    thick, or boundaries drawn in the wrong place. They call for opposite
+    responses -- the first is fixed at the operating point or with a thinner
+    target, the second means the model has not learned where boundaries are --
+    so this measures the two separately:
+
+    (a) **Dice between the two SKELETONS**, thickness removed from both sides.
+        Much higher than the pixel Dice means the pixel Dice is being spent on
+        width, not position.
+    (b) **Dice after dilating BOTH masks** by 1, 2, 3 px: tolerance added
+        symmetrically. Read this one with care -- see
+        :func:`reference_decomposition`, where pure noise still reaches 0.69 at
+        k=3, because dilating both sides makes almost anything overlap at this
+        boundary density.
+    (c) **Proximity**: the fraction of predicted boundary pixels within d px of
+        a true one, and the converse. These are the two halves of the boundary
+        F-score swept over its tolerance, and the skeleton version of them is
+        the sharpest of the three measurements here.
+
+    Validation only: no gradient, no optimizer, nothing retrained.
+    """
+    from torch.utils.data import DataLoader
+
+    # Keep k=0 internally as the ordinary pixel-Dice anchor.  Proximity is
+    # deliberately only reported at the caller's requested distances: its
+    # public table is the 1, 2, 3, 5 px sweep, not an extra exact-overlap row.
+    radii = tuple(sorted({0} | {int(k) for k in dilations}))
+    distances = tuple(sorted({int(d) for d in distances}))
+    if any(k < 0 for k in radii) or any(d < 0 for d in distances):
+        raise TrainError("dilation radii and proximity distances must be non-negative")
+    if not distances:
+        raise TrainError("pass at least one proximity distance to decompose_error")
+
+    present = sorted({r["dataset"] for r in val_ds.rows})
+    missing = sorted(set(present) - set(thresholds))
+    if missing:
+        raise TrainError(
+            f"decompose_error has no threshold for {missing}; pass one for "
+            "every dataset in the validation split.")
+
+    model.eval()
+    loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False,
+                        num_workers=num_workers)
+    slots, row_index = {}, 0
+    for batch in loader:
+        images = batch["image"].to(device, non_blocking=True)
+        masks = batch["mask"].numpy()
+        with autocast(device.type, amp_enabled):
+            logits = model(images)
+        probs = torch.sigmoid(logits.float()).cpu().numpy()
+
+        for i in range(probs.shape[0]):
+            row = val_ds.rows[row_index]
+            dataset = row["dataset"]
+            pred = probs[i, 0] >= float(thresholds[dataset])
+            true = masks[i, 0] > 0.5
+            slot = slots.setdefault(dataset, _decomposition_slot(radii, distances))
+            _accumulate_decomposition(
+                slot, decomposition_counts(pred, true, radii, distances))
+            row_index += 1
+
+    if row_index != len(val_ds):
+        raise TrainError(
+            f"decomposed {row_index} tiles but val_ds has {len(val_ds)}.")
+    return {name: summarise_decomposition(slot, radii, distances)
+            for name, slot in sorted(slots.items())}
+
+
+def reference_decomposition(dilations: Sequence = (1, 2, 3),
+                            distances: Sequence = (1, 2, 3, 5),
+                            size: int = 256, seed: int = 0) -> dict:
+    """The same measurements on synthetic cases whose answer is already known.
+
+    Printed beside the real results so "much higher" and "near" have concrete
+    reference points instead of being judged by eye. Every case is measured by
+    the same :func:`decomposition_counts` the real evaluation uses, so the
+    calibration cannot drift away from what it is calibrating.
+
+    The cases bracket the two failure modes: a perfectly placed prediction that
+    is merely 1-3 px too fat, a prediction of the right thickness shifted 2-5
+    px off, and uniform noise at the same boundary density as a floor.
+    """
+    import cv2
+
+    radii = tuple(sorted({0} | {int(k) for k in dilations}))
+    distances = tuple(sorted({int(d) for d in distances}))
+    if any(k < 0 for k in radii) or any(d < 0 for d in distances):
+        raise TrainError("dilation radii and proximity distances must be non-negative")
+    if not distances:
+        raise TrainError("pass at least one proximity distance to reference_decomposition")
+
+    # A 2-px grid, the width boundary_gt.line_width_px actually produces.
+    true = np.zeros((size, size), dtype=bool)
+    for offset in range(size // 8, size - 2, size // 5):
+        true[offset:offset + 2, :] = True
+        true[:, offset:offset + 2] = True
+
+    def fat(k):
+        return cv2.dilate(true.astype(np.uint8),
+                          euclidean_disk(k)).astype(bool)
+
+    def shifted(px):
+        """Displace the grid DIAGONALLY, so nothing lands on itself.
+
+        A purely horizontal shift would leave the full-width horizontal lines
+        overlapping themselves exactly, and the case would measure as half
+        placed and half misplaced regardless of the shift distance -- which is
+        a real mixed case, but useless as the "misplaced" reference row.
+        """
+        out = np.zeros_like(true)
+        out[px:, px:] = true[:-px, :-px]
+        return out
+
+    rng = np.random.default_rng(seed)
+    cases = {
+        "perfect": true.copy(),
+        "placed, 1 px too fat": fat(1),
+        "placed, 2 px too fat": fat(2),
+        "placed, 3 px too fat": fat(3),
+        "misplaced by 2 px": shifted(2),
+        "misplaced by 5 px": shifted(5),
+        "noise at the same density": rng.random(true.shape) < true.mean(),
+    }
+
+    out = {}
+    for name, pred in cases.items():
+        slot = _decomposition_slot(radii, distances)
+        _accumulate_decomposition(
+            slot, decomposition_counts(pred, true, radii, distances))
+        out[name] = summarise_decomposition(slot, radii, distances)
+    return out
+
+
 def _diff_config(saved: dict, current: dict) -> list:
     """Human-readable list of what changed between two hashed configs."""
     lines = []
