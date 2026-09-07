@@ -76,6 +76,16 @@ first. The function is deliberately duplicated verbatim in
 sits in Drive beside checkpoints, on Kaggle it is a second read-only input
 dataset. Do not derive one from the other.
 
+One host difference does not reduce to a path — whether the session outlives the
+run — and it lives in `src/session.py`. `session.for_host(PATHS)` is the SINGLE
+dispatch point in the whole project; it returns a no-op object on Colab and a
+Kaggle one that stages checkpoints, budgets the session and reports what must be
+saved by hand. Nothing else may branch on `PATHS["platform"]`: a notebook or
+module that tests the platform to decide what to call is a bug, because the next
+host added then has to be found in every caller instead of in one table. If a
+host needs behaviour no method expresses, add the method to the base class as a
+no-op and override it.
+
 `/kaggle/working` does not survive the session. Treat a checkpoint left only
 there as already lost; push reports and configs as you go.
 
@@ -158,6 +168,61 @@ Every notebook under notebooks/ must:
 - be committed with all outputs cleared
 - never contain a token, key, or absolute personal path
 
+## Running on Kaggle
+
+Kaggle is a first-class host, not a port. Everything below is handled by
+`configs/kaggle.yaml` plus `src/session.py`; no notebook is edited to run there.
+
+| | Colab | Kaggle |
+| --- | --- | --- |
+| `DATA_ROOT` | Drive folder | `<input_root>/<dataset_slug>` (read-only) |
+| `GT_BOUNDARIES_ROOT` | `PERSISTENT_DIR/gt_boundaries` | `<input_root>/<gt_dataset_slug>` (read-only) |
+| `input_root` | — | `/kaggle/input/datasets/<owner>` on this account, not flat `/kaggle/input` |
+| `PERSISTENT_DIR` | Drive — **survives** | `/kaggle/working` — **deleted when the kernel stops** |
+| secret store | `google.colab.userdata` | `kaggle_secrets.UserSecretsClient` |
+| tile cache on disk | on — Drive is slow | off — `/kaggle/input` is local SSD |
+
+Two consequences drive everything else:
+
+- **Steps 1–2 cannot run on Kaggle.** `GT_BOUNDARIES_ROOT` is a read-only input,
+  so nothing there can write boundary maps. Generate them on Colab with
+  `02_boundary_gt.ipynb` and upload them as a Kaggle dataset. Run
+  `04_dataset.ipynb` once on Kaggle to measure that host's `num_workers`; its
+  `configs/dataloader.yaml` entry is otherwise an unmeasured default of 2.
+- **A training run outlives a session.** `src/session.py` closes that gap: it
+  stages a checkpoint out of an attached input dataset, stops the run on an epoch
+  boundary while there is still time to save, and prints what must be saved by
+  hand. `06_train.ipynb` is the only training notebook and runs on both hosts.
+
+Per-notebook setup (every new Kaggle notebook): import from GitHub; add
+`GH_TOKEN` under Add-ons → Secrets **and attach it to the notebook** (adding
+without attaching is the most common failure and looks like a missing secret);
+Settings → Internet ON; Accelerator GPU; attach both datasets. Cell 1 says
+`BRANCH = "main"` on purpose — the bootstrap clones `main`, reads
+`session.kaggle.branch`, and switches the checkout itself.
+
+Multi-session training: run top to bottom; it either finishes or stops with
+`SESSION BUDGET REACHED`, which is a clean stop, not an error. Then **File → Save
+Version → Quick Save with 'Save output' enabled** — the only thing that makes
+`/kaggle/working` survive, and a notebook cannot do it for itself. Next session,
+attach that version's output as an input alongside the two datasets and re-run.
+The staging cell prints which epoch it found. Repeat until `RUN COMPLETE`.
+
+Budget knobs live in `configs/kaggle.yaml` under `session.kaggle.persist`
+(`session_budget_hours`, `reserve_minutes`, `resume_input_slugs`,
+`max_stage_mb`). The guard stops when the time left is less than the SLOWEST
+epoch so far, not the mean: epoch duration on a shared host is not stationary,
+and a mean lets one slow final epoch run past the deadline.
+
+Failures worth recognising, all of which are reported rather than guessed at:
+`GH_TOKEN not available` = the secret is not attached; a hanging clone or pip =
+Internet off; `GT_BOUNDARIES_ROOT does not exist` = dataset not attached or the
+slug differs; a listing showing `datasets/` = the mount is owner-nested and
+`session.kaggle.input_root` must point at `/kaggle/input/datasets/<owner>`;
+`no attached checkpoint for this fold` = correct for session 1 and WRONG for any
+later one; a checkpoint gone after a session = no version was saved, and
+`/kaggle/working` is not storage.
+
 ## Commands (host only — write these into notebook cells, never run them here)
 
     # step 1
@@ -194,22 +259,38 @@ ship torch, numpy, scipy, opencv, scikit-image, matplotlib, pandas.
 config live there, and every step is developed there.
 
 `kaggle` carries CONFIGURATION ONLY — `configs/kaggle.yaml`, naming the two
-attached input datasets and the Kaggle path roots. It exists so a notebook can
-be opened straight from GitHub in Kaggle by switching branch. It must never
-contain a different version of a notebook or a src module. `git diff main kaggle`
-must show exactly one added file.
+attached input datasets and the Kaggle path roots — plus the reports a Kaggle
+run pushes, which are keyed by host (`reports/train_<fold>_kaggle.*`) and so do
+not collide with Colab's. It exists so a notebook can be opened straight from
+GitHub in Kaggle by switching branch. It must never contain a different version
+of a notebook or a src module.
+
+**The check. Run it after every merge:**
+
+    git diff --stat main kaggle
+
+The output must be `configs/kaggle.yaml` plus `reports/train_*_kaggle.*` and
+NOTHING ELSE. Any other path in that diff means logic has leaked onto the
+branch, and it has to be moved back to `main` rather than left to grow. This is
+not hypothetical: the branch once accumulated a 585-line `src/kaggle_persist.py`,
+a 750-line duplicate of `06_train.ipynb` and a `KAGGLE.md`, all of it invisible
+to steps 7–9 and drifting behind them in silence. It now lives on `main` as
+`src/session.py` behind `session.for_host()`, a section of this file, and
+guarded branches inside the single `06_train.ipynb`.
 
 After every step on main:
 
     git checkout kaggle && git merge main && git push && git checkout main
 
-so the branch never falls behind. The merge should always be a fast-forward or
-a clean merge touching nothing.
+so the branch never falls behind. The merge should be clean; the only files it
+can legitimately conflict on are host-keyed reports, and those are keyed
+precisely so that it does not.
 
-A conflict outside `configs/` means pipeline logic has leaked onto the branch.
-Move it back to main: platform differences belong in `scripts/bootstrap_session.py`
-and `src/paths.py`, where BOTH hosts get them. If a difference cannot be
-expressed as configuration, that is a signal to change the code on main, not to
+A conflict outside `configs/`, or an unexpected path in the diff above, means
+pipeline logic has leaked onto the branch. Move it back to main: platform
+differences belong in `scripts/bootstrap_session.py`, `src/paths.py` and
+`src/session.py`, where BOTH hosts get them. If a difference cannot be expressed
+as configuration, that is a signal to add a dispatched method on `main`, not to
 fork a file onto the branch.
 
 ## Response style
