@@ -1519,6 +1519,199 @@ class Trainer:
         return out
 
 
+# --------------------------------------------------------------------------
+# validation-only evaluation of an ARBITRARY checkpoint -- no Trainer state
+# touched, nothing retrained. Used by notebook 06's prediction gallery to
+# inspect best.pt after the fact, independent of whatever trainer.model
+# currently holds (the last epoch's weights, not necessarily the best one).
+# --------------------------------------------------------------------------
+def load_checkpoint_model(path: Path, model_settings: dict, fold: str,
+                          expected_hash: Optional[str] = None,
+                          device=None) -> tuple:
+    """Build a fresh model and load ``path`` into it. Verifies fold and hash.
+
+    Returns ``(model, state)``. The same two guards ``Trainer.maybe_resume``
+    applies: a checkpoint from another fold would be evaluated under the wrong
+    ``pos_weight``'s worth of training and the wrong held-out dataset, and one
+    under a different config hash is not the run this notebook just described.
+    Both are refused rather than silently loaded.
+    """
+    from src import model as model_mod
+
+    state = load_checkpoint(path)
+    if state.get("fold") != str(fold):
+        raise TrainError(
+            f"{path} was written by fold {state.get('fold')!r}, not "
+            f"{fold!r}. Evaluating it here would describe the wrong fold's "
+            "model as this one's.")
+    if expected_hash is not None and state.get("config_hash") != expected_hash:
+        raise TrainError(
+            f"{path} was written under config hash {state.get('config_hash')}, "
+            f"not {expected_hash!r}. It is not the checkpoint this run just "
+            "produced; load it deliberately with expected_hash=None if that "
+            "is intended.")
+
+    model = model_mod.build_model(settings=model_settings)
+    model.load_state_dict(state["model"])
+    if device is not None:
+        model = model.to(device)
+    model.eval()
+    return model, state
+
+
+def best_epoch_thresholds(state: dict) -> dict:
+    """The per-dataset tuned thresholds recorded AT THE BEST EPOCH.
+
+    Not the fixed 0.5, and not a threshold re-swept now: the operating point
+    step 6 already chose when it selected this checkpoint as best, read back
+    from the history entry for that exact epoch. A checkpoint saved before the
+    threshold sweep existed has no such entry, and that is reported rather
+    than papered over with a default.
+    """
+    best = state.get("best") or {}
+    epoch = best.get("epoch")
+    if epoch is None:
+        raise TrainError(
+            "this checkpoint carries no best['epoch']; it predates the "
+            "threshold sweep. Re-train or re-select best.pt under the current "
+            "code before using this cell.")
+    record = next((r for r in (state.get("history") or [])
+                   if r.get("epoch") == epoch), None)
+    if record is None or "best_thresholds" not in record:
+        raise TrainError(
+            f"no history record with best_thresholds for epoch {epoch}; this "
+            "checkpoint predates the per-dataset threshold sweep. Re-train "
+            "under the current code.")
+    return dict(record["best_thresholds"])
+
+
+@torch.no_grad()
+def evaluate_checkpoint(model: "nn.Module", val_ds, thresholds: dict,
+                        device, amp_enabled: bool = False,
+                        batch_size: int = 32, num_workers: int = 0) -> list:
+    """Per-tile Dice AND measured boundary width, one pass over ``val_ds``.
+
+    Validation only: no optimizer, no loss term, no backward pass. This exists
+    because :class:`MetricAccumulator` only ever keeps running pixel counts --
+    it can report a dataset's pooled Dice but not whether that number is one
+    uniform mediocre score or a mix of tiles that work and tiles that fail
+    outright, and it never touches boundary WIDTH at all. Both come from the
+    same per-tile pass over the model's output, so they are computed together
+    here instead of twice.
+
+    ``thresholds`` must carry an entry for every dataset present in
+    ``val_ds`` -- the operating point already chosen for it, not a threshold
+    guessed fresh here. Width is measured exactly as
+    ``src.boundary_gt.measured_line_width`` measures the ground truth itself:
+    skeletonized area divided by skeleton length, so the two numbers this cell
+    prints are directly comparable to the numbers notebook 02 reported.
+    """
+    from torch.utils.data import DataLoader
+
+    from src import boundary_gt
+
+    present = sorted({r["dataset"] for r in val_ds.rows})
+    missing = sorted(set(present) - set(thresholds))
+    if missing:
+        raise TrainError(
+            f"evaluate_checkpoint has no threshold for {missing}; pass one "
+            "for every dataset in the validation split (see "
+            "best_epoch_thresholds).")
+
+    model.eval()
+    loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False,
+                        num_workers=num_workers)
+    records = []
+    row_index = 0
+    for batch in loader:
+        images = batch["image"].to(device, non_blocking=True)
+        masks = batch["mask"].numpy()
+        with autocast(device.type, amp_enabled):
+            logits = model(images)
+        probs = torch.sigmoid(logits.float()).cpu().numpy()
+
+        for i in range(probs.shape[0]):
+            row = val_ds.rows[row_index]
+            dataset = row["dataset"]
+            threshold = float(thresholds[dataset])
+            prob = probs[i, 0]
+            true = masks[i, 0] > 0.5
+            pred = prob >= threshold
+
+            tp = int((pred & true).sum())
+            fp = int((pred & ~true).sum())
+            fn = int((~pred & true).sum())
+            denom = 2 * tp + fp + fn
+            dice = (2.0 * tp / denom) if denom > 0 else 0.0
+
+            records.append({
+                "row_index": row_index,
+                "dataset": dataset,
+                "tile_id": row["tile_id"],
+                "threshold": threshold,
+                "dice": float(dice),
+                "true_fraction": float(true.mean()),
+                "pred_fraction": float(pred.mean()),
+                "pred_width_px": boundary_gt.measured_line_width(pred),
+                "true_width_px": boundary_gt.measured_line_width(true),
+            })
+            row_index += 1
+
+    if row_index != len(val_ds):
+        raise TrainError(
+            f"evaluated {row_index} tiles but val_ds has {len(val_ds)}; the "
+            "loader dropped or duplicated rows.")
+    return records
+
+
+def rank_tiles_by_dice(records: list, dataset: str) -> dict:
+    """Best, median, and two worst tiles of one dataset, by per-tile Dice.
+
+    Ties are broken by ``row_index`` so the choice is deterministic rather
+    than depending on Python's sort stability lining up with load order by
+    accident. With fewer than 4 tiles, the same tile fills more than one slot
+    -- reported, not hidden, since a dataset that small is itself worth
+    knowing about.
+    """
+    subset = sorted((r for r in records if r["dataset"] == dataset),
+                    key=lambda r: (r["dice"], -r["row_index"]))
+    if not subset:
+        raise TrainError(f"no validation tiles for dataset {dataset!r}")
+    n = len(subset)
+    return {
+        "best": subset[-1],
+        "median": subset[n // 2],
+        "worst": subset[0],
+        "worst2": subset[1] if n > 1 else subset[0],
+        "n_tiles": n,
+    }
+
+
+@torch.no_grad()
+def tile_prediction(model: "nn.Module", val_ds, row_index: int, device,
+                    amp_enabled: bool = False) -> dict:
+    """Image, ground truth and probability map for exactly ONE validation tile.
+
+    Deliberately re-runs the forward pass rather than reusing anything cached
+    by :func:`evaluate_checkpoint`: keeping a full probability map for every
+    validation tile in memory is wasteful when only a handful are ever drawn,
+    so the cheap per-tile summary and the expensive per-tile array are kept
+    separate on purpose.
+    """
+    sample = val_ds[row_index]
+    image = torch.from_numpy(sample["image"])[None].to(device)
+    with autocast(device.type, amp_enabled):
+        logits = model(image)
+    prob = torch.sigmoid(logits.float())[0, 0].cpu().numpy()
+    return {
+        "dataset": sample["dataset"],
+        "tile_id": sample["tile_id"],
+        "image": sample["image"][0],
+        "truth": sample["mask"][0],
+        "prob": prob,
+    }
+
+
 def _diff_config(saved: dict, current: dict) -> list:
     """Human-readable list of what changed between two hashed configs."""
     lines = []
