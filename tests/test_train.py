@@ -26,11 +26,28 @@ def _settings(**overrides):
     return settings
 
 
+def _at(values, threshold):
+    """``threshold`` as the data sees it -- the reference rule, in one place.
+
+    The grid is decimal and the probabilities are float32, and none of 0.05,
+    0.95 ... survives that round trip exactly. Comparing a float32 array
+    against a float64 constant therefore counts a pixel sitting exactly on its
+    threshold or not depending on which way that particular constant rounded:
+    ``float32(0.05)`` lands above the float64 0.05, ``float32(0.95)`` lands
+    below the float64 0.95. ``src.train.snap_thresholds`` fixes that rule at
+    the data's precision, and this is the same rule written the obvious way.
+    """
+    values = np.asarray(values)
+    if np.issubdtype(values.dtype, np.floating):
+        return values.dtype.type(threshold)
+    return threshold
+
+
 def _brute_force(prob, true, threshold, tolerance):
     """The obvious implementation: threshold, then measure, one point at a time."""
     import cv2
 
-    pred = prob >= threshold
+    pred = prob >= _at(prob, threshold)
     tp = int((pred & true).sum())
     fp = int((pred & ~true).sum())
     fn = int((~pred & true).sum())
@@ -81,17 +98,71 @@ def test_ge_counts_matches_the_obvious_comparison():
     values = rng.random(5000).astype(np.float32)
     got = train_mod.ge_counts(values, THRESHOLDS)
     for k, threshold in enumerate(THRESHOLDS):
-        assert got[k] == int((values >= threshold).sum()), f"threshold {threshold}"
+        assert got[k] == int((values >= _at(values, threshold)).sum()), (
+            f"threshold {threshold}")
 
 
 def test_ge_counts_handles_exact_hits_and_empty_input():
+    """The case that caught the bug: a value sitting exactly on 0.95.
+
+    Random data never lands on a threshold, so it cannot exercise this at all.
+    ``float32(0.95)`` is 0.9499999880790710, just BELOW the float64 0.95, so
+    comparing across dtypes dropped it -- while ``float32(0.05)`` is just ABOVE
+    the float64 0.05 and was kept. Same situation, opposite answers, decided by
+    nothing a reader could predict.
+    """
     values = np.array([0.05, 0.5, 0.95, 0.5], dtype=np.float32)
     got = train_mod.ge_counts(values, THRESHOLDS)
     assert got[0] == 4, "a value exactly on the threshold must count as >= it"
     assert got[int(np.nonzero(np.isclose(THRESHOLDS, 0.5))[0][0])] == 3
-    assert got[-1] == 1
+    assert got[-1] == 1, (
+        "float32(0.95) sits exactly on the 0.95 threshold at the data's "
+        "precision and must clear it, exactly as float32(0.05) clears 0.05")
     assert train_mod.ge_counts(np.array([], dtype=np.float32),
                                THRESHOLDS).tolist() == [0] * len(THRESHOLDS)
+
+
+def test_ge_counts_matches_brute_force_at_every_exact_threshold_hit():
+    """Every grid point, in both dtypes, with values sitting exactly on it.
+
+    This is the check the random-data test cannot make: random floats never
+    land on a threshold, so an exact-hit off-by-one is invisible to it. Here
+    each grid value is fed in exactly, twice over, with neighbours just below
+    and just above, and every count is compared against the obvious
+    implementation at the same precision.
+    """
+    for dtype in (np.float32, np.float64):
+        for threshold in THRESHOLDS:
+            values = np.array(
+                [threshold, threshold, threshold - 0.01, threshold + 0.01,
+                 0.0, 1.0], dtype=dtype)
+            got = train_mod.ge_counts(values, THRESHOLDS)
+            for k, other in enumerate(THRESHOLDS):
+                expected = int((values >= _at(values, other)).sum())
+                assert got[k] == expected, (
+                    f"{np.dtype(dtype).name} values sitting on {threshold}: "
+                    f"count at threshold {other} was {got[k]}, brute force "
+                    f"says {expected}")
+            index = int(np.nonzero(np.isclose(THRESHOLDS, threshold))[0][0])
+            assert got[index] >= 2, (
+                f"the two values placed exactly on {threshold} must clear it")
+
+
+def test_snap_thresholds_is_uniform_across_the_grid_and_safe():
+    """The rule holds at every grid point, and never breaks the grid itself."""
+    snapped = train_mod.snap_thresholds(THRESHOLDS, np.float32)
+    assert np.all(np.diff(snapped) > 0), "searchsorted needs an increasing grid"
+    for threshold, point in zip(THRESHOLDS, snapped):
+        assert np.float32(threshold) >= point, (
+            f"a float32 value equal to {threshold} must clear its own "
+            "threshold")
+    assert train_mod.snap_thresholds(THRESHOLDS, np.float64).tolist() == \
+        THRESHOLDS.tolist(), "float64 data needs no snapping"
+
+    # A grid so fine that snapping would collapse two points keeps float64
+    # rather than handing searchsorted a non-increasing array.
+    fine = np.array([0.5, 0.5 + 1e-9, 0.6])
+    assert train_mod.snap_thresholds(fine, np.float32).tolist() == fine.tolist()
 
 
 # --------------------------------------------------------------------------
