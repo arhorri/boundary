@@ -11,6 +11,9 @@ Nothing here needs a GPU or the datasets, so nothing here can skip.
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import numpy as np
 import pytest
 import torch
@@ -764,3 +767,201 @@ def test_decompose_error_groups_by_dataset_and_keeps_row_order():
     # A predicted its one tile exactly; B got one exact and one empty.
     assert out["A"]["pixel_dice"] == pytest.approx(1.0)
     assert 0.0 < out["B"]["pixel_dice"] < 1.0
+
+
+# --------------------------------------------------------------------------
+# per-fold training-set exclusion
+# --------------------------------------------------------------------------
+DEV_ENTRY = {"train_datasets": ["MetalDam", "Steel1", "uhcs1"],
+             "val_datasets": ["Steel1", "uhcs2"], "held_out": "uhcs2"}
+
+
+def test_no_exclusion_by_default():
+    assert train_mod.DEFAULTS["exclude_datasets"] == {}
+    assert train_mod.resolve_exclusions("dev", _settings(), DEV_ENTRY) == []
+
+
+def test_exclusion_is_scoped_to_its_own_fold():
+    """A mapping, not a flat list: excluding for one fold must not touch others."""
+    settings = _settings(exclude_datasets={"dev": ["uhcs1"]})
+    assert train_mod.resolve_exclusions("dev", settings, DEV_ENTRY) == ["uhcs1"]
+    other = {"train_datasets": ["Steel1", "uhcs1", "uhcs2"]}
+    assert train_mod.resolve_exclusions("fold_MetalDam", settings, other) == []
+
+
+def test_excluding_a_dataset_the_fold_never_trained_on_raises():
+    """Silently doing nothing would leave the header claiming a false exclusion."""
+    settings = _settings(exclude_datasets={"dev": ["Steel2"]})
+    with pytest.raises(train_mod.TrainError) as exc:
+        train_mod.resolve_exclusions("dev", settings, DEV_ENTRY)
+    assert "Steel2" in str(exc.value)
+
+
+def test_excluding_every_training_dataset_raises():
+    settings = _settings(exclude_datasets={"dev": ["MetalDam", "Steel1", "uhcs1"]})
+    with pytest.raises(train_mod.TrainError):
+        train_mod.resolve_exclusions("dev", settings, DEV_ENTRY)
+
+
+def _config_with_exclusions(tmp_path, value):
+    """A copy of the real default.yaml with train.exclude_datasets replaced.
+
+    Written into tmp_path so that load_config's platform overlay lookup --
+    which sits beside the config file -- cannot pick up the repo's own
+    overlays and turn this into a test of something else.
+    """
+    import yaml
+
+    base = yaml.safe_load(
+        (Path(train_mod.REPO_ROOT) / "configs" / "default.yaml").read_text())
+    base["train"] = dict(base["train"], exclude_datasets=value)
+    path = tmp_path / "default.yaml"
+    path.write_text(yaml.safe_dump(base))
+    return path
+
+
+def test_exclusion_is_normalised_so_the_hash_ignores_typing_order(tmp_path):
+    path = _config_with_exclusions(
+        tmp_path, {"dev": ["uhcs1", "MetalDam", "uhcs1"]})
+    settings = train_mod.load_config(path)
+    assert settings["exclude_datasets"]["dev"] == ["MetalDam", "uhcs1"], (
+        "the list must be sorted and de-duplicated, or the config hash would "
+        "depend on the order someone typed the names in")
+
+
+def test_a_bare_list_or_string_exclusion_is_rejected(tmp_path):
+    for index, bad in enumerate((["uhcs1"], {"dev": "uhcs1"})):
+        directory = tmp_path / str(index)
+        directory.mkdir()
+        with pytest.raises(train_mod.TrainError):
+            train_mod.load_config(_config_with_exclusions(directory, bad))
+
+
+def test_the_exclusion_is_in_the_config_hash():
+    """An excluded-set run must never resume from a full-set checkpoint."""
+    model, loss, dataset = ({"encoder": "resnet34"}, {"w_cldice": 0.5},
+                            {"patch_size": 256})
+    full = _settings(exclude_datasets=[])
+    reduced = _settings(exclude_datasets=["uhcs1"])
+    assert (train_mod.config_hash(model, loss, full, dataset)[0]
+            != train_mod.config_hash(model, loss, reduced, dataset)[0])
+    # ...and the hash must not care which order the names were written in.
+    assert (train_mod.config_hash(model, loss, _settings(
+                exclude_datasets=["MetalDam", "uhcs1"]), dataset)[0]
+            == train_mod.config_hash(model, loss, _settings(
+                exclude_datasets=["uhcs1", "MetalDam"]), dataset)[0])
+
+
+def test_exclude_datasets_is_hashed_as_the_resolved_list_for_one_fold():
+    """Trainer hashes the resolved list, so another fold's exclusion is inert.
+
+    Pinned here because the alternative -- hashing the whole mapping -- would
+    invalidate every fold's checkpoints whenever any fold's exclusion changed.
+    """
+    assert "exclude_datasets" in train_mod.HASHED_TRAIN_KEYS
+    model, loss, dataset = ({"encoder": "resnet34"}, {"w_cldice": 0.5},
+                            {"patch_size": 256})
+    # Two runs of the SAME fold resolving to the same exclusion hash alike,
+    # whatever some other fold's entry happens to say.
+    a = train_mod.config_hash(model, loss, _settings(exclude_datasets=["uhcs1"]),
+                              dataset)[0]
+    b = train_mod.config_hash(model, loss, _settings(exclude_datasets=["uhcs1"]),
+                              dataset)[0]
+    assert a == b
+
+
+# --------------------------------------------------------------------------
+# reports are keyed by RUN, and the two arms can be compared
+# --------------------------------------------------------------------------
+def test_report_paths_are_keyed_by_run_not_just_fold():
+    plain_md, plain_json = train_mod.report_paths("dev", "colab", Path("/tmp/r"))
+    excl_md, excl_json = train_mod.report_paths("dev-no-uhcs1", "colab",
+                                                Path("/tmp/r"))
+    assert plain_md.name == "train_dev_colab.md", (
+        "a run with no exclusions must keep the filename it already has")
+    assert excl_md.name == "train_dev-no-uhcs1_colab.md"
+    assert plain_json != excl_json, "the two arms must not overwrite each other"
+
+
+def _write_report_stub(directory, run_name, host, dataset, dice, tiles=265,
+                       excluded=(), epoch=3, config_hash="h", hashed=None):
+    payload = {
+        "fold": "dev", "run_name": run_name, "platform": host,
+        "excluded_datasets": list(excluded), "config_hash": config_hash,
+        "hashed_config": hashed,
+        "best": {"epoch": epoch},
+        "history": [{
+            "epoch": epoch,
+            "metrics": {"per_dataset": {dataset: {
+                "best": {"threshold": 0.4, "iou": dice / 2, "dice": dice,
+                         "precision": 0.1, "recall": 0.5, "boundary_f": 0.2,
+                         "pred_fraction": 0.3, "true_fraction": 0.05,
+                         "tiles": tiles},
+                "fixed": {"threshold": 0.5, "iou": dice / 3, "dice": dice / 1.5,
+                          "precision": 0.08, "recall": 0.6, "boundary_f": 0.15,
+                          "pred_fraction": 0.4, "true_fraction": 0.05,
+                          "tiles": tiles}}}},
+        }],
+    }
+    (directory / f"train_{run_name}_{host}.json").write_text(json.dumps(payload))
+
+
+def test_load_run_reports_finds_both_arms_and_ignores_other_folds(tmp_path):
+    _write_report_stub(tmp_path, "dev", "colab", "uhcs2", 0.149)
+    _write_report_stub(tmp_path, "dev-no-uhcs1", "colab", "uhcs2", 0.210,
+                       excluded=["uhcs1"])
+    _write_report_stub(tmp_path, "fold_MetalDam", "colab", "MetalDam", 0.4)
+    # A fold whose name merely starts the same way must not be swept in.
+    _write_report_stub(tmp_path, "development", "colab", "uhcs2", 0.9)
+
+    found = train_mod.load_run_reports("dev", reports_dir=tmp_path)
+    assert set(found) == {("dev", "colab"), ("dev-no-uhcs1", "colab")}, (
+        f"got {sorted(found)}")
+
+
+def test_compare_runs_puts_the_arms_side_by_side(tmp_path):
+    _write_report_stub(tmp_path, "dev", "colab", "uhcs2", 0.149)
+    _write_report_stub(tmp_path, "dev-no-uhcs1", "colab", "uhcs2", 0.210,
+                       excluded=["uhcs1"])
+    reports = train_mod.load_run_reports("dev", reports_dir=tmp_path)
+    comparison = train_mod.compare_runs(reports, "uhcs2", row="best")
+
+    assert set(comparison["runs"]) == {"dev (colab)", "dev-no-uhcs1 (colab)"}
+    assert comparison["runs"]["dev (colab)"]["excluded"] == "-"
+    assert comparison["runs"]["dev-no-uhcs1 (colab)"]["excluded"] == "uhcs1"
+    assert comparison["runs"]["dev-no-uhcs1 (colab)"]["dice"] == pytest.approx(0.210)
+    assert comparison["comparable"], comparison["note"]
+
+
+def test_compare_runs_flags_arms_scored_on_different_tiles(tmp_path):
+    """If validation differed between arms the comparison means nothing."""
+    _write_report_stub(tmp_path, "dev", "colab", "uhcs2", 0.149, tiles=265)
+    _write_report_stub(tmp_path, "dev-no-uhcs1", "colab", "uhcs2", 0.210,
+                       tiles=200, excluded=["uhcs1"])
+    reports = train_mod.load_run_reports("dev", reports_dir=tmp_path)
+    comparison = train_mod.compare_runs(reports, "uhcs2", row="best")
+    assert not comparison["comparable"]
+    assert "NOT COMPARABLE" in comparison["note"]
+
+
+def test_diff_runs_reports_what_actually_differed(tmp_path):
+    _write_report_stub(tmp_path, "dev", "colab", "uhcs2", 0.149, config_hash="a",
+                       hashed={"train": {"exclude_datasets": [], "lr": 0.0003}})
+    _write_report_stub(tmp_path, "dev-no-uhcs1", "colab", "uhcs2", 0.21,
+                       excluded=["uhcs1"], config_hash="b",
+                       hashed={"train": {"exclude_datasets": ["uhcs1"],
+                                         "lr": 0.0003}})
+    reports = train_mod.load_run_reports("dev", reports_dir=tmp_path)
+    diff = train_mod.diff_runs(reports, ("dev", "colab"), ("dev-no-uhcs1", "colab"))
+    assert len(diff) == 1, f"exactly one key should differ, got {diff}"
+    assert "exclude_datasets" in diff[0]
+
+
+def test_diff_runs_says_so_when_a_report_predates_hashed_config(tmp_path):
+    _write_report_stub(tmp_path, "dev", "colab", "uhcs2", 0.149, hashed=None)
+    _write_report_stub(tmp_path, "dev-no-uhcs1", "colab", "uhcs2", 0.21,
+                       excluded=["uhcs1"],
+                       hashed={"train": {"exclude_datasets": ["uhcs1"]}})
+    reports = train_mod.load_run_reports("dev", reports_dir=tmp_path)
+    diff = train_mod.diff_runs(reports, ("dev", "colab"), ("dev-no-uhcs1", "colab"))
+    assert any("hashed_config absent" in line for line in diff)

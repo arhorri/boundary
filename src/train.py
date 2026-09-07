@@ -90,6 +90,13 @@ DEFAULTS = {
     # Never a literal and never the other host's value.
     "num_workers": None,
     "sampler": True,               # WeightedRandomSampler from fold_stats
+    # Datasets to drop from a fold's TRAIN split, as {fold: [dataset, ...]}.
+    # Per fold, because an exclusion is a claim about one fold's training
+    # mixture and not a global setting. Validation is NEVER filtered: the whole
+    # point of excluding something is to measure the effect on an unchanged
+    # validation split, and a run that quietly changed both could not be
+    # compared with anything.
+    "exclude_datasets": {},
     # The fixed operating point every epoch is also reported at, and the
     # reference the sweep is compared against. Must fall on the sweep grid.
     "threshold": 0.5,
@@ -124,6 +131,12 @@ HASHED_TRAIN_KEYS = (
     # grid produced a different `best`, and resuming into it would leave two
     # incompatible selection criteria in one curve.
     "threshold_sweep_min", "threshold_sweep_max", "threshold_sweep_step",
+    # In the hash so an excluded-set run can NEVER resume from a full-set
+    # checkpoint, or vice versa: the two saw different data and averaging their
+    # curves together would be meaningless. What is hashed is the exclusion
+    # RESOLVED FOR THIS FOLD (see Trainer.__init__), not the whole mapping --
+    # changing fold_MetalDam's exclusion must not invalidate a dev checkpoint.
+    "exclude_datasets",
 )
 
 
@@ -161,12 +174,64 @@ def load_config(config_path: Optional[Path] = None) -> dict:
         raise TrainError(
             f"train.scheduler is {settings['scheduler']!r}; only 'cosine' "
             "(with linear warmup) is implemented.")
+    excludes = settings["exclude_datasets"] or {}
+    if not isinstance(excludes, dict):
+        raise TrainError(
+            f"train.exclude_datasets must be a mapping of fold -> [dataset, "
+            f"...], got {type(excludes).__name__}. A bare list would apply to "
+            "every fold, which is never what an exclusion means.")
+    normalised = {}
+    for fold_name, names in excludes.items():
+        if isinstance(names, str):
+            raise TrainError(
+                f"train.exclude_datasets[{fold_name!r}] is the string "
+                f"{names!r}; it must be a LIST of dataset names, or a "
+                "one-character dataset would be excluded letter by letter.")
+        # Sorted and de-duplicated so the config hash does not depend on the
+        # order someone happened to type them in.
+        normalised[str(fold_name)] = sorted({str(n) for n in (names or [])})
+    settings["exclude_datasets"] = normalised
+
     if int(settings["warmup_epochs"]) >= int(settings["epochs"]):
         raise TrainError(
             f"train.warmup_epochs ({settings['warmup_epochs']}) must be less "
             f"than train.epochs ({settings['epochs']}); otherwise the cosine "
             "phase never runs.")
     return settings
+
+
+def resolve_exclusions(fold: str, settings: dict, fold_entry: dict) -> list:
+    """The datasets to drop from THIS fold's train split, validated.
+
+    A name that is not in the fold's training mixture is an error, not a no-op.
+    The failure this prevents is a typo or a stale fold name silently training
+    on everything while the run header, the report and the config hash all
+    claim an exclusion was applied -- which would be worse than not having the
+    feature, because the resulting comparison would look valid.
+    """
+    requested = list((settings.get("exclude_datasets") or {}).get(fold, []))
+    if not requested:
+        return []
+
+    available = list(fold_entry.get("train_datasets") or [])
+    if not available:
+        raise TrainError(
+            f"configs/fold_stats.yaml has no train_datasets for fold {fold!r}, "
+            "so an exclusion cannot be checked against anything. Re-run step 3.")
+    unknown = sorted(set(requested) - set(available))
+    if unknown:
+        raise TrainError(
+            f"train.exclude_datasets[{fold!r}] names {unknown}, which "
+            f"{'is' if len(unknown) == 1 else 'are'} not in that fold's "
+            f"training mixture {sorted(available)}. Excluding something that "
+            "was never there would leave the run header claiming an exclusion "
+            "that changed nothing.")
+    keep = [d for d in available if d not in requested]
+    if not keep:
+        raise TrainError(
+            f"train.exclude_datasets[{fold!r}] excludes every training "
+            f"dataset {sorted(available)}; there would be nothing to train on.")
+    return sorted(set(requested))
 
 
 # --------------------------------------------------------------------------
@@ -823,10 +888,27 @@ class Trainer:
 
         self.platform = str(self.resolved["platform"])
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.run_name = run_name or self.fold
 
+        # Datasets dropped from THIS fold's train split. Resolved once, here,
+        # so that the run name, the config hash, the header, the report and the
+        # loaders all describe the same experiment.
+        self.excluded = resolve_exclusions(self.fold, self.settings,
+                                           self.fold_entry)
+        # A distinct run name, so the two arms of an exclusion experiment keep
+        # separate checkpoints, logs and reports instead of overwriting each
+        # other. Without this the comparison the exclusion exists to enable
+        # could not be made without deleting one arm first.
+        self.run_name = run_name or (
+            f"{self.fold}-no-{'-'.join(self.excluded)}" if self.excluded
+            else self.fold)
+
+        # The hash carries the exclusion RESOLVED FOR THIS FOLD rather than the
+        # whole mapping: adding an exclusion for another fold must not
+        # invalidate this fold's checkpoints.
+        hashed_train = dict(self.settings)
+        hashed_train["exclude_datasets"] = list(self.excluded)
         self.hash, self.hashed_config = config_hash(
-            self.model_settings, self.loss_settings, self.settings,
+            self.model_settings, self.loss_settings, hashed_train,
             self.dataset_settings)
 
         checkpoint_dir = (Path(self.resolved["persistent_dir"])
@@ -889,12 +971,43 @@ class Trainer:
         roots = {"data_root": Path(self.resolved["data_root"]),
                  "gt_root": Path(self.resolved["gt_boundaries_root"])}
 
+        # The exclusion is applied HERE, to the train split only, by naming the
+        # datasets to keep. TileDataset.from_manifest filters rows through
+        # load_manifest, so an excluded dataset's tiles are never indexed at
+        # all -- they are not loaded and then skipped.
+        keep = None
+        if self.excluded:
+            keep = [d for d in self.fold_entry["train_datasets"]
+                    if d not in self.excluded]
         self.train_ds = ds.TileDataset.from_manifest(
             manifest, "train", settings=self.dataset_settings, crops=crops,
-            roots=roots)
+            roots=roots, datasets=keep)
+        # Validation is NOT filtered, deliberately and load-bearingly: the
+        # excluded and full-set arms have to be scored on exactly the same
+        # tiles or the comparison measures two changes at once.
         self.val_ds = ds.TileDataset.from_manifest(
             manifest, "val", settings=self.dataset_settings, crops=crops,
             roots=roots)
+
+        if self.excluded:
+            # Verified against the rows that were actually indexed, not assumed
+            # from the argument passed in.
+            present = sorted({r["dataset"] for r in self.train_ds.rows})
+            leaked = sorted(set(present) & set(self.excluded))
+            if leaked:
+                raise TrainError(
+                    f"{leaked} was excluded from fold {self.fold!r} but its "
+                    "tiles are still in the train split; the manifest filter "
+                    "did not take effect.")
+            in_val = sorted({r["dataset"] for r in self.val_ds.rows}
+                            & set(self.excluded))
+            if in_val:
+                raise TrainError(
+                    f"{in_val} is excluded from training but also appears in "
+                    f"the VALIDATION split of fold {self.fold!r}. Excluding a "
+                    "dataset that is validated on would train on nothing and "
+                    "score on it anyway; that is not an experiment, it is a "
+                    "mistake.")
         if self.val_ds.augment:
             raise TrainError(
                 "the validation dataset came back with augmentation enabled; "
@@ -995,10 +1108,45 @@ class Trainer:
                   "training continues without it")
             self.writer = None
 
+    def pos_weight_drift(self) -> dict:
+        """What the fold's recorded pos_weight implies against the ACTUAL split.
+
+        ``pos_weight`` is ``n_negative / n_positive``, which for equal-sized
+        tiles is exactly ``(1 - mean boundary fraction) / mean boundary
+        fraction`` -- and that identity reproduces the value step 3 recorded, so
+        the same arithmetic over the rows actually being trained on says what
+        the reduced split would have wanted.
+
+        The recorded value is still the one used, deliberately. Holding the loss
+        identical across both arms is what makes the comparison attributable: if
+        the exclusion changed the training data AND the class weighting, a
+        difference in the result could not be assigned to either. So the drift
+        is measured and printed rather than silently corrected.
+        """
+        recorded = float(self.fold_entry["pos_weight"])
+        fractions = [float(r["boundary_fraction"]) for r in self.train_ds.rows]
+        mean_fraction = sum(fractions) / len(fractions) if fractions else 0.0
+        implied = ((1.0 - mean_fraction) / mean_fraction
+                   if mean_fraction > 0 else float("inf"))
+        return {
+            "recorded": recorded,
+            "recorded_source": f"configs/fold_stats.yaml folds.{self.fold}",
+            "implied_by_this_split": implied,
+            "mean_boundary_fraction": mean_fraction,
+            "ratio": (implied / recorded) if recorded else float("inf"),
+            "in_use": recorded,
+            "note": ("the recorded value is used in BOTH arms on purpose, so "
+                     "that the training data is the only thing that differs"),
+        }
+
     def summary(self) -> dict:
         counts = self._model_mod.summarize(self.model) if self.model else {}
         return {
             "fold": self.fold,
+            "run_name": self.run_name,
+            "excluded_datasets": list(self.excluded),
+            "pos_weight_drift": (self.pos_weight_drift()
+                                 if self.train_ds else None),
             "held_out": self.held_out,
             "platform": self.platform,
             "device": str(self.device),
@@ -2036,9 +2184,14 @@ def _diff_config(saved: dict, current: dict) -> list:
 METRIC_ORDER = ("iou", "dice", "precision", "recall", "boundary_f")
 
 
-def report_paths(fold: str, platform: str,
+def report_paths(run_name: str, platform: str,
                  reports_dir: Optional[Path] = None) -> tuple:
-    """``reports/train_<fold>_<platform>.{md,json}``, keyed BY HOST.
+    """``reports/train_<run>_<platform>.{md,json}``, keyed by RUN and by HOST.
+
+    ``run_name`` is the fold for an ordinary run and ``<fold>-no-<excluded>``
+    for one training on a reduced mixture, so the two arms of an exclusion
+    experiment produce two reports instead of overwriting each other. A run
+    with no exclusions is named for its fold exactly as before.
 
     The platform is part of the filename because the same fold trained on two
     hosts produces two measurements, not one measurement and one mistake. They
@@ -2057,8 +2210,122 @@ def report_paths(fold: str, platform: str,
         raise TrainError(
             "no platform to key the report by; resolve_paths() supplies it and "
             "a report written without one would collide with the other host's.")
-    stem = f"train_{fold}_{platform}"
+    stem = f"train_{run_name}_{platform}"
     return reports_dir / f"{stem}.md", reports_dir / f"{stem}.json"
+
+
+def load_run_reports(fold: str, reports_dir: Optional[Path] = None,
+                     platform: Optional[str] = None) -> dict:
+    """Every committed report for ``fold``, keyed by ``(run_name, platform)``.
+
+    Finds the arms of an exclusion experiment: ``train_dev_colab.json`` and
+    ``train_dev-no-uhcs1_colab.json`` both belong to fold ``dev`` and are
+    returned together. Matching is on the parsed stem rather than a glob, so a
+    fold whose name is a prefix of another cannot pull in the wrong file.
+    """
+    reports_dir = Path(reports_dir) if reports_dir else Path(REPO_ROOT) / "reports"
+    if not reports_dir.is_dir():
+        raise TrainError(f"no reports directory at {reports_dir}")
+
+    out = {}
+    for path in sorted(reports_dir.glob("train_*.json")):
+        stem = path.stem[len("train_"):]
+        if "_" not in stem:
+            continue
+        run_name, _, host = stem.rpartition("_")
+        if not (run_name == fold or run_name.startswith(f"{fold}-")):
+            continue
+        if platform is not None and host != platform:
+            continue
+        try:
+            payload = json.loads(path.read_text())
+        except Exception as exc:                          # noqa: BLE001
+            raise TrainError(
+                f"{path} is not readable JSON ({type(exc).__name__}); a "
+                "half-written report is worse than a missing one because it "
+                "will be compared against as if it were real.") from exc
+        payload["path"] = str(path)
+        out[(run_name, host)] = payload
+    return out
+
+
+def compare_runs(reports: dict, dataset: str, row: str = "best") -> dict:
+    """One dataset's metrics across several runs, side by side.
+
+    ``reports`` comes from :func:`load_run_reports`. ``row`` selects the fixed
+    or the tuned operating point; the tuned one is the default because it is
+    what ``best.pt`` was selected on.
+
+    The point of the exclusion experiment is that ``dataset`` is scored on the
+    SAME validation tiles in every arm, so these numbers are directly
+    comparable. That is asserted rather than assumed: a run whose validation
+    tile count for this dataset differs from the others is reported as such,
+    because it would mean the arms were not scored on the same thing.
+    """
+    rows, tile_counts = {}, {}
+    for (run_name, host), payload in sorted(reports.items()):
+        history = payload.get("history") or []
+        if not history:
+            continue
+        best_epoch = (payload.get("best") or {}).get("epoch")
+        record = next((h for h in history if h.get("epoch") == best_epoch),
+                      history[-1])
+        entry = (record.get("metrics", {}).get("per_dataset", {})
+                 .get(dataset))
+        if entry is None:
+            continue
+        metrics = entry[row]
+        label = f"{run_name} ({host})"
+        rows[label] = {
+            "excluded": ", ".join(payload.get("excluded_datasets") or []) or "-",
+            "epoch": record["epoch"],
+            "threshold": metrics["threshold"],
+            **{k: metrics[k] for k in METRIC_ORDER},
+            "pred_frac": metrics["pred_fraction"],
+            "true_frac": metrics["true_fraction"],
+            "tiles": metrics["tiles"],
+            # Reports written before the hash moved to the top level still
+            # carry it inside summary; read either rather than showing None
+            # for a run that does have one.
+            "config_hash": (payload.get("config_hash")
+                            or (payload.get("summary") or {}).get("config_hash")),
+        }
+        tile_counts[label] = metrics["tiles"]
+
+    comparable = len(set(tile_counts.values())) <= 1
+    return {
+        "dataset": dataset,
+        "row": row,
+        "runs": rows,
+        "comparable": comparable,
+        "note": ("every arm scored this dataset on the same number of "
+                 f"validation tiles ({next(iter(tile_counts.values()), 0)})"
+                 if comparable else
+                 f"THE ARMS ARE NOT COMPARABLE: tile counts differ {tile_counts}. "
+                 "Validation must be identical across arms for the difference "
+                 "to mean anything."),
+    }
+
+
+def diff_runs(reports: dict, left: tuple, right: tuple) -> list:
+    """What actually differs between two runs' hashed configs.
+
+    Two runs of an exclusion experiment SHOULD differ in exactly one key. If
+    they differ in more, the comparison is confounded and this says by what --
+    which is the difference between a measurement and a story.
+    """
+    payloads = {}
+    for key in (left, right):
+        if key not in reports:
+            raise TrainError(
+                f"no report for {key}; available: {sorted(reports)}")
+        payloads[key] = reports[key].get("hashed_config")
+    if not all(payloads.values()):
+        missing = [k for k, v in payloads.items() if not v]
+        return [f"(hashed_config absent for {missing}; it was written by a "
+                "version that predates cross-run diffing, so what differed "
+                "cannot be reconstructed from the report alone)"]
+    return _diff_config(payloads[left], payloads[right])
 
 
 def write_report(trainer: Trainer, reports_dir: Optional[Path] = None) -> tuple:
@@ -2075,6 +2342,13 @@ def write_report(trainer: Trainer, reports_dir: Optional[Path] = None) -> tuple:
 
     payload = {
         "fold": trainer.fold,
+        "run_name": trainer.run_name,
+        "excluded_datasets": list(trainer.excluded),
+        "config_hash": trainer.hash,
+        # Carried so that comparing two runs can DIFF what actually differed
+        # between them, rather than reporting that the hashes are unequal and
+        # leaving the reader to guess which key moved.
+        "hashed_config": trainer.hashed_config,
         "platform": trainer.platform,
         "held_out": trainer.held_out,
         "generated_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
@@ -2084,21 +2358,37 @@ def write_report(trainer: Trainer, reports_dir: Optional[Path] = None) -> tuple:
         "final_epoch": final["epoch"],
         "history": history,
     }
-    md_path, json_path = report_paths(trainer.fold, trainer.platform, reports_dir)
+    md_path, json_path = report_paths(trainer.run_name, trainer.platform,
+                                      reports_dir)
     json_path.write_text(json.dumps(payload, indent=1, default=str))
 
+    exclusion_note = (
+        f" (TRAINED WITHOUT {', '.join(trainer.excluded)})"
+        if trainer.excluded else "")
     lines = [
-        f"# Training report -- {trainer.fold} on {trainer.platform}",
+        f"# Training report -- {trainer.run_name} on {trainer.platform}"
+        + exclusion_note,
         "",
         f"Held-out dataset: **{trainer.held_out}**. Generated "
         f"{payload['generated_utc']} on {summary['platform']} "
         f"({summary['gpu'] or summary['device']}).",
         "",
-        f"This file is keyed by host: `train_{trainer.fold}_{trainer.platform}.md`. "
+        f"This file is keyed by run and host: "
+        f"`train_{trainer.run_name}_{trainer.platform}.md`. "
         "The same fold trained on another host writes its own file beside this "
         "one rather than overwriting it -- two runs of one fold are two "
         "measurements, and they differ in GPU, worker count and I/O path.",
         "",
+        (f"- **training mixture: {', '.join(trainer.excluded)} EXCLUDED.** "
+         f"Trained on {sorted({r['dataset'] for r in trainer.train_ds.rows})}, "
+         f"validated unchanged on {sorted(summary['val_composition'])}. "
+         f"pos_weight is held at the fold's recorded "
+         f"{summary['pos_weight_drift']['recorded']:.3f} in both arms "
+         f"(this split alone would imply "
+         f"{summary['pos_weight_drift']['implied_by_this_split']:.3f}) so that "
+         "the training data is the only thing that differs."
+         if trainer.excluded else
+         "- training mixture: the fold's full set, nothing excluded"),
         f"- config hash `{trainer.hash}`, seed {summary['seed']['seed']}"
         f" ({summary['seed']['note']})",
         f"- {summary['epochs']} epochs, batch {summary['batch_size']}, "
