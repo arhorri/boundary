@@ -86,6 +86,13 @@ host added then has to be found in every caller instead of in one table. If a
 host needs behaviour no method expresses, add the method to the base class as a
 no-op and override it.
 
+One exception, and it is a refusal rather than a dispatch:
+`scripts/extract_boundaries.py` tests the platform to refuse outright, because
+step 2 writes boundary maps and `GT_BOUNDARIES_ROOT` on Kaggle is a read-only
+input — the host cannot perform the step at all, so there is no behaviour to
+dispatch to. A platform test that says "not here" is legitimate; one that picks
+between two implementations is not, and belongs in `src/session.py`.
+
 `/kaggle/working` does not survive the session. Treat a checkpoint left only
 there as already lost; push reports and configs as you go.
 
