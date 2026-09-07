@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
+import torch
 
 from src import train as train_mod
 
@@ -359,3 +360,224 @@ def test_no_metric_is_called_accuracy():
             assert not any("accuracy" in key for key in entry[row]), (
                 "boundaries are 5-15% of pixels; accuracy reads 85-95% for a "
                 "model that predicts nothing")
+
+
+# --------------------------------------------------------------------------
+# rank_tiles_by_dice -- best / median / two worst, deterministically
+# --------------------------------------------------------------------------
+def _record(row_index, dataset, dice):
+    return {"row_index": row_index, "dataset": dataset, "tile_id": f"t{row_index}",
+            "dice": dice, "threshold": 0.5}
+
+
+def test_rank_tiles_by_dice_picks_best_median_and_two_worst():
+    records = [_record(0, "A", 0.10), _record(1, "A", 0.90),
+               _record(2, "A", 0.50), _record(3, "A", 0.20),
+               _record(4, "A", 0.70), _record(5, "A", 0.30),
+               _record(6, "B", 0.99)]
+    picks = train_mod.rank_tiles_by_dice(records, "A")
+    assert picks["n_tiles"] == 6
+    assert picks["best"]["row_index"] == 1 and picks["best"]["dice"] == 0.90
+    assert picks["worst"]["row_index"] == 0 and picks["worst"]["dice"] == 0.10
+    assert picks["worst2"]["row_index"] == 3 and picks["worst2"]["dice"] == 0.20
+    # sorted ascending [0.10, 0.20, 0.30, 0.50, 0.70, 0.90] -> index 6//2=3 -> 0.50
+    assert picks["median"]["dice"] == 0.50
+    assert all(r["dataset"] == "A" for r in picks.values() if isinstance(r, dict))
+
+
+def test_rank_tiles_by_dice_ties_break_by_row_index_deterministically():
+    records = [_record(5, "A", 0.5), _record(2, "A", 0.5), _record(9, "A", 0.5)]
+    picks = train_mod.rank_tiles_by_dice(records, "A")
+    # sort key is (dice, -row_index): equal dice orders HIGHEST row_index first,
+    # so ascending order is [9, 5, 2] and "worst" (position 0) is row 9.
+    assert picks["worst"]["row_index"] == 9
+    assert picks["best"]["row_index"] == 2
+
+
+def test_rank_tiles_by_dice_degenerate_single_tile_fills_every_slot():
+    records = [_record(0, "A", 0.42)]
+    picks = train_mod.rank_tiles_by_dice(records, "A")
+    assert picks["n_tiles"] == 1
+    assert picks["best"] is picks["median"] is picks["worst"] is picks["worst2"]
+
+
+def test_rank_tiles_by_dice_missing_dataset_raises():
+    with pytest.raises(train_mod.TrainError):
+        train_mod.rank_tiles_by_dice([_record(0, "A", 0.5)], "B")
+
+
+# --------------------------------------------------------------------------
+# evaluate_checkpoint -- per-tile bookkeeping against a synthetic model
+# --------------------------------------------------------------------------
+class _FakeValDataset(torch.utils.data.Dataset):
+    """A minimal val_ds stand-in: fixed masks, no images, no augmentation.
+
+    Just enough of the TileDataset contract for evaluate_checkpoint to run
+    against: ``rows`` (dataset name + tile_id per index, in order) and
+    ``__getitem__`` returning ``{"image", "mask"}`` as CHW float32 arrays.
+    """
+
+    def __init__(self, masks, datasets):
+        assert len(masks) == len(datasets)
+        self.masks = [np.asarray(m, dtype=np.float32) for m in masks]
+        self.rows = [{"dataset": d, "tile_id": f"tile{i}"}
+                    for i, d in enumerate(datasets)]
+
+    def __len__(self):
+        return len(self.masks)
+
+    def __getitem__(self, idx):
+        mask = self.masks[idx][None, ...]
+        return {"image": np.zeros_like(mask), "mask": mask}
+
+
+class _ConstantLogits(torch.nn.Module):
+    """Returns pre-baked logits per call, in the order batches are requested.
+
+    Requires ``shuffle=False`` in the caller's DataLoader -- exactly what
+    evaluate_checkpoint uses -- so the Nth forward call corresponds to the Nth
+    dataset row.
+    """
+
+    def __init__(self, logits_by_index):
+        super().__init__()
+        self.logits_by_index = logits_by_index
+        self._next = 0
+
+    def forward(self, x):
+        batch = x.shape[0]
+        out = torch.stack(
+            [self.logits_by_index[self._next + i] for i in range(batch)])
+        self._next += batch
+        return out
+
+
+def test_evaluate_checkpoint_matches_hand_computed_dice_and_preserves_order():
+    size = 16
+    true_a = np.zeros((size, size), dtype=np.float32)
+    true_a[4:6, :] = 1.0                       # a clean 2-row band, 32 px
+    true_b = np.zeros((size, size), dtype=np.float32)
+    true_b[10:12, :] = 1.0
+
+    # Tile 0 (dataset A): predict the band exactly -> Dice 1.0.
+    logit_exact = torch.where(torch.from_numpy(true_a) > 0,
+                              torch.tensor(10.0), torch.tensor(-10.0))
+    # Tile 1 (dataset A): predict nothing -> Dice 0.0 (true has boundary).
+    logit_empty = torch.full((size, size), -10.0)
+    # Tile 2 (dataset B): predict everything -> known tp/fp/fn by hand.
+    logit_full = torch.full((size, size), 10.0)
+
+    val_ds = _FakeValDataset([true_a, true_a, true_b],
+                             datasets=["A", "A", "B"])
+    model = _ConstantLogits([logit_exact[None], logit_empty[None],
+                            logit_full[None]])
+    thresholds = {"A": 0.5, "B": 0.5}
+
+    records = train_mod.evaluate_checkpoint(
+        model, val_ds, thresholds, device=torch.device("cpu"),
+        batch_size=2, num_workers=0)
+
+    assert [r["row_index"] for r in records] == [0, 1, 2]
+    assert [r["dataset"] for r in records] == ["A", "A", "B"]
+    assert [r["tile_id"] for r in records] == ["tile0", "tile1", "tile2"]
+
+    assert records[0]["dice"] == pytest.approx(1.0)
+    assert records[1]["dice"] == pytest.approx(0.0)
+
+    # tile 2: true_b has 32 true px out of 256; predicting everything gives
+    # tp=32, fp=224, fn=0 -> dice = 64 / (64 + 224) = 0.2222...
+    assert records[2]["dice"] == pytest.approx(64 / 288, rel=1e-6)
+    assert records[2]["pred_fraction"] == pytest.approx(1.0)
+    assert records[2]["true_fraction"] == pytest.approx(32 / 256)
+
+    # Width: an unbroken 2-row band has a measurable width close to 2 px.
+    assert records[0]["true_width_px"] is not None
+    assert records[0]["true_width_px"] == pytest.approx(2.0, abs=0.5)
+    # tile 1 predicts nothing, so its predicted width is undefined (None),
+    # not zero -- an empty prediction has no skeleton to measure.
+    assert records[1]["pred_width_px"] is None
+
+
+def test_evaluate_checkpoint_requires_a_threshold_for_every_dataset():
+    val_ds = _FakeValDataset([np.zeros((8, 8), dtype=np.float32)],
+                             datasets=["A"])
+    model = _ConstantLogits([torch.full((1, 8, 8), -10.0)])
+    with pytest.raises(train_mod.TrainError):
+        train_mod.evaluate_checkpoint(model, val_ds, {}, device=torch.device("cpu"))
+
+
+# --------------------------------------------------------------------------
+# best_epoch_thresholds -- reads the history record for the SAVED best epoch
+# --------------------------------------------------------------------------
+def test_best_epoch_thresholds_reads_the_matching_history_record():
+    state = {
+        "best": {"epoch": 2},
+        "history": [
+            {"epoch": 0, "best_thresholds": {"A": 0.3}},
+            {"epoch": 1, "best_thresholds": {"A": 0.4}},
+            {"epoch": 2, "best_thresholds": {"A": 0.6, "B": 0.8}},
+        ],
+    }
+    assert train_mod.best_epoch_thresholds(state) == {"A": 0.6, "B": 0.8}
+
+
+def test_best_epoch_thresholds_missing_best_epoch_raises():
+    with pytest.raises(train_mod.TrainError):
+        train_mod.best_epoch_thresholds({"history": []})
+
+
+def test_best_epoch_thresholds_no_matching_history_record_raises():
+    state = {"best": {"epoch": 5}, "history": [{"epoch": 0, "best_thresholds": {}}]}
+    with pytest.raises(train_mod.TrainError):
+        train_mod.best_epoch_thresholds(state)
+
+
+# --------------------------------------------------------------------------
+# load_checkpoint_model -- the same fold/hash guards maybe_resume applies
+# --------------------------------------------------------------------------
+def _model_settings_without_pretrained_download():
+    from src import model as model_mod
+
+    settings = dict(model_mod.load_config())
+    settings["encoder_weights"] = None   # no network access in a unit test
+    return settings
+
+
+def test_load_checkpoint_model_refuses_a_checkpoint_from_another_fold(tmp_path):
+    from src import model as model_mod
+
+    settings = _model_settings_without_pretrained_download()
+    dummy = model_mod.build_model(settings=settings)
+    path = tmp_path / "other_fold.pt"
+    train_mod.atomic_save(
+        {"fold": "fold_not_this_one", "config_hash": "abc", "model": dummy.state_dict()},
+        path)
+    with pytest.raises(train_mod.TrainError):
+        train_mod.load_checkpoint_model(path, settings, fold="dev")
+
+
+def test_load_checkpoint_model_refuses_a_checkpoint_under_a_different_hash(tmp_path):
+    from src import model as model_mod
+
+    settings = _model_settings_without_pretrained_download()
+    dummy = model_mod.build_model(settings=settings)
+    path = tmp_path / "wrong_hash.pt"
+    train_mod.atomic_save(
+        {"fold": "dev", "config_hash": "abc", "model": dummy.state_dict()}, path)
+    with pytest.raises(train_mod.TrainError):
+        train_mod.load_checkpoint_model(path, settings, fold="dev",
+                                        expected_hash="different")
+
+
+def test_load_checkpoint_model_loads_a_matching_checkpoint(tmp_path):
+    from src import model as model_mod
+
+    settings = _model_settings_without_pretrained_download()
+    dummy = model_mod.build_model(settings=settings)
+    path = tmp_path / "ok.pt"
+    train_mod.atomic_save(
+        {"fold": "dev", "config_hash": "abc", "model": dummy.state_dict()}, path)
+    model, state = train_mod.load_checkpoint_model(
+        path, settings, fold="dev", expected_hash="abc")
+    assert state["fold"] == "dev"
+    assert not model.training, "a model returned for evaluation must be in eval mode"
