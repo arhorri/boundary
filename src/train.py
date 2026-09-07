@@ -1539,8 +1539,33 @@ def _diff_config(saved: dict, current: dict) -> list:
 METRIC_ORDER = ("iou", "dice", "precision", "recall", "boundary_f")
 
 
+def report_paths(fold: str, platform: str,
+                 reports_dir: Optional[Path] = None) -> tuple:
+    """``reports/train_<fold>_<platform>.{md,json}``, keyed BY HOST.
+
+    The platform is part of the filename because the same fold trained on two
+    hosts produces two measurements, not one measurement and one mistake. They
+    differ in ways that matter and that nothing else records: different GPUs,
+    different worker counts, different Drive-versus-input-dataset I/O, and on
+    Kaggle a working directory that does not survive the session. Writing both
+    to ``train_dev.json`` made them collide -- on disk when a second host ran,
+    and in git when the two branches met -- and the collision resolved by
+    whichever ran last, silently discarding the other run.
+
+    So the filename carries the host, exactly as ``configs/dataloader.yaml``
+    keys its measurements by platform for the same reason.
+    """
+    reports_dir = Path(reports_dir) if reports_dir else Path(REPO_ROOT) / "reports"
+    if not platform:
+        raise TrainError(
+            "no platform to key the report by; resolve_paths() supplies it and "
+            "a report written without one would collide with the other host's.")
+    stem = f"train_{fold}_{platform}"
+    return reports_dir / f"{stem}.md", reports_dir / f"{stem}.json"
+
+
 def write_report(trainer: Trainer, reports_dir: Optional[Path] = None) -> tuple:
-    """reports/train_<fold>.{json,md}. The committed artefact of this step."""
+    """reports/train_<fold>_<platform>.{md,json}. This step's committed artefact."""
     reports_dir = Path(reports_dir or trainer.resolved["reports_dir"])
     reports_dir.mkdir(parents=True, exist_ok=True)
     summary = trainer.summary()
@@ -1553,6 +1578,7 @@ def write_report(trainer: Trainer, reports_dir: Optional[Path] = None) -> tuple:
 
     payload = {
         "fold": trainer.fold,
+        "platform": trainer.platform,
         "held_out": trainer.held_out,
         "generated_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "summary": summary,
@@ -1561,15 +1587,20 @@ def write_report(trainer: Trainer, reports_dir: Optional[Path] = None) -> tuple:
         "final_epoch": final["epoch"],
         "history": history,
     }
-    json_path = reports_dir / f"train_{trainer.fold}.json"
+    md_path, json_path = report_paths(trainer.fold, trainer.platform, reports_dir)
     json_path.write_text(json.dumps(payload, indent=1, default=str))
 
     lines = [
-        f"# Training report -- {trainer.fold}",
+        f"# Training report -- {trainer.fold} on {trainer.platform}",
         "",
         f"Held-out dataset: **{trainer.held_out}**. Generated "
         f"{payload['generated_utc']} on {summary['platform']} "
         f"({summary['gpu'] or summary['device']}).",
+        "",
+        f"This file is keyed by host: `train_{trainer.fold}_{trainer.platform}.md`. "
+        "The same fold trained on another host writes its own file beside this "
+        "one rather than overwriting it -- two runs of one fold are two "
+        "measurements, and they differ in GPU, worker count and I/O path.",
         "",
         f"- config hash `{trainer.hash}`, seed {summary['seed']['seed']}"
         f" ({summary['seed']['note']})",
@@ -1722,6 +1753,5 @@ def write_report(trainer: Trainer, reports_dir: Optional[Path] = None) -> tuple:
         "connectivity metric at evaluation time.",
         "",
     ]
-    md_path = reports_dir / f"train_{trainer.fold}.md"
     md_path.write_text("\n".join(lines) + "\n")
     return md_path, json_path
