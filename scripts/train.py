@@ -8,7 +8,9 @@
 Reads reports/manifests/<fold>.csv, configs/fold_stats.yaml (pos_weight and
 sampler weights) and configs/dataloader.yaml (this host's num_workers). Writes
 checkpoints and TensorBoard logs under PERSISTENT_DIR, and
-reports/train_<fold>.{json,md} into the checkout.
+reports/train_<fold>_<platform>.{json,md} into the checkout -- keyed by host,
+because the same fold trained on Colab and on Kaggle produces two measurements
+rather than one measurement and one mistake.
 
 Nothing here re-derives a decision an earlier step made: the split comes from
 the manifest, pos_weight from fold_stats, num_workers from the measured entry

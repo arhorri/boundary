@@ -314,6 +314,35 @@ def threshold_grid(settings: dict) -> np.ndarray:
     return np.unique(np.append(grid, fixed))
 
 
+def snap_thresholds(thresholds: np.ndarray, dtype) -> np.ndarray:
+    """The grid as the DATA sees it, so "exactly on the threshold" is decidable.
+
+    None of 0.05, 0.15, 0.95 ... is exactly representable in binary, and the
+    probabilities being compared against them are float32 out of a sigmoid. The
+    two do not round the same way, and -- worse -- they do not round the same
+    *direction* per constant: ``float32(0.05)`` lands just above the float64
+    0.05 and counts as clearing it, while ``float32(0.95)`` lands just below
+    the float64 0.95 and does not. So whether a pixel sitting exactly on its
+    threshold is counted depended on which way that particular decimal
+    constant happened to round, which is not a rule anyone can reason about.
+
+    Rounding the grid to the precision of the values fixes the rule at "a value
+    equal to the threshold AT THE DATA'S PRECISION clears it", uniformly at
+    every grid point. The float64 grid is kept if rounding would collapse two
+    grid points into one, since a non-increasing grid would break
+    ``searchsorted`` -- a far worse failure than the ambiguity being fixed.
+    """
+    grid = np.asarray(thresholds, dtype=np.float64)
+    if not np.issubdtype(np.dtype(dtype), np.floating):
+        return grid
+    if np.dtype(dtype) == np.float64:
+        return grid
+    snapped = grid.astype(dtype).astype(np.float64)
+    if grid.size > 1 and not np.all(np.diff(snapped) > 0):
+        return grid
+    return snapped
+
+
 def ge_counts(values: np.ndarray, thresholds: np.ndarray) -> np.ndarray:
     """``#{v >= t}`` for every ``t``, in one pass rather than one pass each.
 
@@ -321,14 +350,20 @@ def ge_counts(values: np.ndarray, thresholds: np.ndarray) -> np.ndarray:
     65,536 pixels per tile if written naively. ``searchsorted`` gives, for each
     value, how many thresholds it clears; the reverse cumulative sum of those
     counts is the answer for all thresholds at once. Exact, not approximate:
-    the ordering is the same one ``prob >= t`` would produce.
+    it returns what ``(values >= t).sum()`` returns, for every ``t``, including
+    at values sitting exactly on a threshold -- see :func:`snap_thresholds` for
+    what "exactly" has to mean when the grid is decimal and the data is
+    float32.
     """
-    thresholds = np.asarray(thresholds, dtype=np.float64)
-    values = np.asarray(values, dtype=np.float64).ravel()
+    values = np.asarray(values).ravel()
+    grid = snap_thresholds(thresholds, values.dtype)
     if values.size == 0:
-        return np.zeros(thresholds.size, dtype=np.int64)
-    cleared = np.searchsorted(thresholds, values, side="right")
-    counts = np.bincount(cleared, minlength=thresholds.size + 1)
+        return np.zeros(grid.size, dtype=np.int64)
+    # side="right" so that `cleared` is the number of thresholds <= v, which is
+    # the count that "v >= t" asks for. v clears thresholds[k] exactly when
+    # cleared >= k + 1, hence the tail sums below being read from index 1.
+    cleared = np.searchsorted(grid, values.astype(np.float64), side="right")
+    counts = np.bincount(cleared, minlength=grid.size + 1)
     tail = np.cumsum(counts[::-1])[::-1]
     return tail[1:].astype(np.int64)
 
@@ -1504,8 +1539,33 @@ def _diff_config(saved: dict, current: dict) -> list:
 METRIC_ORDER = ("iou", "dice", "precision", "recall", "boundary_f")
 
 
+def report_paths(fold: str, platform: str,
+                 reports_dir: Optional[Path] = None) -> tuple:
+    """``reports/train_<fold>_<platform>.{md,json}``, keyed BY HOST.
+
+    The platform is part of the filename because the same fold trained on two
+    hosts produces two measurements, not one measurement and one mistake. They
+    differ in ways that matter and that nothing else records: different GPUs,
+    different worker counts, different Drive-versus-input-dataset I/O, and on
+    Kaggle a working directory that does not survive the session. Writing both
+    to ``train_dev.json`` made them collide -- on disk when a second host ran,
+    and in git when the two branches met -- and the collision resolved by
+    whichever ran last, silently discarding the other run.
+
+    So the filename carries the host, exactly as ``configs/dataloader.yaml``
+    keys its measurements by platform for the same reason.
+    """
+    reports_dir = Path(reports_dir) if reports_dir else Path(REPO_ROOT) / "reports"
+    if not platform:
+        raise TrainError(
+            "no platform to key the report by; resolve_paths() supplies it and "
+            "a report written without one would collide with the other host's.")
+    stem = f"train_{fold}_{platform}"
+    return reports_dir / f"{stem}.md", reports_dir / f"{stem}.json"
+
+
 def write_report(trainer: Trainer, reports_dir: Optional[Path] = None) -> tuple:
-    """reports/train_<fold>.{json,md}. The committed artefact of this step."""
+    """reports/train_<fold>_<platform>.{md,json}. This step's committed artefact."""
     reports_dir = Path(reports_dir or trainer.resolved["reports_dir"])
     reports_dir.mkdir(parents=True, exist_ok=True)
     summary = trainer.summary()
@@ -1518,6 +1578,7 @@ def write_report(trainer: Trainer, reports_dir: Optional[Path] = None) -> tuple:
 
     payload = {
         "fold": trainer.fold,
+        "platform": trainer.platform,
         "held_out": trainer.held_out,
         "generated_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "summary": summary,
@@ -1526,15 +1587,20 @@ def write_report(trainer: Trainer, reports_dir: Optional[Path] = None) -> tuple:
         "final_epoch": final["epoch"],
         "history": history,
     }
-    json_path = reports_dir / f"train_{trainer.fold}.json"
+    md_path, json_path = report_paths(trainer.fold, trainer.platform, reports_dir)
     json_path.write_text(json.dumps(payload, indent=1, default=str))
 
     lines = [
-        f"# Training report -- {trainer.fold}",
+        f"# Training report -- {trainer.fold} on {trainer.platform}",
         "",
         f"Held-out dataset: **{trainer.held_out}**. Generated "
         f"{payload['generated_utc']} on {summary['platform']} "
         f"({summary['gpu'] or summary['device']}).",
+        "",
+        f"This file is keyed by host: `train_{trainer.fold}_{trainer.platform}.md`. "
+        "The same fold trained on another host writes its own file beside this "
+        "one rather than overwriting it -- two runs of one fold are two "
+        "measurements, and they differ in GPU, worker count and I/O path.",
         "",
         f"- config hash `{trainer.hash}`, seed {summary['seed']['seed']}"
         f" ({summary['seed']['note']})",
@@ -1687,6 +1753,5 @@ def write_report(trainer: Trainer, reports_dir: Optional[Path] = None) -> tuple:
         "connectivity metric at evaluation time.",
         "",
     ]
-    md_path = reports_dir / f"train_{trainer.fold}.md"
     md_path.write_text("\n".join(lines) + "\n")
     return md_path, json_path

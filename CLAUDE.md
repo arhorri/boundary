@@ -42,7 +42,7 @@ earlier step's JSON and never re-derives its decisions.
 | 3 tiling/folds | `tiling.py` | `build_tiles.py` | `03_tiling.ipynb` | `reports/audit.json`, `reports/gt_extraction.json` | `reports/manifests/*.csv`, `reports/parents.md`, `reports/tiling.{json,md}`, `configs/fold_stats.yaml` |
 | 4 dataset/loader | `dataset.py` | — | `04_dataset.ipynb` | manifests, `configs/fold_stats.yaml` | `configs/dataloader.yaml` |
 | 5 model/loss | `model.py`, `losses.py` | — | `05_model_and_loss.ipynb` | `configs/fold_stats.yaml` | `configs/default.yaml` `model:`/`loss:`/`train.batch_size` |
-| 6 training | `train.py` | `train.py` | `06_train.ipynb` | manifests, `configs/fold_stats.yaml`, `configs/dataloader.yaml` | `PERSISTENT_DIR/checkpoints/<fold>/{last,best}.pt`, `reports/train_<fold>.{json,md}` |
+| 6 training | `train.py` | `train.py` | `06_train.ipynb` | manifests, `configs/fold_stats.yaml`, `configs/dataloader.yaml` | `PERSISTENT_DIR/checkpoints/<fold>/{last,best}.pt`, `reports/train_<fold>_<platform>.{json,md}` |
 
 Key consequences of that contract:
 
