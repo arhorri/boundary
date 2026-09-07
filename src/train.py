@@ -90,6 +90,13 @@ DEFAULTS = {
     # Never a literal and never the other host's value.
     "num_workers": None,
     "sampler": True,               # WeightedRandomSampler from fold_stats
+    # Datasets to drop from a fold's TRAIN split, as {fold: [dataset, ...]}.
+    # Per fold, because an exclusion is a claim about one fold's training
+    # mixture and not a global setting. Validation is NEVER filtered: the whole
+    # point of excluding something is to measure the effect on an unchanged
+    # validation split, and a run that quietly changed both could not be
+    # compared with anything.
+    "exclude_datasets": {},
     # The fixed operating point every epoch is also reported at, and the
     # reference the sweep is compared against. Must fall on the sweep grid.
     "threshold": 0.5,
@@ -124,6 +131,12 @@ HASHED_TRAIN_KEYS = (
     # grid produced a different `best`, and resuming into it would leave two
     # incompatible selection criteria in one curve.
     "threshold_sweep_min", "threshold_sweep_max", "threshold_sweep_step",
+    # In the hash so an excluded-set run can NEVER resume from a full-set
+    # checkpoint, or vice versa: the two saw different data and averaging their
+    # curves together would be meaningless. What is hashed is the exclusion
+    # RESOLVED FOR THIS FOLD (see Trainer.__init__), not the whole mapping --
+    # changing fold_MetalDam's exclusion must not invalidate a dev checkpoint.
+    "exclude_datasets",
 )
 
 
@@ -161,12 +174,64 @@ def load_config(config_path: Optional[Path] = None) -> dict:
         raise TrainError(
             f"train.scheduler is {settings['scheduler']!r}; only 'cosine' "
             "(with linear warmup) is implemented.")
+    excludes = settings["exclude_datasets"] or {}
+    if not isinstance(excludes, dict):
+        raise TrainError(
+            f"train.exclude_datasets must be a mapping of fold -> [dataset, "
+            f"...], got {type(excludes).__name__}. A bare list would apply to "
+            "every fold, which is never what an exclusion means.")
+    normalised = {}
+    for fold_name, names in excludes.items():
+        if isinstance(names, str):
+            raise TrainError(
+                f"train.exclude_datasets[{fold_name!r}] is the string "
+                f"{names!r}; it must be a LIST of dataset names, or a "
+                "one-character dataset would be excluded letter by letter.")
+        # Sorted and de-duplicated so the config hash does not depend on the
+        # order someone happened to type them in.
+        normalised[str(fold_name)] = sorted({str(n) for n in (names or [])})
+    settings["exclude_datasets"] = normalised
+
     if int(settings["warmup_epochs"]) >= int(settings["epochs"]):
         raise TrainError(
             f"train.warmup_epochs ({settings['warmup_epochs']}) must be less "
             f"than train.epochs ({settings['epochs']}); otherwise the cosine "
             "phase never runs.")
     return settings
+
+
+def resolve_exclusions(fold: str, settings: dict, fold_entry: dict) -> list:
+    """The datasets to drop from THIS fold's train split, validated.
+
+    A name that is not in the fold's training mixture is an error, not a no-op.
+    The failure this prevents is a typo or a stale fold name silently training
+    on everything while the run header, the report and the config hash all
+    claim an exclusion was applied -- which would be worse than not having the
+    feature, because the resulting comparison would look valid.
+    """
+    requested = list((settings.get("exclude_datasets") or {}).get(fold, []))
+    if not requested:
+        return []
+
+    available = list(fold_entry.get("train_datasets") or [])
+    if not available:
+        raise TrainError(
+            f"configs/fold_stats.yaml has no train_datasets for fold {fold!r}, "
+            "so an exclusion cannot be checked against anything. Re-run step 3.")
+    unknown = sorted(set(requested) - set(available))
+    if unknown:
+        raise TrainError(
+            f"train.exclude_datasets[{fold!r}] names {unknown}, which "
+            f"{'is' if len(unknown) == 1 else 'are'} not in that fold's "
+            f"training mixture {sorted(available)}. Excluding something that "
+            "was never there would leave the run header claiming an exclusion "
+            "that changed nothing.")
+    keep = [d for d in available if d not in requested]
+    if not keep:
+        raise TrainError(
+            f"train.exclude_datasets[{fold!r}] excludes every training "
+            f"dataset {sorted(available)}; there would be nothing to train on.")
+    return sorted(set(requested))
 
 
 # --------------------------------------------------------------------------
@@ -823,10 +888,27 @@ class Trainer:
 
         self.platform = str(self.resolved["platform"])
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.run_name = run_name or self.fold
 
+        # Datasets dropped from THIS fold's train split. Resolved once, here,
+        # so that the run name, the config hash, the header, the report and the
+        # loaders all describe the same experiment.
+        self.excluded = resolve_exclusions(self.fold, self.settings,
+                                           self.fold_entry)
+        # A distinct run name, so the two arms of an exclusion experiment keep
+        # separate checkpoints, logs and reports instead of overwriting each
+        # other. Without this the comparison the exclusion exists to enable
+        # could not be made without deleting one arm first.
+        self.run_name = run_name or (
+            f"{self.fold}-no-{'-'.join(self.excluded)}" if self.excluded
+            else self.fold)
+
+        # The hash carries the exclusion RESOLVED FOR THIS FOLD rather than the
+        # whole mapping: adding an exclusion for another fold must not
+        # invalidate this fold's checkpoints.
+        hashed_train = dict(self.settings)
+        hashed_train["exclude_datasets"] = list(self.excluded)
         self.hash, self.hashed_config = config_hash(
-            self.model_settings, self.loss_settings, self.settings,
+            self.model_settings, self.loss_settings, hashed_train,
             self.dataset_settings)
 
         checkpoint_dir = (Path(self.resolved["persistent_dir"])
@@ -889,12 +971,43 @@ class Trainer:
         roots = {"data_root": Path(self.resolved["data_root"]),
                  "gt_root": Path(self.resolved["gt_boundaries_root"])}
 
+        # The exclusion is applied HERE, to the train split only, by naming the
+        # datasets to keep. TileDataset.from_manifest filters rows through
+        # load_manifest, so an excluded dataset's tiles are never indexed at
+        # all -- they are not loaded and then skipped.
+        keep = None
+        if self.excluded:
+            keep = [d for d in self.fold_entry["train_datasets"]
+                    if d not in self.excluded]
         self.train_ds = ds.TileDataset.from_manifest(
             manifest, "train", settings=self.dataset_settings, crops=crops,
-            roots=roots)
+            roots=roots, datasets=keep)
+        # Validation is NOT filtered, deliberately and load-bearingly: the
+        # excluded and full-set arms have to be scored on exactly the same
+        # tiles or the comparison measures two changes at once.
         self.val_ds = ds.TileDataset.from_manifest(
             manifest, "val", settings=self.dataset_settings, crops=crops,
             roots=roots)
+
+        if self.excluded:
+            # Verified against the rows that were actually indexed, not assumed
+            # from the argument passed in.
+            present = sorted({r["dataset"] for r in self.train_ds.rows})
+            leaked = sorted(set(present) & set(self.excluded))
+            if leaked:
+                raise TrainError(
+                    f"{leaked} was excluded from fold {self.fold!r} but its "
+                    "tiles are still in the train split; the manifest filter "
+                    "did not take effect.")
+            in_val = sorted({r["dataset"] for r in self.val_ds.rows}
+                            & set(self.excluded))
+            if in_val:
+                raise TrainError(
+                    f"{in_val} is excluded from training but also appears in "
+                    f"the VALIDATION split of fold {self.fold!r}. Excluding a "
+                    "dataset that is validated on would train on nothing and "
+                    "score on it anyway; that is not an experiment, it is a "
+                    "mistake.")
         if self.val_ds.augment:
             raise TrainError(
                 "the validation dataset came back with augmentation enabled; "
@@ -995,10 +1108,45 @@ class Trainer:
                   "training continues without it")
             self.writer = None
 
+    def pos_weight_drift(self) -> dict:
+        """What the fold's recorded pos_weight implies against the ACTUAL split.
+
+        ``pos_weight`` is ``n_negative / n_positive``, which for equal-sized
+        tiles is exactly ``(1 - mean boundary fraction) / mean boundary
+        fraction`` -- and that identity reproduces the value step 3 recorded, so
+        the same arithmetic over the rows actually being trained on says what
+        the reduced split would have wanted.
+
+        The recorded value is still the one used, deliberately. Holding the loss
+        identical across both arms is what makes the comparison attributable: if
+        the exclusion changed the training data AND the class weighting, a
+        difference in the result could not be assigned to either. So the drift
+        is measured and printed rather than silently corrected.
+        """
+        recorded = float(self.fold_entry["pos_weight"])
+        fractions = [float(r["boundary_fraction"]) for r in self.train_ds.rows]
+        mean_fraction = sum(fractions) / len(fractions) if fractions else 0.0
+        implied = ((1.0 - mean_fraction) / mean_fraction
+                   if mean_fraction > 0 else float("inf"))
+        return {
+            "recorded": recorded,
+            "recorded_source": f"configs/fold_stats.yaml folds.{self.fold}",
+            "implied_by_this_split": implied,
+            "mean_boundary_fraction": mean_fraction,
+            "ratio": (implied / recorded) if recorded else float("inf"),
+            "in_use": recorded,
+            "note": ("the recorded value is used in BOTH arms on purpose, so "
+                     "that the training data is the only thing that differs"),
+        }
+
     def summary(self) -> dict:
         counts = self._model_mod.summarize(self.model) if self.model else {}
         return {
             "fold": self.fold,
+            "run_name": self.run_name,
+            "excluded_datasets": list(self.excluded),
+            "pos_weight_drift": (self.pos_weight_drift()
+                                 if self.train_ds else None),
             "held_out": self.held_out,
             "platform": self.platform,
             "device": str(self.device),
@@ -1712,6 +1860,310 @@ def tile_prediction(model: "nn.Module", val_ds, row_index: int, device,
     }
 
 
+# --------------------------------------------------------------------------
+# placement vs thickness -- splitting a low pixel Dice into its two causes
+# --------------------------------------------------------------------------
+#: Verdict thresholds, calibrated against reference_decomposition() rather than
+#: guessed. On synthetic cases where the answer is known, a correctly-placed but
+#: fat prediction scores skeleton Dice 0.93-0.97 and 1-px skeleton proximity
+#: 0.99+ no matter HOW fat it is, while a prediction misplaced by 3-5 px scores
+#: 0.38-0.59 and 0.43-0.64, and pure noise at the same density scores 0.11 and
+#: 0.20. Both cuts below sit in the gap between those regimes.
+PLACEMENT_NEAR1_OK = 0.80
+PLACEMENT_SKELETON_DICE_OK = 0.70
+PLACEMENT_NEAR1_BAD = 0.50
+
+
+def decomposition_counts(pred: np.ndarray, true: np.ndarray,
+                         radii: Sequence, distances: Sequence) -> dict:
+    """Every count the placement/thickness split needs, for ONE tile.
+
+    Shared by the real evaluation and by :func:`reference_decomposition`, so
+    the calibration table a notebook prints beside its results is produced by
+    the same arithmetic as the results -- not by a parallel implementation that
+    can drift.
+    """
+    import cv2
+    from skimage.morphology import skeletonize
+
+    pred = np.ascontiguousarray(pred).astype(bool)
+    true = np.ascontiguousarray(true).astype(bool)
+    pred_u8 = pred.astype(np.uint8)
+    true_u8 = true.astype(np.uint8)
+
+    # skeletonize() on an all-False array is a no-op, but guarding says so.
+    skel_pred = skeletonize(pred) if pred.any() else np.zeros_like(pred)
+    skel_true = skeletonize(true) if true.any() else np.zeros_like(true)
+    skel_pred_u8 = skel_pred.astype(np.uint8)
+    skel_true_u8 = skel_true.astype(np.uint8)
+
+    disks = {r: euclidean_disk(r) for r in set(radii) | set(distances) if r > 0}
+
+    def grow(mask_u8, base, r):
+        return base if r == 0 else cv2.dilate(mask_u8, disks[r]).astype(bool)
+
+    grown_pred = {r: grow(pred_u8, pred, r) for r in radii}
+    grown_true = {r: grow(true_u8, true, r) for r in radii}
+    near_pred = {d: grow(pred_u8, pred, d) for d in distances}
+    near_true = {d: grow(true_u8, true, d) for d in distances}
+    near_skel_pred = {d: grow(skel_pred_u8, skel_pred, d) for d in distances}
+    near_skel_true = {d: grow(skel_true_u8, skel_true, d) for d in distances}
+
+    return {
+        "tiles": 1,
+        "skel_tp": int((skel_pred & skel_true).sum()),
+        "skel_pred_px": int(skel_pred.sum()),
+        "skel_true_px": int(skel_true.sum()),
+        # k = 0 is the identity, so this row IS the ordinary pixel Dice and must
+        # reproduce what MetricAccumulator reported. It is kept as the anchor
+        # the rest of the sweep is read against.
+        "dil_tp": {r: int((grown_pred[r] & grown_true[r]).sum()) for r in radii},
+        "dil_pred": {r: int(grown_pred[r].sum()) for r in radii},
+        "dil_true": {r: int(grown_true[r].sum()) for r in radii},
+        # (c): how much of each mask sits within d px of the other one.
+        "pred_near": {d: int((pred & near_true[d]).sum()) for d in distances},
+        "true_near": {d: int((true & near_pred[d]).sum()) for d in distances},
+        "skel_pred_near": {d: int((skel_pred & near_skel_true[d]).sum())
+                          for d in distances},
+        "skel_true_near": {d: int((skel_true & near_skel_pred[d]).sum())
+                          for d in distances},
+    }
+
+
+def _decomposition_slot(radii: Sequence, distances: Sequence) -> dict:
+    return {
+        "tiles": 0, "skel_tp": 0, "skel_pred_px": 0, "skel_true_px": 0,
+        "dil_tp": {r: 0 for r in radii},
+        "dil_pred": {r: 0 for r in radii},
+        "dil_true": {r: 0 for r in radii},
+        "pred_near": {d: 0 for d in distances},
+        "true_near": {d: 0 for d in distances},
+        "skel_pred_near": {d: 0 for d in distances},
+        "skel_true_near": {d: 0 for d in distances},
+    }
+
+
+def _accumulate_decomposition(slot: dict, counts: dict) -> None:
+    for key in ("tiles", "skel_tp", "skel_pred_px", "skel_true_px"):
+        slot[key] += counts[key]
+    for key in ("dil_tp", "dil_pred", "dil_true", "pred_near", "true_near",
+                "skel_pred_near", "skel_true_near"):
+        for index, value in counts[key].items():
+            slot[key][index] += value
+
+
+def summarise_decomposition(slot: dict, radii: Sequence,
+                            distances: Sequence) -> dict:
+    """Turn accumulated counts into the three measurements, plus a verdict.
+
+    Counts are pooled over the dataset and the metric computed once, exactly as
+    :class:`MetricAccumulator` does -- so ``pixel_dice`` here is directly
+    comparable to the Dice the training loop reported, rather than being a mean
+    of per-tile Dices, which is a different and larger number.
+    """
+    pred_px, true_px = slot["dil_pred"][0], slot["dil_true"][0]
+    pixel_dice = _safe_div(2 * slot["dil_tp"][0], pred_px + true_px)
+    skeleton_dice = _safe_div(2 * slot["skel_tp"],
+                             slot["skel_pred_px"] + slot["skel_true_px"])
+    skeleton_pred_within = {d: _safe_div(slot["skel_pred_near"][d],
+                                        slot["skel_pred_px"])
+                            for d in distances}
+    near1 = skeleton_pred_within.get(1, skeleton_pred_within.get(
+        min(distances, key=lambda d: abs(d - 1)), 0.0))
+
+    if near1 >= PLACEMENT_NEAR1_OK and skeleton_dice >= PLACEMENT_SKELETON_DICE_OK:
+        verdict = ("PLACEMENT IS FINE -- the boundaries are where they belong "
+                   "and the pixel Dice is being spent on THICKNESS")
+        placement_ok = True
+    elif near1 >= PLACEMENT_NEAR1_OK:
+        verdict = ("centrelines land within 1 px but do not coincide: "
+                   "placement is broadly right, and the skeleton Dice "
+                   "understates it because a 1-px line has no tolerance")
+        placement_ok = True
+    elif near1 < PLACEMENT_NEAR1_BAD:
+        verdict = ("MISPLACED -- the predicted centreline is not near the true "
+                   "one, so thickness is not the problem and thinning the "
+                   "prediction would not help")
+        placement_ok = False
+    else:
+        verdict = ("MIXED -- some boundaries land on the truth and some do "
+                   "not; neither thickness alone nor placement alone explains "
+                   "the score")
+        placement_ok = False
+
+    return {
+        "tiles": slot["tiles"],
+        "pred_px": pred_px,
+        "true_px": true_px,
+        # (a) thickness removed from both sides
+        "pixel_dice": pixel_dice,
+        "skeleton_dice": skeleton_dice,
+        "skeleton_lift": (skeleton_dice / pixel_dice) if pixel_dice > 0 else float("inf"),
+        "skeleton_pred_px": slot["skel_pred_px"],
+        "skeleton_true_px": slot["skel_true_px"],
+        # pooled area / skeleton length -- the same quantity
+        # boundary_gt.measured_line_width computes per tile.
+        "width_pred": _safe_div(pred_px, slot["skel_pred_px"]),
+        "width_true": _safe_div(true_px, slot["skel_true_px"]),
+        # (b) tolerance added symmetrically; r = 0 is the pixel Dice itself
+        "dilated_dice": {r: _safe_div(2 * slot["dil_tp"][r],
+                                     slot["dil_pred"][r] + slot["dil_true"][r])
+                         for r in radii},
+        # (c) proximity, both directions, on the masks and on the skeletons
+        "pred_within": {d: _safe_div(slot["pred_near"][d], pred_px)
+                        for d in distances},
+        "true_within": {d: _safe_div(slot["true_near"][d], true_px)
+                        for d in distances},
+        "skeleton_pred_within": skeleton_pred_within,
+        "skeleton_true_within": {d: _safe_div(slot["skel_true_near"][d],
+                                             slot["skel_true_px"])
+                                 for d in distances},
+        "verdict": verdict,
+        "placement_ok": placement_ok,
+    }
+
+
+@torch.no_grad()
+def decompose_error(model: "nn.Module", val_ds, thresholds: dict, device,
+                    amp_enabled: bool = False, dilations: Sequence = (1, 2, 3),
+                    distances: Sequence = (1, 2, 3, 5),
+                    batch_size: int = 32, num_workers: int = 0) -> dict:
+    """Split a low pixel Dice into PLACEMENT error and THICKNESS error.
+
+    A pixel Dice of 0.146 has two very different explanations that no single
+    number can tell apart: boundaries drawn in the right place but far too
+    thick, or boundaries drawn in the wrong place. They call for opposite
+    responses -- the first is fixed at the operating point or with a thinner
+    target, the second means the model has not learned where boundaries are --
+    so this measures the two separately:
+
+    (a) **Dice between the two SKELETONS**, thickness removed from both sides.
+        Much higher than the pixel Dice means the pixel Dice is being spent on
+        width, not position.
+    (b) **Dice after dilating BOTH masks** by 1, 2, 3 px: tolerance added
+        symmetrically. Read this one with care -- see
+        :func:`reference_decomposition`, where pure noise still reaches 0.69 at
+        k=3, because dilating both sides makes almost anything overlap at this
+        boundary density.
+    (c) **Proximity**: the fraction of predicted boundary pixels within d px of
+        a true one, and the converse. These are the two halves of the boundary
+        F-score swept over its tolerance, and the skeleton version of them is
+        the sharpest of the three measurements here.
+
+    Validation only: no gradient, no optimizer, nothing retrained.
+    """
+    from torch.utils.data import DataLoader
+
+    # Keep k=0 internally as the ordinary pixel-Dice anchor.  Proximity is
+    # deliberately only reported at the caller's requested distances: its
+    # public table is the 1, 2, 3, 5 px sweep, not an extra exact-overlap row.
+    radii = tuple(sorted({0} | {int(k) for k in dilations}))
+    distances = tuple(sorted({int(d) for d in distances}))
+    if any(k < 0 for k in radii) or any(d < 0 for d in distances):
+        raise TrainError("dilation radii and proximity distances must be non-negative")
+    if not distances:
+        raise TrainError("pass at least one proximity distance to decompose_error")
+
+    present = sorted({r["dataset"] for r in val_ds.rows})
+    missing = sorted(set(present) - set(thresholds))
+    if missing:
+        raise TrainError(
+            f"decompose_error has no threshold for {missing}; pass one for "
+            "every dataset in the validation split.")
+
+    model.eval()
+    loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False,
+                        num_workers=num_workers)
+    slots, row_index = {}, 0
+    for batch in loader:
+        images = batch["image"].to(device, non_blocking=True)
+        masks = batch["mask"].numpy()
+        with autocast(device.type, amp_enabled):
+            logits = model(images)
+        probs = torch.sigmoid(logits.float()).cpu().numpy()
+
+        for i in range(probs.shape[0]):
+            row = val_ds.rows[row_index]
+            dataset = row["dataset"]
+            pred = probs[i, 0] >= float(thresholds[dataset])
+            true = masks[i, 0] > 0.5
+            slot = slots.setdefault(dataset, _decomposition_slot(radii, distances))
+            _accumulate_decomposition(
+                slot, decomposition_counts(pred, true, radii, distances))
+            row_index += 1
+
+    if row_index != len(val_ds):
+        raise TrainError(
+            f"decomposed {row_index} tiles but val_ds has {len(val_ds)}.")
+    return {name: summarise_decomposition(slot, radii, distances)
+            for name, slot in sorted(slots.items())}
+
+
+def reference_decomposition(dilations: Sequence = (1, 2, 3),
+                            distances: Sequence = (1, 2, 3, 5),
+                            size: int = 256, seed: int = 0) -> dict:
+    """The same measurements on synthetic cases whose answer is already known.
+
+    Printed beside the real results so "much higher" and "near" have concrete
+    reference points instead of being judged by eye. Every case is measured by
+    the same :func:`decomposition_counts` the real evaluation uses, so the
+    calibration cannot drift away from what it is calibrating.
+
+    The cases bracket the two failure modes: a perfectly placed prediction that
+    is merely 1-3 px too fat, a prediction of the right thickness shifted 2-5
+    px off, and uniform noise at the same boundary density as a floor.
+    """
+    import cv2
+
+    radii = tuple(sorted({0} | {int(k) for k in dilations}))
+    distances = tuple(sorted({int(d) for d in distances}))
+    if any(k < 0 for k in radii) or any(d < 0 for d in distances):
+        raise TrainError("dilation radii and proximity distances must be non-negative")
+    if not distances:
+        raise TrainError("pass at least one proximity distance to reference_decomposition")
+
+    # A 2-px grid, the width boundary_gt.line_width_px actually produces.
+    true = np.zeros((size, size), dtype=bool)
+    for offset in range(size // 8, size - 2, size // 5):
+        true[offset:offset + 2, :] = True
+        true[:, offset:offset + 2] = True
+
+    def fat(k):
+        return cv2.dilate(true.astype(np.uint8),
+                          euclidean_disk(k)).astype(bool)
+
+    def shifted(px):
+        """Displace the grid DIAGONALLY, so nothing lands on itself.
+
+        A purely horizontal shift would leave the full-width horizontal lines
+        overlapping themselves exactly, and the case would measure as half
+        placed and half misplaced regardless of the shift distance -- which is
+        a real mixed case, but useless as the "misplaced" reference row.
+        """
+        out = np.zeros_like(true)
+        out[px:, px:] = true[:-px, :-px]
+        return out
+
+    rng = np.random.default_rng(seed)
+    cases = {
+        "perfect": true.copy(),
+        "placed, 1 px too fat": fat(1),
+        "placed, 2 px too fat": fat(2),
+        "placed, 3 px too fat": fat(3),
+        "misplaced by 2 px": shifted(2),
+        "misplaced by 5 px": shifted(5),
+        "noise at the same density": rng.random(true.shape) < true.mean(),
+    }
+
+    out = {}
+    for name, pred in cases.items():
+        slot = _decomposition_slot(radii, distances)
+        _accumulate_decomposition(
+            slot, decomposition_counts(pred, true, radii, distances))
+        out[name] = summarise_decomposition(slot, radii, distances)
+    return out
+
+
 def _diff_config(saved: dict, current: dict) -> list:
     """Human-readable list of what changed between two hashed configs."""
     lines = []
@@ -1732,9 +2184,14 @@ def _diff_config(saved: dict, current: dict) -> list:
 METRIC_ORDER = ("iou", "dice", "precision", "recall", "boundary_f")
 
 
-def report_paths(fold: str, platform: str,
+def report_paths(run_name: str, platform: str,
                  reports_dir: Optional[Path] = None) -> tuple:
-    """``reports/train_<fold>_<platform>.{md,json}``, keyed BY HOST.
+    """``reports/train_<run>_<platform>.{md,json}``, keyed by RUN and by HOST.
+
+    ``run_name`` is the fold for an ordinary run and ``<fold>-no-<excluded>``
+    for one training on a reduced mixture, so the two arms of an exclusion
+    experiment produce two reports instead of overwriting each other. A run
+    with no exclusions is named for its fold exactly as before.
 
     The platform is part of the filename because the same fold trained on two
     hosts produces two measurements, not one measurement and one mistake. They
@@ -1753,8 +2210,122 @@ def report_paths(fold: str, platform: str,
         raise TrainError(
             "no platform to key the report by; resolve_paths() supplies it and "
             "a report written without one would collide with the other host's.")
-    stem = f"train_{fold}_{platform}"
+    stem = f"train_{run_name}_{platform}"
     return reports_dir / f"{stem}.md", reports_dir / f"{stem}.json"
+
+
+def load_run_reports(fold: str, reports_dir: Optional[Path] = None,
+                     platform: Optional[str] = None) -> dict:
+    """Every committed report for ``fold``, keyed by ``(run_name, platform)``.
+
+    Finds the arms of an exclusion experiment: ``train_dev_colab.json`` and
+    ``train_dev-no-uhcs1_colab.json`` both belong to fold ``dev`` and are
+    returned together. Matching is on the parsed stem rather than a glob, so a
+    fold whose name is a prefix of another cannot pull in the wrong file.
+    """
+    reports_dir = Path(reports_dir) if reports_dir else Path(REPO_ROOT) / "reports"
+    if not reports_dir.is_dir():
+        raise TrainError(f"no reports directory at {reports_dir}")
+
+    out = {}
+    for path in sorted(reports_dir.glob("train_*.json")):
+        stem = path.stem[len("train_"):]
+        if "_" not in stem:
+            continue
+        run_name, _, host = stem.rpartition("_")
+        if not (run_name == fold or run_name.startswith(f"{fold}-")):
+            continue
+        if platform is not None and host != platform:
+            continue
+        try:
+            payload = json.loads(path.read_text())
+        except Exception as exc:                          # noqa: BLE001
+            raise TrainError(
+                f"{path} is not readable JSON ({type(exc).__name__}); a "
+                "half-written report is worse than a missing one because it "
+                "will be compared against as if it were real.") from exc
+        payload["path"] = str(path)
+        out[(run_name, host)] = payload
+    return out
+
+
+def compare_runs(reports: dict, dataset: str, row: str = "best") -> dict:
+    """One dataset's metrics across several runs, side by side.
+
+    ``reports`` comes from :func:`load_run_reports`. ``row`` selects the fixed
+    or the tuned operating point; the tuned one is the default because it is
+    what ``best.pt`` was selected on.
+
+    The point of the exclusion experiment is that ``dataset`` is scored on the
+    SAME validation tiles in every arm, so these numbers are directly
+    comparable. That is asserted rather than assumed: a run whose validation
+    tile count for this dataset differs from the others is reported as such,
+    because it would mean the arms were not scored on the same thing.
+    """
+    rows, tile_counts = {}, {}
+    for (run_name, host), payload in sorted(reports.items()):
+        history = payload.get("history") or []
+        if not history:
+            continue
+        best_epoch = (payload.get("best") or {}).get("epoch")
+        record = next((h for h in history if h.get("epoch") == best_epoch),
+                      history[-1])
+        entry = (record.get("metrics", {}).get("per_dataset", {})
+                 .get(dataset))
+        if entry is None:
+            continue
+        metrics = entry[row]
+        label = f"{run_name} ({host})"
+        rows[label] = {
+            "excluded": ", ".join(payload.get("excluded_datasets") or []) or "-",
+            "epoch": record["epoch"],
+            "threshold": metrics["threshold"],
+            **{k: metrics[k] for k in METRIC_ORDER},
+            "pred_frac": metrics["pred_fraction"],
+            "true_frac": metrics["true_fraction"],
+            "tiles": metrics["tiles"],
+            # Reports written before the hash moved to the top level still
+            # carry it inside summary; read either rather than showing None
+            # for a run that does have one.
+            "config_hash": (payload.get("config_hash")
+                            or (payload.get("summary") or {}).get("config_hash")),
+        }
+        tile_counts[label] = metrics["tiles"]
+
+    comparable = len(set(tile_counts.values())) <= 1
+    return {
+        "dataset": dataset,
+        "row": row,
+        "runs": rows,
+        "comparable": comparable,
+        "note": ("every arm scored this dataset on the same number of "
+                 f"validation tiles ({next(iter(tile_counts.values()), 0)})"
+                 if comparable else
+                 f"THE ARMS ARE NOT COMPARABLE: tile counts differ {tile_counts}. "
+                 "Validation must be identical across arms for the difference "
+                 "to mean anything."),
+    }
+
+
+def diff_runs(reports: dict, left: tuple, right: tuple) -> list:
+    """What actually differs between two runs' hashed configs.
+
+    Two runs of an exclusion experiment SHOULD differ in exactly one key. If
+    they differ in more, the comparison is confounded and this says by what --
+    which is the difference between a measurement and a story.
+    """
+    payloads = {}
+    for key in (left, right):
+        if key not in reports:
+            raise TrainError(
+                f"no report for {key}; available: {sorted(reports)}")
+        payloads[key] = reports[key].get("hashed_config")
+    if not all(payloads.values()):
+        missing = [k for k, v in payloads.items() if not v]
+        return [f"(hashed_config absent for {missing}; it was written by a "
+                "version that predates cross-run diffing, so what differed "
+                "cannot be reconstructed from the report alone)"]
+    return _diff_config(payloads[left], payloads[right])
 
 
 def write_report(trainer: Trainer, reports_dir: Optional[Path] = None) -> tuple:
@@ -1771,6 +2342,13 @@ def write_report(trainer: Trainer, reports_dir: Optional[Path] = None) -> tuple:
 
     payload = {
         "fold": trainer.fold,
+        "run_name": trainer.run_name,
+        "excluded_datasets": list(trainer.excluded),
+        "config_hash": trainer.hash,
+        # Carried so that comparing two runs can DIFF what actually differed
+        # between them, rather than reporting that the hashes are unequal and
+        # leaving the reader to guess which key moved.
+        "hashed_config": trainer.hashed_config,
         "platform": trainer.platform,
         "held_out": trainer.held_out,
         "generated_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
@@ -1780,21 +2358,37 @@ def write_report(trainer: Trainer, reports_dir: Optional[Path] = None) -> tuple:
         "final_epoch": final["epoch"],
         "history": history,
     }
-    md_path, json_path = report_paths(trainer.fold, trainer.platform, reports_dir)
+    md_path, json_path = report_paths(trainer.run_name, trainer.platform,
+                                      reports_dir)
     json_path.write_text(json.dumps(payload, indent=1, default=str))
 
+    exclusion_note = (
+        f" (TRAINED WITHOUT {', '.join(trainer.excluded)})"
+        if trainer.excluded else "")
     lines = [
-        f"# Training report -- {trainer.fold} on {trainer.platform}",
+        f"# Training report -- {trainer.run_name} on {trainer.platform}"
+        + exclusion_note,
         "",
         f"Held-out dataset: **{trainer.held_out}**. Generated "
         f"{payload['generated_utc']} on {summary['platform']} "
         f"({summary['gpu'] or summary['device']}).",
         "",
-        f"This file is keyed by host: `train_{trainer.fold}_{trainer.platform}.md`. "
+        f"This file is keyed by run and host: "
+        f"`train_{trainer.run_name}_{trainer.platform}.md`. "
         "The same fold trained on another host writes its own file beside this "
         "one rather than overwriting it -- two runs of one fold are two "
         "measurements, and they differ in GPU, worker count and I/O path.",
         "",
+        (f"- **training mixture: {', '.join(trainer.excluded)} EXCLUDED.** "
+         f"Trained on {sorted({r['dataset'] for r in trainer.train_ds.rows})}, "
+         f"validated unchanged on {sorted(summary['val_composition'])}. "
+         f"pos_weight is held at the fold's recorded "
+         f"{summary['pos_weight_drift']['recorded']:.3f} in both arms "
+         f"(this split alone would imply "
+         f"{summary['pos_weight_drift']['implied_by_this_split']:.3f}) so that "
+         "the training data is the only thing that differs."
+         if trainer.excluded else
+         "- training mixture: the fold's full set, nothing excluded"),
         f"- config hash `{trainer.hash}`, seed {summary['seed']['seed']}"
         f" ({summary['seed']['note']})",
         f"- {summary['epochs']} epochs, batch {summary['batch_size']}, "

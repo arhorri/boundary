@@ -42,7 +42,7 @@ earlier step's JSON and never re-derives its decisions.
 | 3 tiling/folds | `tiling.py` | `build_tiles.py` | `03_tiling.ipynb` | `reports/audit.json`, `reports/gt_extraction.json` | `reports/manifests/*.csv`, `reports/parents.md`, `reports/tiling.{json,md}`, `configs/fold_stats.yaml` |
 | 4 dataset/loader | `dataset.py` | — | `04_dataset.ipynb` | manifests, `configs/fold_stats.yaml` | `configs/dataloader.yaml` |
 | 5 model/loss | `model.py`, `losses.py` | — | `05_model_and_loss.ipynb` | `configs/fold_stats.yaml` | `configs/default.yaml` `model:`/`loss:`/`train.batch_size` |
-| 6 training | `train.py` | `train.py` | `06_train.ipynb` | manifests, `configs/fold_stats.yaml`, `configs/dataloader.yaml` | `PERSISTENT_DIR/checkpoints/<fold>/{last,best}.pt`, `reports/train_<fold>_<platform>.{json,md}` |
+| 6 training | `train.py` | `train.py` | `06_train.ipynb` | manifests, `configs/fold_stats.yaml`, `configs/dataloader.yaml` | `PERSISTENT_DIR/checkpoints/<fold>/{last,best}.pt`, `reports/train_<run>_<platform>.{json,md}` |
 
 Key consequences of that contract:
 
@@ -132,6 +132,28 @@ Both modes share one cleanup: despeckle, CLOSE, skeletonize, dilate to a uniform
   `dev` is an alias for `fold_uhcs2`.
 - Steel1 and Steel2 are already exactly 256x256 and must yield exactly one tile
   each with zero padding — asserted, not assumed.
+
+A fold's TRAIN mixture may be reduced, and only through
+`train.exclude_datasets: {fold: [dataset, ...]}` in `configs/default.yaml`.
+Validation is never filtered — the point of an exclusion is to measure its
+effect on an unchanged validation split. An excluded run takes its own run name
+(`dev-no-uhcs1`), so it keeps its own checkpoints, logs and report instead of
+overwriting the full-set arm, and the exclusion RESOLVED FOR THAT FOLD is part
+of the config hash, so the two arms can never resume from one another.
+`pos_weight` stays at the fold's recorded value in both arms on purpose: if the
+data and the class weighting both moved, a difference between the arms could
+not be attributed to either. The drift is measured and printed instead.
+
+Currently set: **`dev` excludes `uhcs1`.** uhcs1 marks every spheroidite
+particle as a boundary; uhcs2 treats those same particles as interior texture
+and bounds only the phase regions containing them — the same material family
+under opposite conventions, so training on both teaches contradictory rules for
+identical texture. It is visible in the failure: uhcs2's lowest-Dice validation
+tiles are the ones where the model outlines particles the uhcs2 truth ignores
+(precision 0.086 against recall 0.588 on the full-set arm). Whether removing it
+helps is measured in `06_train.ipynb`, not assumed. `fold_uhcs2` — the same fold
+under its real name — is deliberately left at the full mixture so the control
+arm can be produced without editing config.
 
 ## Hard rules
 - Never resize images. Handle size variation by tiling only (256 px patch,
@@ -240,6 +262,9 @@ later one; a checkpoint gone after a session = no version was saved, and
     python scripts/build_tiles.py [--datasets Steel1] [--quiet]
     # step 6 (the notebook calls src.train.Trainer directly; this is for headless runs)
     python scripts/train.py --fold dev [--resume] [--epochs 2] [--no-amp]
+    # override train.exclude_datasets for this fold; --exclude with no names
+    # trains on the full mixture (the control arm of an exclusion experiment)
+    python scripts/train.py --fold dev --exclude
     # push generated reports/configs/notebooks back to the repo
     python scripts/push_results.py -m "step N: <description>"
 

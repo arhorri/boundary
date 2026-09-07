@@ -1,7 +1,8 @@
 {
  "fold": "dev",
+ "platform": "colab",
  "held_out": "uhcs2",
- "generated_utc": "2026-09-07T07:29:16Z",
+ "generated_utc": "2026-09-07T08:45:14Z",
  "summary": {
   "fold": "dev",
   "held_out": "uhcs2",
@@ -66,12 +67,12 @@
   "cache": {
    "train": {
     "source": "warm",
-    "seconds": 6.8,
+    "seconds": 4.69,
     "images": 779
    },
    "val": {
     "source": "warm",
-    "seconds": 2.97,
+    "seconds": 2.92,
     "images": 212
    }
   },

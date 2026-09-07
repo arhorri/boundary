@@ -11,6 +11,9 @@ Nothing here needs a GPU or the datasets, so nothing here can skip.
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import numpy as np
 import pytest
 import torch
@@ -581,3 +584,384 @@ def test_load_checkpoint_model_loads_a_matching_checkpoint(tmp_path):
         path, settings, fold="dev", expected_hash="abc")
     assert state["fold"] == "dev"
     assert not model.training, "a model returned for evaluation must be in eval mode"
+
+
+# --------------------------------------------------------------------------
+# placement vs thickness -- the decomposition must tell the two apart
+# --------------------------------------------------------------------------
+RADII = (0, 1, 2, 3)
+DISTS = (0, 1, 2, 3, 5)
+
+
+def _grid(size=96):
+    """A 2-px grid, the width boundary_gt.line_width_px actually produces."""
+    true = np.zeros((size, size), dtype=bool)
+    for offset in range(size // 8, size - 2, size // 4):
+        true[offset:offset + 2, :] = True
+        true[:, offset:offset + 2] = True
+    return true
+
+
+def _summarise_one(pred, true):
+    slot = train_mod._decomposition_slot(RADII, DISTS)
+    train_mod._accumulate_decomposition(
+        slot, train_mod.decomposition_counts(pred, true, RADII, DISTS))
+    return train_mod.summarise_decomposition(slot, RADII, DISTS)
+
+
+def test_decomposition_k0_reproduces_the_plain_pixel_dice():
+    """The k=0 row is the anchor: it must equal the ordinary Dice exactly."""
+    import cv2
+
+    true = _grid()
+    pred = cv2.dilate(true.astype(np.uint8),
+                      train_mod.euclidean_disk(1)).astype(bool)
+    entry = _summarise_one(pred, true)
+
+    tp = int((pred & true).sum())
+    expected = 2 * tp / (int(pred.sum()) + int(true.sum()))
+    assert entry["pixel_dice"] == pytest.approx(expected)
+    assert entry["dilated_dice"][0] == pytest.approx(expected), (
+        "dilating by 0 must be the identity, or the sweep has no anchor")
+
+
+def test_decomposition_of_a_perfect_prediction_is_one_everywhere():
+    true = _grid()
+    entry = _summarise_one(true.copy(), true)
+    assert entry["pixel_dice"] == pytest.approx(1.0)
+    assert entry["skeleton_dice"] == pytest.approx(1.0)
+    for d in DISTS:
+        assert entry["pred_within"][d] == pytest.approx(1.0)
+        assert entry["skeleton_pred_within"][d] == pytest.approx(1.0)
+    assert entry["placement_ok"]
+
+
+def test_a_fat_but_correctly_placed_prediction_reads_as_a_thickness_problem():
+    """The case the whole diagnostic exists to identify.
+
+    Pixel Dice collapses while the skeletons stay on top of each other. If this
+    ever stops holding, the notebook's verdict is worthless.
+    """
+    import cv2
+
+    true = _grid()
+    for k in (1, 2, 3):
+        pred = cv2.dilate(true.astype(np.uint8),
+                          train_mod.euclidean_disk(k)).astype(bool)
+        entry = _summarise_one(pred, true)
+        assert entry["pixel_dice"] < 0.75, f"k={k} should hurt the pixel Dice"
+        assert entry["skeleton_dice"] > 0.90, (
+            f"k={k}: thickness must not move the skeletons "
+            f"(got {entry['skeleton_dice']:.3f})")
+        assert entry["skeleton_lift"] > 1.2, f"k={k}"
+        assert entry["skeleton_pred_within"][1] > 0.95, f"k={k}"
+        assert entry["placement_ok"], f"k={k} verdict: {entry['verdict']}"
+        # width is measured as pooled area / skeleton length, and must rise
+        assert entry["width_pred"] > entry["width_true"], f"k={k}"
+
+
+def test_a_misplaced_prediction_reads_as_a_placement_problem():
+    true = _grid()
+    # Diagonal, so nothing lands back on itself: a purely axial shift leaves
+    # the full-width lines overlapping themselves and measures as half-placed.
+    pred = np.zeros_like(true)
+    pred[4:, 4:] = true[:-4, :-4]
+    entry = _summarise_one(pred, true)
+
+    assert entry["skeleton_dice"] < 0.5
+    assert entry["skeleton_lift"] < 1.2, (
+        "a misplaced prediction's skeleton Dice must track its pixel Dice "
+        "rather than lifting above it")
+    assert entry["skeleton_pred_within"][1] < train_mod.PLACEMENT_NEAR1_BAD
+    assert not entry["placement_ok"]
+    assert entry["width_pred"] == pytest.approx(entry["width_true"], rel=0.1), (
+        "a shifted copy has the same thickness as the truth, so the width "
+        "columns must NOT be what distinguishes it")
+
+
+def test_dilated_dice_alone_cannot_tell_the_two_apart():
+    """Why measurement (b) is reported with a caveat instead of on its own.
+
+    Dilating both masks by 3 px makes almost anything overlap at this boundary
+    density, to the point that a correctly-placed-but-fat prediction and a
+    misplaced one land within a hundredth of each other -- close enough that
+    which of the two comes out ahead is not stable. What is asserted here is
+    that (b) FAILS TO SEPARATE them, which is the claim the notebook makes;
+    asserting a particular ordering would be pinning a coin flip.
+    """
+    import cv2
+
+    true = _grid()
+    fat = cv2.dilate(true.astype(np.uint8),
+                     train_mod.euclidean_disk(3)).astype(bool)
+    shifted = np.zeros_like(true)
+    shifted[2:, 2:] = true[:-2, :-2]
+
+    fat_entry = _summarise_one(fat, true)
+    shifted_entry = _summarise_one(shifted, true)
+
+    gap = abs(shifted_entry["dilated_dice"][3] - fat_entry["dilated_dice"][3])
+    assert gap < 0.10, (
+        f"measurement (b) now separates placed from misplaced by {gap:.3f} at "
+        "k=3; the notebook's warning that it cannot needs rewriting from the "
+        "new numbers")
+    # ... while the instruments that DO work separate them by a mile.
+    assert fat_entry["skeleton_dice"] - shifted_entry["skeleton_dice"] > 0.5, (
+        "skeleton Dice must separate placed from misplaced by far more than "
+        "the dilated Dice does, or the diagnostic has no instrument at all")
+    assert (fat_entry["skeleton_pred_within"][1]
+            - shifted_entry["skeleton_pred_within"][1] > 0.5)
+
+
+def test_noise_scores_near_zero_on_the_instruments_that_work():
+    true = _grid()
+    rng = np.random.default_rng(0)
+    pred = rng.random(true.shape) < true.mean()
+    entry = _summarise_one(pred, true)
+    assert entry["skeleton_dice"] < 0.2
+    assert entry["skeleton_pred_within"][1] < 0.4
+    assert not entry["placement_ok"]
+
+
+def test_reference_decomposition_classifies_every_case_it_is_named_for():
+    """The calibration table the notebook prints must actually calibrate."""
+    reference = train_mod.reference_decomposition(size=128, seed=0)
+    assert "perfect" in reference
+    for name, entry in reference.items():
+        if name.startswith("placed") or name == "perfect":
+            assert entry["placement_ok"], (
+                f"{name} is placed by construction but was classified "
+                f"otherwise: {entry['verdict']}")
+        else:
+            assert not entry["placement_ok"], (
+                f"{name} is misplaced by construction but was classified "
+                f"otherwise: {entry['verdict']}")
+
+
+def test_decompose_error_requires_a_threshold_for_every_dataset():
+    val_ds = _FakeValDataset([np.zeros((8, 8), dtype=np.float32)],
+                             datasets=["A"])
+    model = _ConstantLogits([torch.full((1, 8, 8), -10.0)])
+    with pytest.raises(train_mod.TrainError):
+        train_mod.decompose_error(model, val_ds, {},
+                                  device=torch.device("cpu"))
+
+
+def test_decompose_error_groups_by_dataset_and_keeps_row_order():
+    size = 24
+    band = np.zeros((size, size), dtype=np.float32)
+    band[8:10, :] = 1.0
+    exact = torch.where(torch.from_numpy(band) > 0,
+                        torch.tensor(10.0), torch.tensor(-10.0))
+    empty = torch.full((size, size), -10.0)
+
+    val_ds = _FakeValDataset([band, band, band], datasets=["A", "B", "B"])
+    model = _ConstantLogits([exact[None], exact[None], empty[None]])
+
+    out = train_mod.decompose_error(
+        model, val_ds, {"A": 0.5, "B": 0.5}, device=torch.device("cpu"),
+        dilations=(1,), distances=(1,), batch_size=2)
+
+    assert set(out) == {"A", "B"}
+    assert out["A"]["tiles"] == 1 and out["B"]["tiles"] == 2
+    # A predicted its one tile exactly; B got one exact and one empty.
+    assert out["A"]["pixel_dice"] == pytest.approx(1.0)
+    assert 0.0 < out["B"]["pixel_dice"] < 1.0
+
+
+# --------------------------------------------------------------------------
+# per-fold training-set exclusion
+# --------------------------------------------------------------------------
+DEV_ENTRY = {"train_datasets": ["MetalDam", "Steel1", "uhcs1"],
+             "val_datasets": ["Steel1", "uhcs2"], "held_out": "uhcs2"}
+
+
+def test_no_exclusion_by_default():
+    assert train_mod.DEFAULTS["exclude_datasets"] == {}
+    assert train_mod.resolve_exclusions("dev", _settings(), DEV_ENTRY) == []
+
+
+def test_exclusion_is_scoped_to_its_own_fold():
+    """A mapping, not a flat list: excluding for one fold must not touch others."""
+    settings = _settings(exclude_datasets={"dev": ["uhcs1"]})
+    assert train_mod.resolve_exclusions("dev", settings, DEV_ENTRY) == ["uhcs1"]
+    other = {"train_datasets": ["Steel1", "uhcs1", "uhcs2"]}
+    assert train_mod.resolve_exclusions("fold_MetalDam", settings, other) == []
+
+
+def test_excluding_a_dataset_the_fold_never_trained_on_raises():
+    """Silently doing nothing would leave the header claiming a false exclusion."""
+    settings = _settings(exclude_datasets={"dev": ["Steel2"]})
+    with pytest.raises(train_mod.TrainError) as exc:
+        train_mod.resolve_exclusions("dev", settings, DEV_ENTRY)
+    assert "Steel2" in str(exc.value)
+
+
+def test_excluding_every_training_dataset_raises():
+    settings = _settings(exclude_datasets={"dev": ["MetalDam", "Steel1", "uhcs1"]})
+    with pytest.raises(train_mod.TrainError):
+        train_mod.resolve_exclusions("dev", settings, DEV_ENTRY)
+
+
+def _config_with_exclusions(tmp_path, value):
+    """A copy of the real default.yaml with train.exclude_datasets replaced.
+
+    Written into tmp_path so that load_config's platform overlay lookup --
+    which sits beside the config file -- cannot pick up the repo's own
+    overlays and turn this into a test of something else.
+    """
+    import yaml
+
+    base = yaml.safe_load(
+        (Path(train_mod.REPO_ROOT) / "configs" / "default.yaml").read_text())
+    base["train"] = dict(base["train"], exclude_datasets=value)
+    path = tmp_path / "default.yaml"
+    path.write_text(yaml.safe_dump(base))
+    return path
+
+
+def test_exclusion_is_normalised_so_the_hash_ignores_typing_order(tmp_path):
+    path = _config_with_exclusions(
+        tmp_path, {"dev": ["uhcs1", "MetalDam", "uhcs1"]})
+    settings = train_mod.load_config(path)
+    assert settings["exclude_datasets"]["dev"] == ["MetalDam", "uhcs1"], (
+        "the list must be sorted and de-duplicated, or the config hash would "
+        "depend on the order someone typed the names in")
+
+
+def test_a_bare_list_or_string_exclusion_is_rejected(tmp_path):
+    for index, bad in enumerate((["uhcs1"], {"dev": "uhcs1"})):
+        directory = tmp_path / str(index)
+        directory.mkdir()
+        with pytest.raises(train_mod.TrainError):
+            train_mod.load_config(_config_with_exclusions(directory, bad))
+
+
+def test_the_exclusion_is_in_the_config_hash():
+    """An excluded-set run must never resume from a full-set checkpoint."""
+    model, loss, dataset = ({"encoder": "resnet34"}, {"w_cldice": 0.5},
+                            {"patch_size": 256})
+    full = _settings(exclude_datasets=[])
+    reduced = _settings(exclude_datasets=["uhcs1"])
+    assert (train_mod.config_hash(model, loss, full, dataset)[0]
+            != train_mod.config_hash(model, loss, reduced, dataset)[0])
+    # ...and the hash must not care which order the names were written in.
+    assert (train_mod.config_hash(model, loss, _settings(
+                exclude_datasets=["MetalDam", "uhcs1"]), dataset)[0]
+            == train_mod.config_hash(model, loss, _settings(
+                exclude_datasets=["uhcs1", "MetalDam"]), dataset)[0])
+
+
+def test_exclude_datasets_is_hashed_as_the_resolved_list_for_one_fold():
+    """Trainer hashes the resolved list, so another fold's exclusion is inert.
+
+    Pinned here because the alternative -- hashing the whole mapping -- would
+    invalidate every fold's checkpoints whenever any fold's exclusion changed.
+    """
+    assert "exclude_datasets" in train_mod.HASHED_TRAIN_KEYS
+    model, loss, dataset = ({"encoder": "resnet34"}, {"w_cldice": 0.5},
+                            {"patch_size": 256})
+    # Two runs of the SAME fold resolving to the same exclusion hash alike,
+    # whatever some other fold's entry happens to say.
+    a = train_mod.config_hash(model, loss, _settings(exclude_datasets=["uhcs1"]),
+                              dataset)[0]
+    b = train_mod.config_hash(model, loss, _settings(exclude_datasets=["uhcs1"]),
+                              dataset)[0]
+    assert a == b
+
+
+# --------------------------------------------------------------------------
+# reports are keyed by RUN, and the two arms can be compared
+# --------------------------------------------------------------------------
+def test_report_paths_are_keyed_by_run_not_just_fold():
+    plain_md, plain_json = train_mod.report_paths("dev", "colab", Path("/tmp/r"))
+    excl_md, excl_json = train_mod.report_paths("dev-no-uhcs1", "colab",
+                                                Path("/tmp/r"))
+    assert plain_md.name == "train_dev_colab.md", (
+        "a run with no exclusions must keep the filename it already has")
+    assert excl_md.name == "train_dev-no-uhcs1_colab.md"
+    assert plain_json != excl_json, "the two arms must not overwrite each other"
+
+
+def _write_report_stub(directory, run_name, host, dataset, dice, tiles=265,
+                       excluded=(), epoch=3, config_hash="h", hashed=None):
+    payload = {
+        "fold": "dev", "run_name": run_name, "platform": host,
+        "excluded_datasets": list(excluded), "config_hash": config_hash,
+        "hashed_config": hashed,
+        "best": {"epoch": epoch},
+        "history": [{
+            "epoch": epoch,
+            "metrics": {"per_dataset": {dataset: {
+                "best": {"threshold": 0.4, "iou": dice / 2, "dice": dice,
+                         "precision": 0.1, "recall": 0.5, "boundary_f": 0.2,
+                         "pred_fraction": 0.3, "true_fraction": 0.05,
+                         "tiles": tiles},
+                "fixed": {"threshold": 0.5, "iou": dice / 3, "dice": dice / 1.5,
+                          "precision": 0.08, "recall": 0.6, "boundary_f": 0.15,
+                          "pred_fraction": 0.4, "true_fraction": 0.05,
+                          "tiles": tiles}}}},
+        }],
+    }
+    (directory / f"train_{run_name}_{host}.json").write_text(json.dumps(payload))
+
+
+def test_load_run_reports_finds_both_arms_and_ignores_other_folds(tmp_path):
+    _write_report_stub(tmp_path, "dev", "colab", "uhcs2", 0.149)
+    _write_report_stub(tmp_path, "dev-no-uhcs1", "colab", "uhcs2", 0.210,
+                       excluded=["uhcs1"])
+    _write_report_stub(tmp_path, "fold_MetalDam", "colab", "MetalDam", 0.4)
+    # A fold whose name merely starts the same way must not be swept in.
+    _write_report_stub(tmp_path, "development", "colab", "uhcs2", 0.9)
+
+    found = train_mod.load_run_reports("dev", reports_dir=tmp_path)
+    assert set(found) == {("dev", "colab"), ("dev-no-uhcs1", "colab")}, (
+        f"got {sorted(found)}")
+
+
+def test_compare_runs_puts_the_arms_side_by_side(tmp_path):
+    _write_report_stub(tmp_path, "dev", "colab", "uhcs2", 0.149)
+    _write_report_stub(tmp_path, "dev-no-uhcs1", "colab", "uhcs2", 0.210,
+                       excluded=["uhcs1"])
+    reports = train_mod.load_run_reports("dev", reports_dir=tmp_path)
+    comparison = train_mod.compare_runs(reports, "uhcs2", row="best")
+
+    assert set(comparison["runs"]) == {"dev (colab)", "dev-no-uhcs1 (colab)"}
+    assert comparison["runs"]["dev (colab)"]["excluded"] == "-"
+    assert comparison["runs"]["dev-no-uhcs1 (colab)"]["excluded"] == "uhcs1"
+    assert comparison["runs"]["dev-no-uhcs1 (colab)"]["dice"] == pytest.approx(0.210)
+    assert comparison["comparable"], comparison["note"]
+
+
+def test_compare_runs_flags_arms_scored_on_different_tiles(tmp_path):
+    """If validation differed between arms the comparison means nothing."""
+    _write_report_stub(tmp_path, "dev", "colab", "uhcs2", 0.149, tiles=265)
+    _write_report_stub(tmp_path, "dev-no-uhcs1", "colab", "uhcs2", 0.210,
+                       tiles=200, excluded=["uhcs1"])
+    reports = train_mod.load_run_reports("dev", reports_dir=tmp_path)
+    comparison = train_mod.compare_runs(reports, "uhcs2", row="best")
+    assert not comparison["comparable"]
+    assert "NOT COMPARABLE" in comparison["note"]
+
+
+def test_diff_runs_reports_what_actually_differed(tmp_path):
+    _write_report_stub(tmp_path, "dev", "colab", "uhcs2", 0.149, config_hash="a",
+                       hashed={"train": {"exclude_datasets": [], "lr": 0.0003}})
+    _write_report_stub(tmp_path, "dev-no-uhcs1", "colab", "uhcs2", 0.21,
+                       excluded=["uhcs1"], config_hash="b",
+                       hashed={"train": {"exclude_datasets": ["uhcs1"],
+                                         "lr": 0.0003}})
+    reports = train_mod.load_run_reports("dev", reports_dir=tmp_path)
+    diff = train_mod.diff_runs(reports, ("dev", "colab"), ("dev-no-uhcs1", "colab"))
+    assert len(diff) == 1, f"exactly one key should differ, got {diff}"
+    assert "exclude_datasets" in diff[0]
+
+
+def test_diff_runs_says_so_when_a_report_predates_hashed_config(tmp_path):
+    _write_report_stub(tmp_path, "dev", "colab", "uhcs2", 0.149, hashed=None)
+    _write_report_stub(tmp_path, "dev-no-uhcs1", "colab", "uhcs2", 0.21,
+                       excluded=["uhcs1"],
+                       hashed={"train": {"exclude_datasets": ["uhcs1"]}})
+    reports = train_mod.load_run_reports("dev", reports_dir=tmp_path)
+    diff = train_mod.diff_runs(reports, ("dev", "colab"), ("dev-no-uhcs1", "colab"))
+    assert any("hashed_config absent" in line for line in diff)

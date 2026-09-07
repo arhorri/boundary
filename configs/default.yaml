@@ -75,6 +75,40 @@ train:
   # by notebooks/04 ON THIS HOST. Never a literal, never the other host's value.
   num_workers: null
   sampler: true             # WeightedRandomSampler from fold_stats
+
+  # Datasets dropped from a fold's TRAIN split, as {fold: [dataset, ...]}.
+  # Validation is never filtered -- the point of excluding something is to
+  # measure the effect on an UNCHANGED validation split.
+  #
+  # An excluded run gets its own run name (`dev-no-uhcs1`), so it keeps its own
+  # checkpoints, logs and report rather than overwriting the full-set arm, and
+  # the exclusion is part of the config hash, so the two arms can never resume
+  # from each other.
+  #
+  # WHY uhcs1 IS OUT OF dev
+  # ----------------------
+  # uhcs1 and uhcs2 are the same material family annotated under OPPOSITE
+  # conventions. uhcs1 marks every spheroidite particle as a boundary; uhcs2
+  # treats those same particles as interior texture and bounds only the phase
+  # regions that contain them. Identical texture, contradictory labels.
+  #
+  # This is not a guess about the data. It is what the failure looks like: the
+  # uhcs2 validation tiles with the LOWEST per-tile Dice are exactly the ones
+  # where the model outlines particles that the uhcs2 ground truth ignores --
+  # visible in notebook 06's best/median/worst gallery, where the worst rows
+  # are dense with particle outlines that have no counterpart in the truth.
+  #
+  # Training on both teaches the model two rules for one texture, and the fold
+  # then scores it against only one of them. Removing uhcs1 removes the
+  # contradiction; whether that HELPS is measured, not assumed -- notebook 06
+  # reports uhcs2 with and without uhcs1 side by side, on the same validation
+  # tiles and with the same pos_weight, so the difference is attributable to
+  # the training mixture alone.
+  #
+  # `dev` is an alias of fold_uhcs2 and is the only fold this is set for; the
+  # other folds keep their full mixtures.
+  exclude_datasets:
+    dev: [uhcs1]
   # The fixed operating point every epoch is reported at, and the reference
   # the sweep is compared against. Must land on the sweep grid below.
   threshold: 0.5

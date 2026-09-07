@@ -88,6 +88,9 @@ def main(argv=None) -> int:
     ap.add_argument("--batch-size", type=int, default=None)
     ap.add_argument("--num-workers", type=int, default=None,
                     help="override this host's measured value; say why in the report")
+    ap.add_argument("--exclude", nargs="*", default=None, metavar="DATASET",
+                    help="override train.exclude_datasets for THIS fold; "
+                         "pass with no names to train on the full mixture")
     ap.add_argument("--resume", action="store_true",
                     help="continue PERSISTENT_DIR/checkpoints/<fold>/last.pt")
     ap.add_argument("--allow-config-change", action="store_true",
@@ -106,6 +109,11 @@ def main(argv=None) -> int:
             settings[key] = value
     if args.no_amp:
         settings["amp"] = False
+    if args.exclude is not None:
+        # Scoped to the fold being run, so a command-line override cannot
+        # silently change what another fold would train on.
+        settings["exclude_datasets"] = dict(settings["exclude_datasets"] or {})
+        settings["exclude_datasets"][args.fold] = sorted(set(args.exclude))
 
     resolved = paths_mod.resolve_paths()
     progress = None
@@ -125,6 +133,17 @@ def main(argv=None) -> int:
                             tensorboard=not args.no_tensorboard)
 
     print(f"fold {summary['fold']} (held out: {summary['held_out']})")
+    if summary["excluded_datasets"]:
+        drift = summary["pos_weight_drift"]
+        print(f"  ! TRAINING MIXTURE REDUCED: "
+              f"{', '.join(summary['excluded_datasets'])} excluded")
+        print(f"    run name {summary['run_name']} -- its own checkpoints, "
+              "logs and report; the config hash makes a resume from a "
+              "full-set checkpoint impossible")
+        print(f"    validation is UNCHANGED, and pos_weight stays at the "
+              f"fold's recorded {drift['recorded']:.3f} (this split alone "
+              f"would imply {drift['implied_by_this_split']:.3f}) so the "
+              "training data is the only difference")
     print(f"  {summary['platform']} / {summary['gpu'] or summary['device']}, "
           f"AMP {summary['amp']}, config hash {summary['config_hash']}")
     print(f"  {summary['train_tiles']} train tiles, {summary['val_tiles']} val "
