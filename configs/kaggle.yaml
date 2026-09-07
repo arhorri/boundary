@@ -1,18 +1,26 @@
 # Kaggle-only configuration overlay.
 #
-# This file is the ENTIRE divergence of the `kaggle` branch from `main`. It is
-# merged over configs/default.yaml by src/paths.py:load_config() whenever the
-# detected platform is "kaggle", so every notebook and every src module is
-# byte-identical on both branches. Nothing but configuration belongs here: if a
-# platform difference cannot be expressed as a key below, it belongs in
-# scripts/bootstrap_session.py or src/paths.py on main, where BOTH hosts get it.
+# With the host-keyed reports a Kaggle run pushes, this file is the ENTIRE
+# divergence of the `kaggle` branch from `main` -- check it with
+# `git diff --stat main kaggle`, which must show this file and
+# reports/train_*_kaggle.* and nothing else. It is merged over
+# configs/default.yaml by src/paths.py:load_config() whenever the detected
+# platform is "kaggle", so every notebook and every src module is byte-identical
+# on both branches. Nothing but configuration belongs here: if a platform
+# difference cannot be expressed as a key below, it belongs in
+# scripts/bootstrap_session.py, src/paths.py or src/session.py on main, where
+# BOTH hosts get it.
 #
 # Two input datasets must be attached to the Kaggle notebook:
 #   /kaggle/input/phase11-microstructure-data/   the data/ folder (raw + masks)
 #   /kaggle/input/phase11-gt-boundaries/         gt_boundaries/ from step 2
 #
 # Reminder: /kaggle/working does NOT survive the session unless the notebook
-# version is saved. The bootstrap prints this warning on every Kaggle run.
+# version is saved. The bootstrap prints this warning on every Kaggle run, and
+# src/session.py prints the exact Save Version step at the end of training.
+#
+# Use notebooks/06_train.ipynb -- there is no separate Kaggle training notebook.
+# The multi-session behaviour is dispatched from src/session.py on main.
 
 session:
   branch: kaggle          # this checkout stays on this branch when it re-syncs
@@ -31,10 +39,12 @@ session:
     gt_dataset_slug: phase11-gt-boundaries
     branch: kaggle
 
-    # Checkpoint survival across sessions. Consumed by src/kaggle_persist.py,
-    # which exists only on this branch. Every key is optional; the module's
-    # DEFAULTS cover them, and an unknown key here is an error rather than a
-    # typo that silently does nothing.
+    # Checkpoint survival across sessions. Consumed by src/session.py ON MAIN,
+    # through session.for_host() -- the single platform dispatch point. Nothing
+    # on this branch implements it; these are the knobs the Kaggle strategy
+    # reads. Every key is optional; the module's DEFAULTS cover them, and an
+    # unknown key here is an error rather than a typo that silently does
+    # nothing.
     persist:
       # Kaggle kills a free GPU session at its limit with no grace period, so
       # the budget sits under the 9 h allowance and src/kaggle_persist.py stops
