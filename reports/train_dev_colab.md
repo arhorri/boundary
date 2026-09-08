@@ -1,10 +1,11 @@
 # Training report -- dev on colab
 
-Held-out dataset: **uhcs2**. Generated 2026-09-07T08:45:14Z on colab (Tesla T4).
+Held-out dataset: **uhcs2**. Generated 2026-09-08T23:06:39Z on colab (Tesla T4).
 
-This file is keyed by host: `train_dev_colab.md`. The same fold trained on another host writes its own file beside this one rather than overwriting it -- two runs of one fold are two measurements, and they differ in GPU, worker count and I/O path.
+This file is keyed by run and host: `train_dev_colab.md`. The same fold trained on another host writes its own file beside this one rather than overwriting it -- two runs of one fold are two measurements, and they differ in GPU, worker count and I/O path.
 
-- config hash `aa9004635b39c2b0`, seed 0 (statistically reproducible; cudnn.benchmark picks algorithms by timing, so bitwise equality across runs is not claimed)
+- training mixture: the fold's full set, nothing excluded
+- config hash `6c4ff95a34f95e2e`, seed 0 (statistically reproducible; cudnn.benchmark picks algorithms by timing, so bitwise equality across runs is not claimed)
 - 40 epochs, batch 64, 4 workers (configs/dataloader.yaml hosts.colab.num_workers, measured 2026-09-06T07:14:10Z)
 - lr 0.0003 (encoder 2.9999999999999997e-05), weight decay 0.0001, warmup 2 epochs, grad clip 1.0
 - pos_weight 7.111000061035156 (configs/fold_stats.yaml folds.dev.pos_weight)
