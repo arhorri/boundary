@@ -105,10 +105,26 @@ train:
   # tiles and with the same pos_weight, so the difference is attributable to
   # the training mixture alone.
   #
-  # `dev` is an alias of fold_uhcs2 and is the only fold this is set for; the
+  # `dev` is an alias of fold_uhcs2 and was the only fold this was set for; the
   # other folds keep their full mixtures.
-  exclude_datasets:
-    dev: [uhcs1]
+  #
+  # RESULT (2026-09-07, Kaggle, both arms on the same host so the comparison is
+  # not confounded by GPU or I/O): excluding uhcs1 gave uhcs2 best-threshold
+  # Dice 0.1405 against 0.1537 for the full mixture -- WORSE, not better. See
+  # reports/train_dev-no-uhcs1_kaggle.md and reports/train_dev_kaggle.md.
+  #
+  # The annotation clash described above is real -- it is visible in the
+  # gallery exactly as predicted -- but removing uhcs1 is not what fixes this
+  # model. The placement/thickness decomposition (notebook 06) found the
+  # larger problem is OVER-DETECTION: the model draws roughly 3x too many
+  # boundary curves, each roughly 2x too fat, on both uhcs2 and Steel1. That is
+  # a confidence/threshold problem, not a training-mixture problem, and it is
+  # not solved by which datasets are in the mixture.
+  #
+  # Exclusion is therefore OFF again. The mechanism stays -- this is where the
+  # next exclusion experiment is set, the same way -- but nothing is currently
+  # excluded from any fold.
+  exclude_datasets: {}
   # The fixed operating point every epoch is reported at, and the reference
   # the sweep is compared against. Must land on the sweep grid below.
   threshold: 0.5
