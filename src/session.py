@@ -22,9 +22,9 @@ where it would drift behind steps 7-9 in silence.
 session once and then call the same methods regardless of platform::
 
     session = session.for_host(PATHS)          # the only platform decision
-    session.stage_resume(fold)                 # no-op off Kaggle
+    session.stage_resume(trainer.run_name, fold=trainer.fold)   # no-op off Kaggle
     trainer.fit(on_epoch_end=session.guard(cb))
-    session.survival_report(fold, trainer)
+    session.survival_report(trainer.run_name, trainer)
 
 No notebook, script or module may test ``PATHS["platform"]`` to decide which of
 these to call. If a host needs behaviour none of these methods expresses, the
@@ -215,22 +215,35 @@ class SessionSupport:
                 "every epoch are safe where they are; nothing has to be staged "
                 "or saved by hand.")
 
-    def checkpoint_dir(self, fold: str) -> Path:
-        return self.persistent_dir / "checkpoints" / str(fold)
+    def checkpoint_dir(self, run: str) -> Path:
+        """Where Trainer writes, which is named for the RUN, not the fold.
+
+        A run training on a reduced mixture is called ``dev-no-uhcs1`` and
+        keeps its checkpoints under that name, so looking under the fold name
+        would miss them entirely -- reporting a correctly written checkpoint as
+        absent, and on Kaggle staging the wrong one back.
+        """
+        return self.persistent_dir / "checkpoints" / str(run)
 
     # -- resume -----------------------------------------------------------
-    def stage_resume(self, fold: str, overwrite: bool = False,
-                     verbose: bool = True) -> dict:
+    def stage_resume(self, run: str, fold: Optional[str] = None,
+                     overwrite: bool = False, verbose: bool = True) -> dict:
         """Put a resumable checkpoint where ``maybe_resume()`` looks.
+
+        ``run`` names the checkpoint directory; ``fold`` is the identity stored
+        inside the checkpoint and defaults to ``run``, which is correct
+        whenever nothing is excluded. They differ for a reduced-mixture run and
+        conflating them is how a correctly written checkpoint goes missing.
 
         Here there is nothing to do: whatever the last session wrote is still
         at that path. The report shape matches the Kaggle one so a caller can
         print it either way.
         """
-        local = self.checkpoint_dir(fold) / "last.pt"
+        fold = fold or run
+        local = self.checkpoint_dir(run) / "last.pt"
         report = {
-            "platform": self.platform, "fold": str(fold),
-            "checkpoint_dir": str(self.checkpoint_dir(fold)),
+            "platform": self.platform, "run": str(run), "fold": str(fold),
+            "checkpoint_dir": str(self.checkpoint_dir(run)),
             "staged": [], "skipped": [], "candidates": [],
             "resumable": local.is_file(),
             "reason": ("PERSISTENT_DIR survives on this host; a checkpoint "
@@ -280,14 +293,14 @@ class SessionSupport:
         return {"root": str(root), "entries": entries,
                 "total_mb": round(total, 1)}
 
-    def survival_report(self, fold: str, trainer=None) -> dict:
+    def survival_report(self, run: str, trainer=None) -> dict:
         """Say where the checkpoints are and what, if anything, must be done."""
-        checkpoint_dir = self.checkpoint_dir(fold)
-        report = {"platform": self.platform, "fold": str(fold),
+        checkpoint_dir = self.checkpoint_dir(run)
+        report = {"platform": self.platform, "run": str(run),
                   "checkpoint_dir": str(checkpoint_dir), "checkpoints": {},
                   "action_required": False}
         print("=" * 72)
-        print(f"CHECKPOINT SURVIVAL -- {self.platform}")
+        print(f"CHECKPOINT SURVIVAL -- {self.platform}  (run {run})")
         print("=" * 72)
         for name in CHECKPOINT_NAMES:
             path = checkpoint_dir / name
@@ -304,14 +317,15 @@ class SessionSupport:
         return report
 
     # -- host-specific verification --------------------------------------
-    def checks(self, fold: str, trainer=None) -> list:
+    def checks(self, run: str, trainer=None) -> list:
         """``(name, ok, detail)`` triples for the notebook's checks cell.
 
         Host-specific verification lives with the host rather than behind a
         platform test in the notebook: the caller loops over whatever it is
-        given.
+        given. ``run`` is the RUN name -- checking under the fold name would
+        fail every reduced-mixture run whose checkpoint is perfectly fine.
         """
-        local = self.checkpoint_dir(fold) / "last.pt"
+        local = self.checkpoint_dir(run) / "last.pt"
         resolved_root = self.persistent_dir.resolve()
         return [(
             "checkpoint is inside PERSISTENT_DIR, which survives on this host",
@@ -453,28 +467,35 @@ class KaggleSession(SessionSupport):
         return ordered
 
     @staticmethod
-    def _candidate_paths(root: Path, fold: str, name: str) -> list:
-        """Where a checkpoint for ``fold`` could plausibly sit under ``root``.
+    def _candidate_paths(root: Path, run: str, name: str) -> list:
+        """Where a checkpoint for ``run`` could plausibly sit under ``root``.
 
         Three layouts are accepted, in decreasing confidence: the working-dir
         shape a saved notebook version produces, a dataset built from the
         checkpoint folder alone, and a flat hand-made upload. Anything else
         falls through to a bounded search rather than being guessed at.
         """
-        exact = [root / "checkpoints" / fold / name, root / fold / name,
+        exact = [root / "checkpoints" / run / name, root / run / name,
                  root / name]
         hits = [p for p in exact if p.is_file()]
         if hits:
             return hits
         for depth in (1, 2):
-            pattern = "/".join(["*"] * depth) + f"/checkpoints/{fold}/{name}"
+            pattern = "/".join(["*"] * depth) + f"/checkpoints/{run}/{name}"
             hits.extend(sorted(p for p in root.glob(pattern) if p.is_file()))
             if hits:
                 break
         return hits
 
-    def find_checkpoints(self, fold: str, name: str = "last.pt") -> list:
-        """Every attached checkpoint for ``fold``, newest epoch first.
+    def find_checkpoints(self, run: str, fold: Optional[str] = None,
+                         name: str = "last.pt") -> list:
+        """Every attached checkpoint for ``run``, newest epoch first.
+
+        ``run`` locates the directory; ``fold`` is what the checkpoint must
+        SAY it is, and defaults to ``run``. The two differ for a
+        reduced-mixture run -- ``dev-no-uhcs1`` on disk, ``dev`` inside the
+        file -- so validating the directory name against the stored fold would
+        reject every one of them.
 
         Only the file header is read. Files that do not load, or that belong to
         a different fold, are reported with the reason rather than dropped -- a
@@ -484,10 +505,11 @@ class KaggleSession(SessionSupport):
         if name not in CHECKPOINT_NAMES:
             raise SessionError(
                 f"name must be one of {CHECKPOINT_NAMES}, got {name!r}.")
+        fold = fold or run
 
         found = []
         for root in self.input_roots():
-            for path in self._candidate_paths(root, str(fold), name):
+            for path in self._candidate_paths(root, str(run), name):
                 try:
                     meta = checkpoint_meta(path)
                 except Exception as exc:                 # noqa: BLE001
@@ -512,8 +534,8 @@ class KaggleSession(SessionSupport):
         return found
 
     # -- staging ----------------------------------------------------------
-    def stage_resume(self, fold: str, overwrite: bool = False,
-                     verbose: bool = True) -> dict:
+    def stage_resume(self, run: str, fold: Optional[str] = None,
+                     overwrite: bool = False, verbose: bool = True) -> dict:
         """Copy an attached checkpoint to where ``maybe_resume()`` looks.
 
         Never raises just because nothing was found: a first session
@@ -527,8 +549,10 @@ class KaggleSession(SessionSupport):
         replacing it with an older attached copy would throw away finished
         epochs.
         """
-        checkpoint_dir = self.checkpoint_dir(fold)
-        report = {"platform": self.platform, "fold": str(fold),
+        fold = fold or run
+        checkpoint_dir = self.checkpoint_dir(run)
+        report = {"platform": self.platform, "run": str(run),
+                  "fold": str(fold),
                   "checkpoint_dir": str(checkpoint_dir), "staged": [],
                   "skipped": [], "candidates": [], "resumable": False,
                   "reason": ""}
@@ -547,7 +571,7 @@ class KaggleSession(SessionSupport):
             return report
 
         for name in CHECKPOINT_NAMES:
-            candidates = self.find_checkpoints(fold, name=name)
+            candidates = self.find_checkpoints(run, fold=fold, name=name)
             report["candidates"].extend(_stringify(c) for c in candidates)
 
             usable = [c for c in candidates if c.get("usable")]
@@ -598,7 +622,7 @@ class KaggleSession(SessionSupport):
                 print(f"    -> {target}")
 
         if not report["staged"]:
-            report["reason"] = ("no attached checkpoint for this fold; this "
+            report["reason"] = (f"no attached checkpoint for run {run!r}; this "
                                 "session starts clean")
             if verbose:
                 print(f"  {report['reason']}")
@@ -644,7 +668,7 @@ class KaggleSession(SessionSupport):
         return guarded
 
     # -- what survives ----------------------------------------------------
-    def survival_report(self, fold: str, trainer=None) -> dict:
+    def survival_report(self, run: str, trainer=None) -> dict:
         """Print exactly what has to happen for this run to reach the next session.
 
         Deliberately not automatic: saving a version is a UI action a notebook
@@ -652,19 +676,19 @@ class KaggleSession(SessionSupport):
         finished 8-hour session whose author believed the checkpoint was safe
         because the path printed without an error.
         """
-        checkpoint_dir = self.checkpoint_dir(fold)
+        checkpoint_dir = self.checkpoint_dir(run)
         present = {}
         for name in CHECKPOINT_NAMES:
             path = checkpoint_dir / name
             present[name] = checkpoint_meta(path) if path.is_file() else None
 
         sizes = self.output_sizes()
-        report = {"platform": self.platform, "fold": str(fold),
+        report = {"platform": self.platform, "run": str(run),
                   "checkpoint_dir": str(checkpoint_dir), "checkpoints": {},
                   "output": sizes, "action_required": True}
 
         print("=" * 72)
-        print("KAGGLE CHECKPOINT SURVIVAL")
+        print(f"KAGGLE CHECKPOINT SURVIVAL  (run {run})")
         print("=" * 72)
         for name, meta in present.items():
             report["checkpoints"][name] = _stringify(meta)
@@ -701,8 +725,8 @@ class KaggleSession(SessionSupport):
         return report
 
     # -- host-specific verification --------------------------------------
-    def checks(self, fold: str, trainer=None) -> list:
-        out = list(super().checks(fold, trainer))
+    def checks(self, run: str, trainer=None) -> list:
+        out = list(super().checks(run, trainer))
         sizes = self.output_sizes()
         checkpoint_mb = sizes["entries"].get("checkpoints", 0.0)
         cache_mb = sizes["entries"].get("tile_cache", 0.0)

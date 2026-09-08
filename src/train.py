@@ -1863,15 +1863,42 @@ def tile_prediction(model: "nn.Module", val_ds, row_index: int, device,
 # --------------------------------------------------------------------------
 # placement vs thickness -- splitting a low pixel Dice into its two causes
 # --------------------------------------------------------------------------
-#: Verdict thresholds, calibrated against reference_decomposition() rather than
-#: guessed. On synthetic cases where the answer is known, a correctly-placed but
-#: fat prediction scores skeleton Dice 0.93-0.97 and 1-px skeleton proximity
-#: 0.99+ no matter HOW fat it is, while a prediction misplaced by 3-5 px scores
-#: 0.38-0.59 and 0.43-0.64, and pure noise at the same density scores 0.11 and
-#: 0.20. Both cuts below sit in the gap between those regimes.
-PLACEMENT_NEAR1_OK = 0.80
-PLACEMENT_SKELETON_DICE_OK = 0.70
-PLACEMENT_NEAR1_BAD = 0.50
+# Verdict thresholds, every one of them placed in a gap MEASURED by
+# reference_decomposition() rather than guessed. The two proximities are read
+# at the project's own boundary tolerance (train.boundary_tolerance_px = 2),
+# which is the distance step 2's annotation is accurate to.
+#
+#   case                 pred-in-true  true-in-pred  skelDice  width  curve
+#   perfect                     1.00        1.00       1.00     1.00   1.00
+#   placed but 1-3 px fat       1.00        0.99+      0.98+    1.97+  ~1.0
+#   over-detected 1x-3x         0.34-0.60   1.00       0.44-.72 ~1.0   1.8-3.5
+#   over-detected + fat         0.34        1.00       0.44     1.81   3.49
+#   displaced 2 px              1.00        0.99       0.02     1.00   0.99
+#   misplaced 5-8 px            0.10        0.10       0.02     1.00   ~1.0
+#   noise at the same density   0.19        0.63       0.05     0.52   1.94
+#
+#: Below this, the true curves were not found: nothing the prediction drew is
+#: near them. Noise reaches 0.63; every case that did find them reaches 0.99.
+PLACEMENT_FOUND_OK = 0.70
+#: Below this, most of what was drawn is not on a true boundary -- the
+#: signature of OVER-DETECTION. Over-detected cases top out at 0.60; placed
+#: ones sit at 1.00.
+PLACEMENT_REAL_OK = 0.80
+#: Above this, the predicted line is materially fatter than the true one.
+#: Correctly-thin cases reach 1.00; fat ones start at 1.81.
+PLACEMENT_WIDTH_HIGH = 1.40
+#: Below this the two skeletons barely overlap EXACTLY, even though they are
+#: within tolerance of each other -- a sub-tolerance registration offset rather
+#: than a placement failure. Offset scores 0.02; everything correctly placed
+#: scores 0.98+.
+PLACEMENT_EXACT_OVERLAP_OK = 0.50
+#: Over-detection also requires genuine structural overlap, not coincidental
+#: coverage. Dense enough noise reaches "found" 0.90 purely by chance -- a
+#: random pixel lands within 2 px of almost anything -- and would otherwise be
+#: read as "found the curves and drew more besides". Skeleton Dice tells the
+#: two apart regardless of boundary density: noise scores 0.05-0.12 across
+#: every grid density tested, genuine over-detection 0.44-0.72.
+PLACEMENT_STRUCTURE_OK = 0.25
 
 
 def decomposition_counts(pred: np.ndarray, true: np.ndarray,
@@ -1968,30 +1995,78 @@ def summarise_decomposition(slot: dict, radii: Sequence,
     skeleton_pred_within = {d: _safe_div(slot["skel_pred_near"][d],
                                         slot["skel_pred_px"])
                             for d in distances}
-    near1 = skeleton_pred_within.get(1, skeleton_pred_within.get(
-        min(distances, key=lambda d: abs(d - 1)), 0.0))
+    skeleton_true_within = {d: _safe_div(slot["skel_true_near"][d],
+                                        slot["skel_true_px"])
+                            for d in distances}
 
-    if near1 >= PLACEMENT_NEAR1_OK and skeleton_dice >= PLACEMENT_SKELETON_DICE_OK:
-        verdict = ("PLACEMENT IS FINE -- the boundaries are where they belong "
-                   "and the pixel Dice is being spent on THICKNESS")
-        placement_ok = True
-    elif near1 >= PLACEMENT_NEAR1_OK:
-        verdict = ("centrelines land within 1 px but do not coincide: "
-                   "placement is broadly right, and the skeleton Dice "
-                   "understates it because a 1-px line has no tolerance")
-        placement_ok = True
-    elif near1 < PLACEMENT_NEAR1_BAD:
-        verdict = ("MISPLACED -- the predicted centreline is not near the true "
-                   "one, so thickness is not the problem and thinning the "
-                   "prediction would not help")
-        placement_ok = False
+    # BOTH directions, read at the project's own boundary tolerance. One
+    # direction alone cannot tell over-detection from misplacement: in both,
+    # most of what was drawn is off the truth, and only "did the true curves
+    # get found" separates them.
+    tolerance = min(distances, key=lambda d: abs(d - 2)) if distances else 0
+    real = skeleton_pred_within.get(tolerance, 0.0)   # what we drew IS boundary
+    found = skeleton_true_within.get(tolerance, 0.0)  # we FOUND the boundary
+
+    width_ratio = _safe_div(_safe_div(pred_px, slot["skel_pred_px"]),
+                            _safe_div(true_px, slot["skel_true_px"]))
+    # How many times too much CURVE was drawn, independent of how fat it is.
+    # Algebraically identical to (pred_frac/true_frac) / (width_pred/width_true)
+    # -- the area ratio divided by the width ratio -- but taken directly from
+    # the skeleton lengths, so it does not compound three roundings.
+    curve_ratio = _safe_div(slot["skel_pred_px"], slot["skel_true_px"])
+    too_fat = width_ratio >= PLACEMENT_WIDTH_HIGH
+
+    if found < PLACEMENT_FOUND_OK:
+        label = "MISPLACED"
+        verdict = ("MISPLACED -- the true curves were not found, so thickness "
+                   "is not the problem and thinning the prediction would not "
+                   "help")
+    elif real < PLACEMENT_REAL_OK and skeleton_dice < PLACEMENT_STRUCTURE_OK:
+        # "found" is satisfied but nothing structural underlies it. At high
+        # boundary density a random pixel lands within tolerance of almost
+        # anything, so coverage alone is not detection -- and this branch has
+        # to sit INSIDE the low-`real` case, because a sub-tolerance offset
+        # also has a near-zero skeleton Dice while being perfectly placed.
+        label = "MISPLACED"
+        verdict = (f"MISPLACED -- {found:.0%} of the true centreline has "
+                   "something within tolerance of it, but the two skeletons "
+                   f"barely overlap (Dice {skeleton_dice:.3f}) and only "
+                   f"{real:.0%} of what was drawn is on a boundary. That is "
+                   "coincidental coverage from predicting far too much, not "
+                   "detection of the real curves")
+    elif real < PLACEMENT_REAL_OK:
+        label = "OVER-DETECTION" + (" + THICKNESS" if too_fat else "")
+        verdict = (
+            f"OVER-DETECTION -- every true curve was found ({found:.0%} of the "
+            f"true centreline has a prediction on it) but only {real:.0%} of "
+            f"what was drawn lies on a true boundary. The model is drawing "
+            f"{curve_ratio:.1f}x too many curves"
+            + (f", each {width_ratio:.1f}x too fat. Two separate problems."
+               if too_fat else ". Thickness is not the issue here."))
+    elif too_fat:
+        label = "THICKNESS"
+        verdict = (f"THICKNESS -- the curves are the right ones in the right "
+                   f"places ({real:.0%} of the drawn centreline is on a true "
+                   f"boundary) and are {width_ratio:.1f}x too fat")
+    elif skeleton_dice < PLACEMENT_EXACT_OVERLAP_OK:
+        label = "OFFSET"
+        verdict = (f"OFFSET -- the curves are within {tolerance} px of the "
+                   "truth but barely overlap it exactly (skeleton Dice "
+                   f"{skeleton_dice:.3f}). A sub-tolerance registration shift, "
+                   "not a placement failure and not thickness")
     else:
-        verdict = ("MIXED -- some boundaries land on the truth and some do "
-                   "not; neither thickness alone nor placement alone explains "
-                   "the score")
-        placement_ok = False
+        label = "GOOD"
+        verdict = ("the curves are the right ones, in the right places, at the "
+                   "right width; the pixel Dice is not being lost to either")
+    placement_ok = label != "MISPLACED"
 
     return {
+        "label": label,
+        "width_ratio": width_ratio,
+        "curve_length_ratio": curve_ratio,
+        "found": found,
+        "real": real,
+        "tolerance_px": tolerance,
         "tiles": slot["tiles"],
         "pred_px": pred_px,
         "true_px": true_px,
@@ -2015,9 +2090,7 @@ def summarise_decomposition(slot: dict, radii: Sequence,
         "true_within": {d: _safe_div(slot["true_near"][d], true_px)
                         for d in distances},
         "skeleton_pred_within": skeleton_pred_within,
-        "skeleton_true_within": {d: _safe_div(slot["skel_true_near"][d],
-                                             slot["skel_true_px"])
-                                 for d in distances},
+        "skeleton_true_within": skeleton_true_within,
         "verdict": verdict,
         "placement_ok": placement_ok,
     }
@@ -2123,8 +2196,10 @@ def reference_decomposition(dilations: Sequence = (1, 2, 3),
         raise TrainError("pass at least one proximity distance to reference_decomposition")
 
     # A 2-px grid, the width boundary_gt.line_width_px actually produces.
+    step = size // 5
+    offsets = list(range(size // 8, size - 2, step))
     true = np.zeros((size, size), dtype=bool)
-    for offset in range(size // 8, size - 2, size // 5):
+    for offset in offsets:
         true[offset:offset + 2, :] = True
         true[:, offset:offset + 2] = True
 
@@ -2144,14 +2219,53 @@ def reference_decomposition(dilations: Sequence = (1, 2, 3),
         out[px:, px:] = true[:-px, :-px]
         return out
 
+    def over_detected(multiple, also_fat=False):
+        """The true curves PLUS extra real curves the annotation never marked.
+
+        This is the case the calibration set was missing, and its absence is
+        why the rule used to call over-detection "misplaced": the extra curves
+        roughly multiply the skeleton length, skeleton Dice falls in proportion,
+        and a rule reading skeleton Dice alone cannot tell "found the truth and
+        drew more besides" from "did not find the truth".
+
+        The extras are laid between the true lines, so they are genuinely
+        elsewhere in the tile rather than a fattening of what is already there.
+        ``multiple`` is how many extra lines go in each gap, giving roughly
+        1x, 2x and 3x the true curve length in additions.
+        """
+        pred = true.copy()
+        for offset in offsets:
+            for i in range(1, int(multiple) + 1):
+                position = offset + int(step * i / (multiple + 1))
+                if position + 2 < size:
+                    pred[position:position + 2, :] = True
+                    pred[:, position:position + 2] = True
+        if also_fat:
+            pred = cv2.dilate(pred.astype(np.uint8),
+                              euclidean_disk(1)).astype(bool)
+        return pred
+
     rng = np.random.default_rng(seed)
     cases = {
         "perfect": true.copy(),
         "placed, 1 px too fat": fat(1),
         "placed, 2 px too fat": fat(2),
         "placed, 3 px too fat": fat(3),
-        "misplaced by 2 px": shifted(2),
+        # The true curves plus 1x, 2x and 3x their length in extra curves --
+        # at the true width, and again at twice the true width, because the
+        # real failure on uhcs2 is both at once and the rule has to name both.
+        "over-detected 1x": over_detected(1),
+        "over-detected 2x": over_detected(2),
+        "over-detected 3x": over_detected(3),
+        "over-detected 1x, 2x too fat": over_detected(1, also_fat=True),
+        "over-detected 2x, 2x too fat": over_detected(2, also_fat=True),
+        "over-detected 3x, 2x too fat": over_detected(3, also_fat=True),
+        # 2 px is INSIDE train.boundary_tolerance_px, so this is a registration
+        # offset rather than a placement failure -- and the verdict says so,
+        # which is the honest reading of a metric measured at 2 px tolerance.
+        "displaced 2 px (in tolerance)": shifted(2),
         "misplaced by 5 px": shifted(5),
+        "misplaced by 8 px": shifted(8),
         "noise at the same density": rng.random(true.shape) < true.mean(),
     }
 

@@ -672,7 +672,10 @@ def test_a_misplaced_prediction_reads_as_a_placement_problem():
     assert entry["skeleton_lift"] < 1.2, (
         "a misplaced prediction's skeleton Dice must track its pixel Dice "
         "rather than lifting above it")
-    assert entry["skeleton_pred_within"][1] < train_mod.PLACEMENT_NEAR1_BAD
+    assert entry["label"] == "MISPLACED", entry["verdict"]
+    assert entry["found"] < train_mod.PLACEMENT_FOUND_OK, (
+        "the defining feature of misplacement is that the TRUE curves were "
+        "not found -- which is what separates it from over-detection")
     assert not entry["placement_ok"]
     assert entry["width_pred"] == pytest.approx(entry["width_true"], rel=0.1), (
         "a shifted copy has the same thickness as the truth, so the width "
@@ -713,29 +716,137 @@ def test_dilated_dice_alone_cannot_tell_the_two_apart():
             - shifted_entry["skeleton_pred_within"][1] > 0.5)
 
 
-def test_noise_scores_near_zero_on_the_instruments_that_work():
-    true = _grid()
-    rng = np.random.default_rng(0)
-    pred = rng.random(true.shape) < true.mean()
-    entry = _summarise_one(pred, true)
-    assert entry["skeleton_dice"] < 0.2
-    assert entry["skeleton_pred_within"][1] < 0.4
-    assert not entry["placement_ok"]
+def test_noise_is_misplaced_at_every_boundary_density():
+    """Coincidental coverage must not be mistaken for over-detection.
+
+    At high boundary density a random pixel lands within tolerance of almost
+    anything, so "did we find the true curves" alone rises to 0.90 for pure
+    noise and would read as "found them and drew more besides". Skeleton Dice
+    is what separates coincidence from structure, and it does so independently
+    of density -- which is why the rule consults it and why this test sweeps
+    densities rather than checking one grid.
+    """
+    for size, spacing in ((96, 4), (128, 4), (192, 5), (256, 5)):
+        true = np.zeros((size, size), dtype=bool)
+        for offset in range(size // 8, size - 2, size // spacing):
+            true[offset:offset + 2, :] = True
+            true[:, offset:offset + 2] = True
+        pred = np.random.default_rng(0).random(true.shape) < true.mean()
+        entry = _summarise_one(pred, true)
+        assert entry["label"] == "MISPLACED", (
+            f"grid {size} (density {true.mean():.3f}): noise was called "
+            f"{entry['label']} -- found={entry['found']:.3f}, "
+            f"skeleton Dice={entry['skeleton_dice']:.3f}")
+        assert entry["skeleton_dice"] < train_mod.PLACEMENT_STRUCTURE_OK
+        assert not entry["placement_ok"]
 
 
-def test_reference_decomposition_classifies_every_case_it_is_named_for():
-    """The calibration table the notebook prints must actually calibrate."""
-    reference = train_mod.reference_decomposition(size=128, seed=0)
-    assert "perfect" in reference
+#: Every calibration case and the label it must receive. Written out rather
+#: than derived from the name, so that adding a case forces a deliberate
+#: decision about what it is supposed to demonstrate.
+EXPECTED_LABELS = {
+    "perfect": "GOOD",
+    "placed, 1 px too fat": "THICKNESS",
+    "placed, 2 px too fat": "THICKNESS",
+    "placed, 3 px too fat": "THICKNESS",
+    "over-detected 1x": "OVER-DETECTION",
+    "over-detected 2x": "OVER-DETECTION",
+    "over-detected 3x": "OVER-DETECTION",
+    "over-detected 1x, 2x too fat": "OVER-DETECTION + THICKNESS",
+    "over-detected 2x, 2x too fat": "OVER-DETECTION + THICKNESS",
+    "over-detected 3x, 2x too fat": "OVER-DETECTION + THICKNESS",
+    "displaced 2 px (in tolerance)": "OFFSET",
+    "misplaced by 5 px": "MISPLACED",
+    "misplaced by 8 px": "MISPLACED",
+    "noise at the same density": "MISPLACED",
+}
+
+
+def test_every_calibration_case_receives_its_own_label():
+    """The calibration table the notebook prints must actually calibrate.
+
+    This is the test that would have caught the original bug: over-detection
+    was absent from the reference set, so nothing checked that the rule could
+    name it, and it was silently reported as misplacement instead.
+    """
+    reference = train_mod.reference_decomposition(size=256, seed=0)
+    assert set(reference) == set(EXPECTED_LABELS), (
+        f"calibration cases changed: {sorted(set(reference) ^ set(EXPECTED_LABELS))}")
+    wrong = {name: (entry["label"], EXPECTED_LABELS[name])
+             for name, entry in reference.items()
+             if entry["label"] != EXPECTED_LABELS[name]}
+    assert not wrong, f"mislabelled (got, expected): {wrong}"
+    # All five distinct outcomes must be exercised, or a rule branch is untested.
+    assert set(EXPECTED_LABELS.values()) <= {e["label"] for e in reference.values()}
+
+
+def test_over_detection_is_not_reported_as_misplacement():
+    """The exact regression: true curves found, plus extra curves besides.
+
+    Skeletonizing an over-detected prediction multiplies the skeleton length,
+    which drags skeleton Dice down to the range a misplaced prediction sits in.
+    Only the second proximity direction separates them, so both are asserted.
+    """
+    reference = train_mod.reference_decomposition(size=256, seed=0)
+    for name in ("over-detected 1x", "over-detected 2x", "over-detected 3x"):
+        entry = reference[name]
+        assert entry["label"] == "OVER-DETECTION", entry["verdict"]
+        assert entry["found"] > 0.95, (
+            f"{name}: every true curve is present by construction, so 'found' "
+            f"must be high -- got {entry['found']:.3f}")
+        assert entry["real"] < train_mod.PLACEMENT_REAL_OK, (
+            f"{name}: most of what was drawn is not on a true boundary")
+        assert entry["curve_length_ratio"] > 1.5, (
+            f"{name}: the extra curves must show up as curve length")
+        assert entry["width_ratio"] < train_mod.PLACEMENT_WIDTH_HIGH, (
+            f"{name}: nothing was fattened, so width must NOT be blamed")
+        # And the old single-direction rule would have got it wrong.
+        assert entry["skeleton_dice"] < 0.75, (
+            "skeleton Dice alone lands in misplacement territory here, which "
+            "is precisely why the verdict may not be read off it")
+
+
+def test_over_detection_and_thickness_are_named_separately():
+    """uhcs2's real failure is both at once, and the verdict must say both."""
+    reference = train_mod.reference_decomposition(size=256, seed=0)
+    entry = reference["over-detected 3x, 2x too fat"]
+    assert entry["label"] == "OVER-DETECTION + THICKNESS"
+    assert entry["curve_length_ratio"] > 1.5
+    assert entry["width_ratio"] >= train_mod.PLACEMENT_WIDTH_HIGH
+    assert "too many curves" in entry["verdict"]
+    assert "too fat" in entry["verdict"]
+
+
+def test_a_sub_tolerance_offset_is_not_called_misplaced():
+    """2 px is INSIDE train.boundary_tolerance_px, so it is not misplacement.
+
+    Its pixel Dice is destroyed and its exact skeleton overlap is ~0, but every
+    curve is within the tolerance the ground truth's own placement is accurate
+    to. Calling that MISPLACED while measuring at 2 px tolerance would be
+    self-contradictory, so it gets its own label.
+    """
+    entry = train_mod.reference_decomposition(size=256, seed=0)[
+        "displaced 2 px (in tolerance)"]
+    assert entry["label"] == "OFFSET"
+    assert entry["pixel_dice"] < 0.2, "the pixel Dice really is destroyed"
+    assert entry["found"] > 0.9 and entry["real"] > 0.9
+    assert entry["width_ratio"] == pytest.approx(1.0, abs=0.15)
+    assert entry["curve_length_ratio"] == pytest.approx(1.0, abs=0.15)
+
+
+def test_the_curve_length_ratio_is_the_area_ratio_divided_by_the_width_ratio():
+    """The identity the notebook states: area = width x curves.
+
+    Reported from skeleton lengths directly rather than by dividing three
+    derived numbers, so this pins that the two definitions agree.
+    """
+    reference = train_mod.reference_decomposition(size=256, seed=0)
     for name, entry in reference.items():
-        if name.startswith("placed") or name == "perfect":
-            assert entry["placement_ok"], (
-                f"{name} is placed by construction but was classified "
-                f"otherwise: {entry['verdict']}")
-        else:
-            assert not entry["placement_ok"], (
-                f"{name} is misplaced by construction but was classified "
-                f"otherwise: {entry['verdict']}")
+        if entry["true_px"] == 0 or entry["width_ratio"] == 0:
+            continue
+        area_ratio = entry["pred_px"] / entry["true_px"]
+        assert entry["curve_length_ratio"] == pytest.approx(
+            area_ratio / entry["width_ratio"], rel=1e-6), name
 
 
 def test_decompose_error_requires_a_threshold_for_every_dataset():
@@ -838,36 +949,72 @@ def test_a_bare_list_or_string_exclusion_is_rejected(tmp_path):
 
 
 def test_the_exclusion_is_in_the_config_hash():
-    """An excluded-set run must never resume from a full-set checkpoint."""
+    """An excluded-set run must never resume from a full-set checkpoint.
+
+    What is hashed is the exclusion RESOLVED FOR ONE FOLD -- a list -- not the
+    whole ``{fold: [...]}`` mapping. Hashing the mapping would invalidate every
+    fold's checkpoints whenever any fold's exclusion changed, which is why
+    Trainer substitutes the resolved list before hashing.
+    """
     model, loss, dataset = ({"encoder": "resnet34"}, {"w_cldice": 0.5},
                             {"patch_size": 256})
+    assert "exclude_datasets" in train_mod.HASHED_TRAIN_KEYS
     full = _settings(exclude_datasets=[])
     reduced = _settings(exclude_datasets=["uhcs1"])
     assert (train_mod.config_hash(model, loss, full, dataset)[0]
             != train_mod.config_hash(model, loss, reduced, dataset)[0])
-    # ...and the hash must not care which order the names were written in.
-    assert (train_mod.config_hash(model, loss, _settings(
-                exclude_datasets=["MetalDam", "uhcs1"]), dataset)[0]
-            == train_mod.config_hash(model, loss, _settings(
-                exclude_datasets=["uhcs1", "MetalDam"]), dataset)[0])
 
 
-def test_exclude_datasets_is_hashed_as_the_resolved_list_for_one_fold():
-    """Trainer hashes the resolved list, so another fold's exclusion is inert.
+def test_another_folds_exclusion_does_not_disturb_this_folds_hash():
+    """The reason the RESOLVED list is hashed rather than the whole mapping.
 
-    Pinned here because the alternative -- hashing the whole mapping -- would
-    invalidate every fold's checkpoints whenever any fold's exclusion changed.
+    Two configs that differ only in what some OTHER fold excludes must produce
+    the same hash for this fold, or adding an experiment on fold_MetalDam would
+    silently invalidate every dev checkpoint.
     """
-    assert "exclude_datasets" in train_mod.HASHED_TRAIN_KEYS
     model, loss, dataset = ({"encoder": "resnet34"}, {"w_cldice": 0.5},
                             {"patch_size": 256})
-    # Two runs of the SAME fold resolving to the same exclusion hash alike,
-    # whatever some other fold's entry happens to say.
-    a = train_mod.config_hash(model, loss, _settings(exclude_datasets=["uhcs1"]),
-                              dataset)[0]
-    b = train_mod.config_hash(model, loss, _settings(exclude_datasets=["uhcs1"]),
-                              dataset)[0]
-    assert a == b
+    entry = DEV_ENTRY
+
+    def hash_for(mapping):
+        settings = _settings(exclude_datasets=mapping)
+        # Exactly what Trainer.__init__ does before hashing.
+        resolved = train_mod.resolve_exclusions("dev", settings, entry)
+        hashed = dict(settings)
+        hashed["exclude_datasets"] = resolved
+        return train_mod.config_hash(model, loss, hashed, dataset)[0]
+
+    assert hash_for({"dev": ["uhcs1"]}) == hash_for(
+        {"dev": ["uhcs1"], "fold_MetalDam": ["uhcs2"]})
+    assert hash_for({"dev": ["uhcs1"]}) != hash_for({})
+
+
+def test_the_hash_ignores_the_order_names_were_written_in():
+    """Order-independence comes from normalisation, not from config_hash.
+
+    ``config_hash`` serialises with ``json.dumps(sort_keys=True)``, which sorts
+    dict KEYS and leaves list ELEMENTS alone -- so an unsorted list would hash
+    differently. Both entry points sort: ``load_config`` normalises the mapping
+    and ``resolve_exclusions`` returns ``sorted(set(...))``. This tests the
+    guarantee where it is actually made rather than assuming config_hash
+    provides it.
+    """
+    model, loss, dataset = ({"encoder": "resnet34"}, {"w_cldice": 0.5},
+                            {"patch_size": 256})
+    entry = {"train_datasets": ["MetalDam", "Steel1", "uhcs1"]}
+
+    def hash_for(order):
+        settings = _settings(exclude_datasets={"dev": order})
+        hashed = dict(settings)
+        hashed["exclude_datasets"] = train_mod.resolve_exclusions(
+            "dev", settings, entry)
+        return train_mod.config_hash(model, loss, hashed, dataset)[0]
+
+    assert hash_for(["MetalDam", "uhcs1"]) == hash_for(["uhcs1", "MetalDam"])
+    # And the normaliser really is what sorts them.
+    assert train_mod.resolve_exclusions(
+        "dev", _settings(exclude_datasets={"dev": ["uhcs1", "MetalDam"]}),
+        entry) == ["MetalDam", "uhcs1"]
 
 
 # --------------------------------------------------------------------------
