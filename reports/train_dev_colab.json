@@ -1,15 +1,100 @@
 {
  "fold": "dev",
+ "run_name": "dev",
+ "excluded_datasets": [],
+ "config_hash": "6c4ff95a34f95e2e",
+ "hashed_config": {
+  "model": {
+   "arch": "unet",
+   "classes": 1,
+   "encoder": "resnet34",
+   "encoder_weights": "imagenet",
+   "freeze_encoder_epochs": 3,
+   "in_channels": 1
+  },
+  "loss": {
+   "cldice_iters": 3,
+   "eps": 1e-06,
+   "smooth": 1.0,
+   "w_bce": 1.0,
+   "w_cldice": 0.5,
+   "w_dice": 1.0
+  },
+  "train": {
+   "batch_size": 64,
+   "boundary_tolerance_px": 2,
+   "deterministic": false,
+   "encoder_lr_scale": 0.1,
+   "epochs": 40,
+   "exclude_datasets": [],
+   "grad_clip": 1.0,
+   "lr": 0.0003,
+   "min_lr_scale": 0.01,
+   "optimizer": "adamw",
+   "sampler": true,
+   "scheduler": "cosine",
+   "seed": 0,
+   "threshold": 0.5,
+   "threshold_sweep_max": 0.95,
+   "threshold_sweep_min": 0.05,
+   "threshold_sweep_step": 0.05,
+   "warmup_epochs": 2,
+   "weight_decay": 0.0001
+  },
+  "dataset": {
+   "affine_rotate": 15,
+   "affine_scale": 0.1,
+   "affine_shift": 0.0625,
+   "blur_limit": 3,
+   "brightness_limit": 0.25,
+   "clahe_clip_limit": 2.0,
+   "contrast_limit": 0.25,
+   "elastic_alpha": 20.0,
+   "elastic_sigma": 6.0,
+   "gamma_limit": [
+    70,
+    140
+   ],
+   "gt_subdir": "gt_boundaries",
+   "manifest_subdir": "manifests",
+   "noise_std_range": [
+    0.02,
+    0.1
+   ],
+   "p_affine": 0.5,
+   "p_blur": 0.2,
+   "p_brightness_contrast": 0.5,
+   "p_clahe": 0.2,
+   "p_elastic": 0.15,
+   "p_gamma": 0.3,
+   "p_hflip": 0.5,
+   "p_noise": 0.25,
+   "p_rot90": 0.5,
+   "p_vflip": 0.5,
+   "patch_size": 256
+  }
+ },
  "platform": "colab",
  "held_out": "uhcs2",
- "generated_utc": "2026-09-07T08:45:14Z",
+ "generated_utc": "2026-09-08T23:20:57Z",
  "summary": {
   "fold": "dev",
+  "run_name": "dev",
+  "excluded_datasets": [],
+  "pos_weight_drift": {
+   "recorded": 7.111,
+   "recorded_source": "configs/fold_stats.yaml folds.dev",
+   "implied_by_this_split": 7.110839753169032,
+   "mean_boundary_fraction": 0.12329179597085299,
+   "ratio": 0.9999774649372849,
+   "in_use": 7.111,
+   "note": "the recorded value is used in BOTH arms on purpose, so that the training data is the only thing that differs"
+  },
   "held_out": "uhcs2",
   "platform": "colab",
   "device": "cuda",
   "gpu": "Tesla T4",
-  "config_hash": "aa9004635b39c2b0",
+  "config_hash": "6c4ff95a34f95e2e",
   "seed": {
    "seed": 0,
    "deterministic": false,
@@ -67,12 +152,12 @@
   "cache": {
    "train": {
     "source": "warm",
-    "seconds": 4.69,
+    "seconds": 5.11,
     "images": 779
    },
    "val": {
     "source": "warm",
-    "seconds": 2.92,
+    "seconds": 3.12,
     "images": 212
    }
   },

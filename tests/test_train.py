@@ -1112,3 +1112,256 @@ def test_diff_runs_says_so_when_a_report_predates_hashed_config(tmp_path):
     reports = train_mod.load_run_reports("dev", reports_dir=tmp_path)
     diff = train_mod.diff_runs(reports, ("dev", "colab"), ("dev-no-uhcs1", "colab"))
     assert any("hashed_config absent" in line for line in diff)
+
+
+# --------------------------------------------------------------------------
+# best.pt survives a resume -- the incident this section exists to prevent
+# --------------------------------------------------------------------------
+# 2026-09-09: a resume that trained ZERO further epochs (the checkpoint was
+# already at the run's final epoch), across a benign config-hash change
+# accepted with allow_config_change=True, left self.model holding the LAST
+# epoch's weights (loaded from last.pt, never from best.pt). A notebook cell
+# then called trainer.save(last_epoch, is_best=True) by hand to silence an
+# unrelated "checkpoint provenance" check, and that call overwrote best.pt's
+# real epoch-22 selected weights with epoch 39's. Epoch 22 is gone; the fold
+# has to be retrained to get it back (see reports/train_dev_colab.md). Every
+# test below defends one part of the fix.
+
+class _FakeEncoderModel(torch.nn.Module):
+    """Just enough structure for save()/maybe_resume(): an .encoder submodule
+    with parameters and a BatchNorm layer, the way the real smp Unet has --
+    without depending on segmentation_models_pytorch or a GPU.
+    """
+
+    def __init__(self):
+        super().__init__()
+        self.encoder = torch.nn.Sequential(
+            torch.nn.Conv2d(1, 4, 3), torch.nn.BatchNorm2d(4))
+        self.decoder = torch.nn.Conv2d(4, 1, 1)
+
+    def forward(self, x):
+        return self.decoder(self.encoder(x))
+
+
+def _minimal_trainer(tmp_path, seed=0, fold="dev"):
+    """A real Trainer, built via __init__ only -- no dataset, no real model.
+
+    ``setup()`` needs mounted image data and is not exercised here; save() and
+    maybe_resume() need only self.model/optimizer/scheduler/scaler, which are
+    filled in by hand. freeze_encoder_epochs=0 keeps the encoder permanently
+    trainable so build_optimizer's param-group count cannot drift between the
+    two Trainer instances a migration test resumes across -- the freeze
+    SCHEDULE itself is exercised elsewhere and is not what this is testing.
+    """
+    settings = dict(train_mod.DEFAULTS)
+    settings["seed"] = seed
+    resolved = {"platform": "local", "persistent_dir": tmp_path}
+    trainer = train_mod.Trainer(
+        fold=fold, resolved=resolved, settings=settings,
+        model_settings={"freeze_encoder_epochs": 0},
+        loss_settings={}, dataset_settings={})
+    trainer.model = _FakeEncoderModel()
+    trainer.optimizer = train_mod.build_optimizer(trainer.model, trainer.settings)
+    trainer.scheduler = train_mod.WarmupCosine(total_steps=10, warmup_steps=1)
+    trainer.scaler = train_mod.make_scaler(trainer.amp_enabled)
+    return trainer
+
+
+def _completed_run(tmp_path, best_epoch=21, final_epoch=39, seed=0):
+    """A trainer that has already 'finished': best.pt at ``best_epoch``,
+    last.pt at ``final_epoch`` with genuinely different weights, so a
+    checksum comparison actually proves something.
+    """
+    trainer = _minimal_trainer(tmp_path, seed=seed)
+    trainer.best = {"metric": 0.1493, "epoch": best_epoch, "key": "uhcs2",
+                    "threshold": 0.4,
+                    "criterion": "best-threshold Dice on the held-out dataset"}
+    trainer.history = [{"epoch": best_epoch}]
+    trainer.save(best_epoch, is_best=True)
+    best_checksum = train_mod.state_dict_checksum(trainer.model.state_dict())
+
+    with torch.no_grad():
+        for p in trainer.model.parameters():
+            p.add_(torch.randn_like(p) * 0.01)
+    final_checksum = train_mod.state_dict_checksum(trainer.model.state_dict())
+    assert final_checksum != best_checksum, (
+        "the perturbation must actually change the weights, or this fixture "
+        "proves nothing")
+
+    trainer.history.append({"epoch": final_epoch})
+    trainer.save(final_epoch, is_best=False)
+    return trainer, best_checksum, final_checksum
+
+
+def test_resume_across_a_benign_config_change_leaves_best_pt_untouched(tmp_path):
+    """The exact scenario the user asked to be tested, end to end.
+
+    Resume a completed run across a benign config-hash change (a different
+    seed -- HASHED_TRAIN_KEYS, but nothing that should invalidate a decision a
+    human has already accepted) and assert best.pt's epoch and weight
+    checksum are unchanged.
+    """
+    old, best_checksum, final_checksum = _completed_run(tmp_path, seed=0)
+
+    new = _minimal_trainer(tmp_path, seed=1)
+    assert new.hash != old.hash, "the fixture must actually change the hash"
+    assert new.last_path == old.last_path and new.best_path == old.best_path
+
+    status = new.maybe_resume(allow_config_change=True)
+    assert status["resumed"]
+    assert status["hash_migrated"]
+    assert new.start_epoch == 40, "nothing left to train past epoch 39"
+
+    # In memory: maybe_resume() still loads from last.pt, as always -- the
+    # migration must not change WHICH weights get loaded.
+    assert (train_mod.state_dict_checksum(new.model.state_dict())
+           == final_checksum)
+
+    best_after = train_mod.load_checkpoint(new.best_path)
+    assert best_after["epoch"] == 21, (
+        "best.pt's recorded epoch must survive a resume unchanged")
+    assert (train_mod.state_dict_checksum(best_after["model"])
+           == best_checksum), (
+        "best.pt's WEIGHTS must survive a resume unchanged -- this is the "
+        "exact property the incident violated")
+    assert best_after["config_hash"] == new.hash, (
+        "the label should migrate, since the human already accepted the "
+        "change applies to this checkpoint")
+
+    last_after = train_mod.load_checkpoint(new.last_path)
+    assert last_after["epoch"] == 39
+    assert last_after["config_hash"] == new.hash
+
+
+def test_resume_migration_is_idempotent_on_a_second_resume(tmp_path):
+    """Resuming again after the hash already matches must not re-touch anything."""
+    old, best_checksum, _ = _completed_run(tmp_path, seed=0)
+    new = _minimal_trainer(tmp_path, seed=1)
+    new.maybe_resume(allow_config_change=True)
+
+    again = _minimal_trainer(tmp_path, seed=1)
+    status = again.maybe_resume()   # hashes now match; no override needed
+    assert status["resumed"]
+    assert not status["hash_migrated"], (
+        "the hash already matches; there is nothing left to migrate")
+    best_after = train_mod.load_checkpoint(again.best_path)
+    assert (train_mod.state_dict_checksum(best_after["model"])
+           == best_checksum)
+
+
+def test_manually_calling_save_is_best_for_the_wrong_epoch_is_refused(tmp_path):
+    """The exact call that caused the incident, reproduced and blocked.
+
+    ``trainer.save(last_epoch, is_best=True)`` from outside fit() -- the
+    "resync a checkpoint" instinct that destroyed epoch 22's weights -- must
+    now raise instead of writing, and best.pt must be provably untouched
+    afterward.
+    """
+    old, best_checksum, final_checksum = _completed_run(tmp_path, seed=0)
+    new = _minimal_trainer(tmp_path, seed=1)
+    new.maybe_resume(allow_config_change=True)
+    assert new.best["epoch"] == 21          # unchanged by the resume
+
+    with pytest.raises(train_mod.TrainError, match="is not the epoch that"):
+        new.save(39, is_best=True)
+
+    best_after = train_mod.load_checkpoint(new.best_path)
+    assert best_after["epoch"] == 21
+    assert (train_mod.state_dict_checksum(best_after["model"])
+           == best_checksum), "the blocked call must not have written anything"
+
+
+def test_save_is_best_still_works_for_fits_own_usage(tmp_path):
+    """The guard must not break the ONE caller that is supposed to use it."""
+    trainer = _minimal_trainer(tmp_path)
+    trainer.best = {"metric": 0.5, "epoch": 7, "key": "uhcs2"}
+    trainer.history = [{"epoch": 7}]
+    written = trainer.save(7, is_best=True)   # epoch == self.best["epoch"]
+    assert "best" in written
+    assert train_mod.load_checkpoint(trainer.best_path)["epoch"] == 7
+
+
+def test_fit_with_nothing_left_to_train_touches_no_checkpoint(tmp_path):
+    """A resume that runs zero epochs must not touch last.pt or best.pt at all.
+
+    fit()'s loop is ``range(start_epoch, total_epochs)``; when that is empty,
+    train_one_epoch/validate/save are never called -- checked here by their
+    absence rather than assumed from reading the loop.
+    """
+    trainer = _minimal_trainer(tmp_path)
+    trainer.settings = dict(trainer.settings)
+    trainer.settings["epochs"] = 5
+    trainer.start_epoch = 5
+    trainer.history = [{"epoch": i} for i in range(5)]
+
+    assert not trainer.last_path.exists()
+    assert not trainer.best_path.exists()
+    result = trainer.fit()
+    assert result is trainer.history
+    assert len(result) == 5, "no epoch record may be appended"
+    assert not trainer.last_path.exists(), (
+        "a resume with nothing left to train must not create last.pt")
+    assert not trainer.best_path.exists(), (
+        "a resume with nothing left to train must not create best.pt")
+
+
+# --------------------------------------------------------------------------
+# migrate_config_hash and state_dict_checksum, as free functions
+# --------------------------------------------------------------------------
+def test_state_dict_checksum_is_deterministic_and_sensitive_to_weights():
+    model = torch.nn.Linear(4, 2)
+    a = train_mod.state_dict_checksum(model.state_dict())
+    b = train_mod.state_dict_checksum(model.state_dict())
+    assert a == b, "the same weights must checksum identically every time"
+
+    with torch.no_grad():
+        model.weight.add_(1.0)
+    c = train_mod.state_dict_checksum(model.state_dict())
+    assert c != a, "a real weight change must change the checksum"
+
+
+def test_migrate_config_hash_round_trips_without_touching_weights(tmp_path):
+    model = torch.nn.Linear(4, 2)
+    path = tmp_path / "ckpt.pt"
+    state = {"fold": "dev", "epoch": 21, "config_hash": "OLD",
+            "hashed_config": {"a": 1}, "model": model.state_dict()}
+    train_mod.atomic_save(state, path)
+    before = train_mod.state_dict_checksum(model.state_dict())
+
+    result = train_mod.migrate_config_hash(path, "NEW", {"a": 2}, "dev")
+    assert result["migrated"]
+    assert result["from_hash"] == "OLD" and result["to_hash"] == "NEW"
+
+    reread = train_mod.load_checkpoint(path)
+    assert reread["config_hash"] == "NEW"
+    assert reread["hashed_config"] == {"a": 2}
+    assert reread["epoch"] == 21, "only the two hash keys may change"
+    assert train_mod.state_dict_checksum(reread["model"]) == before
+
+
+def test_migrate_config_hash_is_a_no_op_when_the_hash_already_matches(tmp_path):
+    model = torch.nn.Linear(4, 2)
+    path = tmp_path / "ckpt.pt"
+    train_mod.atomic_save({"fold": "dev", "epoch": 1, "config_hash": "SAME",
+                           "hashed_config": {}, "model": model.state_dict()},
+                          path)
+    mtime_before = path.stat().st_mtime_ns
+    result = train_mod.migrate_config_hash(path, "SAME", {}, "dev")
+    assert not result["migrated"]
+    assert path.stat().st_mtime_ns == mtime_before, (
+        "a no-op migration must not rewrite the file")
+
+
+def test_migrate_config_hash_refuses_a_checkpoint_from_another_fold(tmp_path):
+    model = torch.nn.Linear(4, 2)
+    path = tmp_path / "ckpt.pt"
+    train_mod.atomic_save({"fold": "fold_MetalDam", "epoch": 1,
+                           "config_hash": "OLD", "hashed_config": {},
+                           "model": model.state_dict()}, path)
+    with pytest.raises(train_mod.TrainError, match="fold_MetalDam"):
+        train_mod.migrate_config_hash(path, "NEW", {}, "dev")
+
+
+def test_migrate_config_hash_refuses_a_missing_file(tmp_path):
+    with pytest.raises(train_mod.TrainError):
+        train_mod.migrate_config_hash(tmp_path / "nope.pt", "NEW", {}, "dev")
