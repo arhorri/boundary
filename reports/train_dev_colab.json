@@ -76,7 +76,7 @@
  },
  "platform": "colab",
  "held_out": "uhcs2",
- "generated_utc": "2026-09-09T11:06:17Z",
+ "generated_utc": "2026-09-09T13:27:16Z",
  "summary": {
   "fold": "dev",
   "run_name": "dev",
@@ -152,12 +152,12 @@
   "cache": {
    "train": {
     "source": "warm",
-    "seconds": 8.07,
+    "seconds": 12.82,
     "images": 779
    },
    "val": {
     "source": "warm",
-    "seconds": 2.49,
+    "seconds": 3.04,
     "images": 212
    }
   },
