@@ -12,6 +12,34 @@ This file is keyed by run and host: `train_dev_colab.md`. The same fold trained 
 - best epoch 22 by best-threshold Dice on `uhcs2` = 0.1493 at threshold 0.4
 - validation threshold swept over 0.05..0.95 (19 points); fixed reference 0.50
 
+## Incident: this run's `best.pt` is corrupted and unrecoverable
+
+**`best.pt`'s weights on disk no longer match the metrics above.** On
+2026-09-09, a resume of this run trained zero further epochs (the checkpoint
+was already at its final epoch, 39), across a config-hash change accepted
+with `allow_config_change=True`. `Trainer.model` in that resumed session held
+epoch 39's weights -- `maybe_resume()` always loads from `last.pt`, never from
+`best.pt`. A notebook cell then called `trainer.save(39, is_best=True)` by
+hand to resolve an unrelated checkpoint-provenance check, and that single call
+overwrote `best.pt` with epoch 39's weights while leaving `self.best`
+un-updated -- so the file now silently reports epoch 22's selection metric
+(`0.1493` at threshold `0.4`, above) while actually holding epoch 39's
+weights.
+
+**Epoch 22's weights are gone.** There is no other copy. Any inference,
+gallery, or decomposition run against this fold's `best.pt` since that date is
+reading epoch 39, not epoch 22, and its Dice is `0.1417` (the val loss line
+above), not `0.1493`. **The `dev` fold must be retrained from scratch to
+restore an epoch-22 `best.pt`** -- or, more usefully, to let a full clean run
+pick whatever epoch is actually best under current code.
+
+This is now structurally impossible to repeat: `Trainer.save()` refuses
+`is_best=True` for any epoch other than `self.best["epoch"]`, and
+`Trainer.maybe_resume(allow_config_change=True)` migrates a checkpoint's
+recorded config hash directly -- verified, weights untouched -- so there is no
+longer a reason to call `save()` by hand to silence a provenance mismatch. See
+`src/train.py`'s `migrate_config_hash` and the guard in `save()`.
+
 ## Per-dataset validation metrics (the headline)
 
 Validation is a mixture. The pooled row is a footnote; the held-out dataset's row is the measurement this fold exists to make.

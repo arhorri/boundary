@@ -840,6 +840,86 @@ def load_checkpoint(path: Path) -> dict:
         return torch.load(path, map_location="cpu")
 
 
+def state_dict_checksum(state_dict: dict) -> str:
+    """A deterministic checksum of a model state dict's actual VALUES.
+
+    Exists to prove weights did not move across an operation that is only
+    supposed to touch metadata -- migrating a checkpoint's recorded config
+    hash, specifically. Sorted by key, so dict ordering cannot change the
+    result; each tensor's shape is hashed alongside its bytes, so a reshape or
+    a dropped/renamed parameter changes the checksum even where the raw bytes
+    happen to coincide.
+    """
+    hasher = hashlib.sha256()
+    for key in sorted(state_dict):
+        tensor = state_dict[key]
+        hasher.update(key.encode())
+        hasher.update(str(tuple(tensor.shape)).encode())
+        hasher.update(tensor.detach().cpu().contiguous().numpy().tobytes())
+    return hasher.hexdigest()
+
+
+def migrate_config_hash(path: Path, new_hash: str, new_hashed_config: dict,
+                        expected_fold: str) -> dict:
+    """Re-stamp a checkpoint's recorded config hash WITHOUT touching weights.
+
+    Used only once a human has explicitly accepted a config change via
+    ``Trainer.maybe_resume(allow_config_change=True)``: the training data and
+    model this checkpoint holds have not changed, but its stated provenance
+    now disagrees with the config this run continues under. Left unmigrated,
+    every later check compares the checkpoint's OLD hash against the run's NEW
+    one and reports a "mismatch" that is not actually a problem -- which is
+    what once led a session to "fix" it by hand with a raw
+    ``save(is_best=True)`` call, silently overwriting best.pt's real
+    best-epoch weights with whatever the last epoch happened to be. This
+    function is the correct way to do what that call was reaching for:
+    relabel, never reweight.
+
+    Only ``config_hash`` and ``hashed_config`` are replaced; every other key
+    -- above all ``model`` -- is carried through byte-for-byte. Verified by
+    re-reading the file afterward and comparing the model state dict's
+    checksum against the one computed before the rewrite; a mismatch raises
+    rather than leaving a file whose weights cannot be trusted in place.
+    """
+    path = Path(path)
+    if not path.is_file():
+        raise TrainError(f"cannot migrate a hash: no checkpoint at {path}")
+    state = load_checkpoint(path)
+    if state.get("fold") != str(expected_fold):
+        raise TrainError(
+            f"{path} belongs to fold {state.get('fold')!r}, not "
+            f"{expected_fold!r}; refusing to migrate a checkpoint that is not "
+            "this run's own.")
+
+    old_hash = state.get("config_hash")
+    if old_hash == new_hash:
+        return {"path": str(path), "migrated": False,
+                "reason": "already at the new hash", "from_hash": old_hash,
+                "to_hash": new_hash, "state": state}
+
+    before_checksum = state_dict_checksum(state["model"])
+    state["config_hash"] = new_hash
+    state["hashed_config"] = new_hashed_config
+    atomic_save(state, path)
+
+    verify = load_checkpoint(path)
+    after_checksum = state_dict_checksum(verify["model"])
+    if after_checksum != before_checksum:
+        raise TrainError(
+            f"hash migration of {path} changed the model weights' checksum "
+            f"({before_checksum[:12]} -> {after_checksum[:12]}). That must "
+            "never happen for a metadata-only rewrite; treat this file as "
+            "corrupted and restore it from a backup rather than trusting it.")
+    if verify.get("config_hash") != new_hash:
+        raise TrainError(
+            f"hash migration of {path} did not take: recorded hash is still "
+            f"{verify.get('config_hash')} after the rewrite.")
+
+    return {"path": str(path), "migrated": True, "from_hash": old_hash,
+            "to_hash": new_hash, "weight_checksum": after_checksum,
+            "state": verify}
+
+
 # --------------------------------------------------------------------------
 # the trainer
 # --------------------------------------------------------------------------
@@ -1205,6 +1285,7 @@ class Trainer:
                 f"run is fold {self.fold!r}. Resuming would train under the "
                 f"wrong pos_weight and validate on the wrong held-out dataset. "
                 f"Move or delete that checkpoint, or run the fold it belongs to.")
+        hash_migrated = False
         if state.get("config_hash") != self.hash:
             diff = _diff_config(state.get("hashed_config") or {},
                                 self.hashed_config)
@@ -1222,6 +1303,27 @@ class Trainer:
                   "because allow_config_change=True:")
             for line in diff:
                 print(f"    {line}")
+            # The checkpoint's recorded hash is stale the moment this is
+            # accepted: it still says the OLD config produced it, while this
+            # run now continues it under the NEW one. Migrate BOTH files'
+            # labels now -- verified, weights untouched -- rather than leave a
+            # "mismatch" for every later check (and human) to rediscover. See
+            # migrate_config_hash's docstring for the incident this replaces.
+            migration = migrate_config_hash(path, self.hash,
+                                            self.hashed_config, self.fold)
+            state = migration["state"]
+            hash_migrated = migration["migrated"]
+            print(f"    relabelled {migration['path']}: "
+                  f"{migration['from_hash']} -> {migration['to_hash']} "
+                  f"(weights unchanged{': ' + migration['weight_checksum'][:12] if migration['migrated'] else ''})")
+            if self.best_path.is_file():
+                best_migration = migrate_config_hash(
+                    self.best_path, self.hash, self.hashed_config, self.fold)
+                hash_migrated = hash_migrated or best_migration["migrated"]
+                print(f"    relabelled {best_migration['path']}: "
+                      f"{best_migration['from_hash']} -> "
+                      f"{best_migration['to_hash']} (weights unchanged"
+                      f"{': ' + best_migration['weight_checksum'][:12] if best_migration['migrated'] else ''})")
 
         self.model.load_state_dict(state["model"])
         saved_epoch = int(state["epoch"])
@@ -1268,10 +1370,48 @@ class Trainer:
             "best": dict(self.best),
             "saved_amp": state.get("amp"),
             "saved_utc": state.get("saved_utc"),
+            "hash_migrated": hash_migrated,
         }
 
     def save(self, epoch: int, is_best: bool = False) -> dict:
-        """Write last.pt, and best.pt when this epoch is the best so far."""
+        """Write last.pt, and best.pt ONLY when this epoch actually set the record.
+
+        ``is_best`` is not trusted as a bare flag. Writing best.pt is gated on
+        ``epoch == self.best["epoch"]``, which ``fit()`` sets in the SAME
+        iteration, immediately before calling this -- so the two can never
+        disagree in the one caller meant to use them. A caller that has not
+        just updated ``self.best`` to say ``epoch`` is the new record is
+        refused, loudly, rather than allowed to overwrite the real best
+        weights with whatever happens to be sitting in ``self.model`` at the
+        moment.
+
+        This guard exists because of a real incident, not a hypothetical one.
+        A resume that trained ZERO further epochs (the checkpoint was already
+        at the run's final epoch) left ``self.model`` holding the LAST epoch's
+        weights, not the BEST epoch's -- ``maybe_resume`` loads from
+        ``last.pt``, never from ``best.pt``. A notebook cell then called
+        ``trainer.save(last_epoch, is_best=True)`` by hand to "resync" an
+        unrelated checkpoint-provenance mismatch, and that single call
+        silently overwrote best.pt's epoch-22 selected weights with epoch 39's
+        -- epoch 22 is gone and the fold has to be retrained to get it back.
+        Never call ``save(is_best=True)`` from outside ``fit()``; if a
+        checkpoint's recorded config hash needs updating without retraining,
+        that is :func:`migrate_config_hash`, which touches metadata only and
+        is verified never to touch a weight.
+        """
+        if is_best and int(epoch) != self.best.get("epoch"):
+            raise TrainError(
+                f"save(epoch={epoch}, is_best=True) was requested, but "
+                f"self.best['epoch'] is {self.best.get('epoch')!r} -- epoch "
+                f"{epoch} is not the epoch that set the record. Writing "
+                "best.pt here would overwrite the real best weights with "
+                "whatever is currently loaded in self.model. This is exactly "
+                "how a prior run lost its epoch-22 best.pt to a resume that "
+                "trained nothing (see reports/train_dev_colab.md). Let "
+                "fit() call save() -- it keeps epoch and self.best in sync by "
+                "construction -- and use migrate_config_hash() if what you "
+                "actually want is to relabel a checkpoint's config hash "
+                "without retraining.")
         state = {
             "fold": self.fold,
             "held_out": self.held_out,
