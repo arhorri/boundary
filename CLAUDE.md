@@ -276,6 +276,7 @@ Tests live in `tests/` and are run BY the notebook on the host, not locally:
     pytest tests/test_dataset.py -q
     pytest tests/test_losses.py -q
     pytest tests/test_train.py -q
+    pytest tests/test_session.py -q
     pytest tests/test_dataset.py -q -k binary        # one test
 
 Tests that need real data skip themselves when it is absent; notebook 04's
