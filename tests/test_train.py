@@ -1567,3 +1567,57 @@ def test_true_regions_from_boundary_with_no_boundary_is_one_region():
     true = np.zeros((10, 10), dtype=bool)
     regions = train_mod.true_regions_from_boundary(true)
     assert len(np.unique(regions)) == 1
+
+
+# --------------------------------------------------------------------------
+# step 6c: write_region_metrics_report persists the full decomposition
+# --------------------------------------------------------------------------
+def test_region_metrics_report_persists_the_decomposition(tmp_path):
+    """Every arm's committed region_metrics_<run>_<platform>.json must carry
+    the full MISPLACED/OVER-DETECTION/THICKNESS verdict for the held-out
+    dataset (and every other dataset scored), not just what a session
+    happened to print to stdout while it ran and then lost.
+    """
+    reference = train_mod.reference_decomposition(dilations=(1, 2, 3),
+                                                   distances=(1, 2, 3, 5))
+    decomposition = {"uhcs2": reference["noise at the same density"],
+                     "MetalDam": reference["over-detected 3x"]}
+    region_results = {
+        "uhcs2": {"tiles": 10, "ari": 0.5, "vi": 1.2, "pq": 0.3, "sq": 0.6,
+                  "rq": 0.5, "n_true_regions": 4.0, "n_pred_regions": 12.0,
+                  "over_segmentation_factor": 3.0},
+    }
+
+    md_path, json_path = train_mod.write_region_metrics_report(
+        "dev", "colab", region_results, marker_threshold=0.3,
+        reports_dir=tmp_path, decomposition=decomposition)
+
+    assert json_path.is_file() and md_path.is_file()
+    payload = json.loads(json_path.read_text())
+    assert "decomposition" in payload
+    for dataset in ("uhcs2", "MetalDam"):
+        entry = payload["decomposition"][dataset]
+        for field in ("label", "verdict", "pixel_dice", "skeleton_dice",
+                      "curve_length_ratio", "width_ratio"):
+            assert field in entry, f"{dataset}.{field} missing from the report"
+        assert entry["label"] == decomposition[dataset]["label"]
+        assert entry["skeleton_dice"] == pytest.approx(
+            decomposition[dataset]["skeleton_dice"])
+
+    assert "MISPLACED / OVER-DETECTION / THICKNESS decomposition" in md_path.read_text()
+    assert "uhcs2" in md_path.read_text()
+
+
+def test_region_metrics_report_without_decomposition_omits_the_key(tmp_path):
+    """Backward compatible: a caller that does not pass decomposition (e.g.
+    an older call site) still gets a valid report, just without that section.
+    """
+    region_results = {"uhcs2": {"tiles": 5, "ari": 1.0, "vi": 0.0, "pq": 1.0,
+                                "sq": 1.0, "rq": 1.0, "n_true_regions": 1.0,
+                                "n_pred_regions": 1.0,
+                                "over_segmentation_factor": 1.0}}
+    _, json_path = train_mod.write_region_metrics_report(
+        "dev", "colab", region_results, marker_threshold=0.3,
+        reports_dir=tmp_path)
+    payload = json.loads(json_path.read_text())
+    assert "decomposition" not in payload

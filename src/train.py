@@ -2824,8 +2824,17 @@ def region_metrics_report_paths(run_name: str, platform: str,
 
 def write_region_metrics_report(run_name: str, platform: str, results: dict,
                                 marker_threshold: float,
-                                reports_dir: Optional[Path] = None) -> tuple:
-    """Writes and returns ``reports/region_metrics_<run>_<platform>.{md,json}``."""
+                                reports_dir: Optional[Path] = None,
+                                decomposition: Optional[dict] = None) -> tuple:
+    """Writes and returns ``reports/region_metrics_<run>_<platform>.{md,json}``.
+
+    ``decomposition``, when given, is :func:`decompose_error`'s per-dataset
+    dict -- the MISPLACED/OVER-DETECTION/THICKNESS verdict, ``skeleton_dice``,
+    ``curve_length_ratio`` and ``width_ratio`` alongside the region metrics.
+    Without it this report answers "is the partition usable" but not "why" in
+    the same vocabulary the rest of step 6c uses; every arm's notebook cell
+    passes it so the committed JSON carries the verdict, not just stdout.
+    """
     md_path, json_path = region_metrics_report_paths(run_name, platform, reports_dir)
     lines = [
         f"# Region-level metrics -- {run_name} ({platform})",
@@ -2847,12 +2856,39 @@ def write_region_metrics_report(run_name: str, platform: str, results: dict,
             f"{row['rq']:.3f} | {row['n_true_regions']:.1f} | "
             f"{row['n_pred_regions']:.1f} | "
             f"{row['over_segmentation_factor']:.2f} |")
+    if decomposition:
+        lines += [
+            "",
+            "## MISPLACED / OVER-DETECTION / THICKNESS decomposition",
+            "",
+            "The pixel/skeleton view (:func:`decompose_error`) this region "
+            "view complements -- same validation pass, same checkpoint.",
+            "",
+            "| dataset | verdict | pixel Dice | skeleton Dice | curve-length "
+            "ratio | width ratio |",
+            "| --- | --- | --- | --- | --- | --- |",
+        ]
+        for dataset, entry in decomposition.items():
+            lines.append(
+                f"| {dataset} | {entry['label']} | {entry['pixel_dice']:.4f} "
+                f"| {entry['skeleton_dice']:.4f} | "
+                f"{entry['curve_length_ratio']:.2f} | "
+                f"{entry['width_ratio']:.2f} |")
+        lines += ["", "Verdicts, in full:", ""]
+        for dataset, entry in decomposition.items():
+            lines.append(f"- **{dataset}**: {entry['verdict']}")
     md_path.parent.mkdir(parents=True, exist_ok=True)
     md_path.write_text("\n".join(lines) + "\n")
     payload = {"run_name": run_name, "platform": platform,
               "watershed_marker_threshold": marker_threshold,
               "results": results}
-    json_path.write_text(json.dumps(payload, indent=2, sort_keys=True))
+    if decomposition:
+        payload["decomposition"] = decomposition
+    # default=str: decomposition entries carry numpy scalars (dilated_dice,
+    # skeleton_pred_within/true_within are keyed and valued from array
+    # arithmetic) that plain json.dumps cannot serialise on its own -- the
+    # same guard write_film_inference_report already needs for this payload.
+    json_path.write_text(json.dumps(payload, indent=2, sort_keys=True, default=str))
     return md_path, json_path
 
 
