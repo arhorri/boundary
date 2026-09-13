@@ -1365,3 +1365,205 @@ def test_migrate_config_hash_refuses_a_checkpoint_from_another_fold(tmp_path):
 def test_migrate_config_hash_refuses_a_missing_file(tmp_path):
     with pytest.raises(train_mod.TrainError):
         train_mod.migrate_config_hash(tmp_path / "nope.pt", "NEW", {}, "dev")
+
+
+# --------------------------------------------------------------------------
+# step 6c: patience / early stopping
+# --------------------------------------------------------------------------
+def _config_with_train_override(tmp_path, **train_overrides):
+    import yaml
+
+    base = yaml.safe_load(
+        (Path(train_mod.REPO_ROOT) / "configs" / "default.yaml").read_text())
+    base["train"] = dict(base["train"], **train_overrides)
+    path = tmp_path / "default.yaml"
+    path.write_text(yaml.safe_dump(base))
+    return path
+
+
+def test_patience_is_null_by_default():
+    assert train_mod.DEFAULTS["patience"] is None
+    assert train_mod.load_config()["patience"] is None
+
+
+def test_patience_must_be_positive_or_null(tmp_path):
+    with pytest.raises(train_mod.TrainError):
+        train_mod.load_config(_config_with_train_override(tmp_path, patience=0))
+
+
+def test_patience_is_in_the_config_hash():
+    """Alongside `epochs`: together they define what "this training run"
+    means. A checkpoint that stopped early under one patience value must
+    never silently resume under a different one.
+    """
+    model, loss, dataset = ({"encoder": "resnet34"}, {"w_cldice": 0.5},
+                            {"patch_size": 256})
+    assert "patience" in train_mod.HASHED_TRAIN_KEYS
+    a = _settings(exclude_datasets=[], patience=None)
+    b = _settings(exclude_datasets=[], patience=10)
+    assert (train_mod.config_hash(model, loss, a, dataset)[0]
+            != train_mod.config_hash(model, loss, b, dataset)[0])
+
+
+def test_epochs_since_improvement_of_empty_history_is_zero():
+    assert train_mod.epochs_since_improvement([]) == 0
+
+
+def test_epochs_since_improvement_counts_back_from_the_last_best():
+    history = [{"is_best": True}, {"is_best": False}, {"is_best": False}]
+    assert train_mod.epochs_since_improvement(history) == 2
+
+
+def test_epochs_since_improvement_is_zero_right_after_a_best():
+    history = [{"is_best": False}, {"is_best": True}]
+    assert train_mod.epochs_since_improvement(history) == 0
+
+
+def test_epochs_since_improvement_with_no_best_ever_is_the_full_length():
+    history = [{"is_best": False}, {"is_best": False}, {"is_best": False}]
+    assert train_mod.epochs_since_improvement(history) == 3
+
+
+# --------------------------------------------------------------------------
+# step 6c: train.region_metrics config
+# --------------------------------------------------------------------------
+def test_region_metrics_enabled_by_default():
+    settings = train_mod.load_config()
+    assert settings["region_metrics"] == {
+        "enabled": True, "watershed_marker_threshold": 0.3}
+
+
+def test_region_metrics_config_merge_preserves_threshold_default(tmp_path):
+    path = _config_with_train_override(
+        tmp_path, region_metrics={"enabled": False})
+    settings = train_mod.load_config(path)
+    assert settings["region_metrics"] == {
+        "enabled": False, "watershed_marker_threshold": 0.3}, (
+        "setting only region_metrics.enabled must not silently lose "
+        "watershed_marker_threshold's default -- a bare dict replace would "
+        "do exactly that")
+
+
+def test_unknown_region_metrics_key_is_rejected(tmp_path):
+    path = _config_with_train_override(
+        tmp_path, region_metrics={"enabled": True, "bogus": 1})
+    with pytest.raises(train_mod.TrainError):
+        train_mod.load_config(path)
+
+
+def test_watershed_marker_threshold_must_be_in_unit_interval(tmp_path):
+    path = _config_with_train_override(
+        tmp_path, region_metrics={"watershed_marker_threshold": 1.5})
+    with pytest.raises(train_mod.TrainError):
+        train_mod.load_config(path)
+
+
+# --------------------------------------------------------------------------
+# step 6c: region-level metrics (ARI / VI / PQ), against hand-computable cases
+# --------------------------------------------------------------------------
+def test_ari_vi_pq_are_perfect_for_identical_partitions():
+    rng = np.random.default_rng(0)
+    labels = rng.integers(1, 5, size=(32, 32))
+    metrics = train_mod.region_metrics_single(labels, labels)
+    assert metrics["ari"] == pytest.approx(1.0)
+    assert metrics["vi"] == pytest.approx(0.0, abs=1e-9)
+    assert metrics["pq"] == pytest.approx(1.0)
+    assert metrics["n_pred_regions"] == metrics["n_true_regions"]
+    assert metrics["over_segmentation_factor"] == pytest.approx(1.0)
+
+
+def test_ari_vi_pq_are_perfect_under_a_relabelling():
+    """ARI/VI/PQ compare PARTITIONS, not label identities: renumbering the
+    same regions must not move any of the three numbers.
+    """
+    rng = np.random.default_rng(1)
+    true = rng.integers(1, 5, size=(32, 32))
+    permutation = {1: 40, 2: 10, 3: 30, 4: 20}
+    pred = np.vectorize(permutation.get)(true)
+    metrics = train_mod.region_metrics_single(pred, true)
+    assert metrics["ari"] == pytest.approx(1.0)
+    assert metrics["vi"] == pytest.approx(0.0, abs=1e-9)
+    assert metrics["pq"] == pytest.approx(1.0)
+
+
+def test_over_segmentation_factor_of_one_true_region_split_in_two():
+    true = np.ones((10, 10), dtype=int)
+    pred = np.ones((10, 10), dtype=int)
+    pred[:, 5:] = 2
+    metrics = train_mod.region_metrics_single(pred, true)
+    assert metrics["n_true_regions"] == 1
+    assert metrics["n_pred_regions"] == 2
+    assert metrics["over_segmentation_factor"] == pytest.approx(2.0)
+    # Neither half reaches IoU > 0.5 against the single true region on its
+    # own (each covers exactly half of it), so PQ finds no match at all.
+    assert metrics["pq"] == pytest.approx(0.0)
+    assert metrics["pq_fn"] == 1
+    assert metrics["pq_fp"] == 2
+
+
+def test_panoptic_quality_of_an_exact_match_is_one():
+    true = np.zeros((10, 10), dtype=int)
+    true[2:8, 2:8] = 1                       # a 6x6 = 36 px square
+    pred = np.zeros((10, 10), dtype=int)
+    pred[2:8, 2:8] = 1                       # exact match -> IoU 1.0
+    pq = train_mod.panoptic_quality(true, pred)
+    assert pq["tp"] == 1
+    assert pq["pq"] == pytest.approx(1.0)
+    assert pq["sq"] == pytest.approx(1.0)
+    assert pq["rq"] == pytest.approx(1.0)
+
+
+def test_panoptic_quality_matches_an_iou_just_above_half():
+    true = np.zeros((10, 20), dtype=int)
+    true[:, :12] = 1                         # 10x12 = 120 px
+    pred = np.zeros((10, 20), dtype=int)
+    pred[:, :10] = 1                         # 10x10 = 100 px, IoU = 100/120
+    pq = train_mod.panoptic_quality(true, pred)
+    assert pq["tp"] == 1
+    assert pq["sq"] == pytest.approx(100 / 120)
+
+
+def test_variation_of_information_is_symmetric():
+    rng = np.random.default_rng(2)
+    a = rng.integers(1, 4, size=(20, 20))
+    b = rng.integers(1, 4, size=(20, 20))
+    assert train_mod.variation_of_information(a, b) == pytest.approx(
+        train_mod.variation_of_information(b, a))
+
+
+def test_variation_of_information_is_nonnegative():
+    rng = np.random.default_rng(3)
+    a = rng.integers(1, 6, size=(24, 24))
+    b = rng.integers(1, 6, size=(24, 24))
+    assert train_mod.variation_of_information(a, b) >= -1e-9
+
+
+# --------------------------------------------------------------------------
+# step 6c: watershed_regions / true_regions_from_boundary
+# --------------------------------------------------------------------------
+def test_watershed_regions_of_a_uniform_probability_map_is_one_region():
+    prob = np.full((16, 16), 0.9)   # everything above the marker threshold
+    regions = train_mod.watershed_regions(prob, marker_threshold=0.3)
+    assert len(np.unique(regions)) == 1
+
+
+def test_watershed_regions_splits_two_low_probability_basins():
+    prob = np.full((20, 20), 0.9)
+    prob[2:6, 2:6] = 0.05
+    prob[14:18, 14:18] = 0.05
+    regions = train_mod.watershed_regions(prob, marker_threshold=0.3)
+    assert len(np.unique(regions)) == 2
+
+
+def test_true_regions_from_boundary_labels_every_pixel():
+    true = np.zeros((20, 20), dtype=bool)
+    true[10, :] = True   # one horizontal line splitting the tile in two
+    regions = train_mod.true_regions_from_boundary(true)
+    assert (regions > 0).all(), "every pixel must get a region label"
+    assert len(np.unique(regions)) == 2
+
+
+def test_true_regions_from_boundary_with_no_boundary_is_one_region():
+    true = np.zeros((10, 10), dtype=bool)
+    regions = train_mod.true_regions_from_boundary(true)
+    assert len(np.unique(regions)) == 1
