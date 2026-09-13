@@ -91,6 +91,10 @@ def main(argv=None) -> int:
     ap.add_argument("--exclude", nargs="*", default=None, metavar="DATASET",
                     help="override train.exclude_datasets for THIS fold; "
                          "pass with no names to train on the full mixture")
+    ap.add_argument("--run-name", default=None,
+                    help="checkpoints/logs/report name, e.g. dev-w4 for a "
+                         "step 6c experiment arm; defaults to the fold name "
+                         "(or <fold>-no-<excluded> when --exclude is given)")
     ap.add_argument("--resume", action="store_true",
                     help="continue PERSISTENT_DIR/checkpoints/<fold>/last.pt")
     ap.add_argument("--allow-config-change", action="store_true",
@@ -128,7 +132,8 @@ def main(argv=None) -> int:
 
     trainer = train_mod.Trainer(fold=args.fold, resolved=resolved,
                                 settings=settings,
-                                configs_dir=args.configs_dir)
+                                configs_dir=args.configs_dir,
+                                run_name=args.run_name)
     summary = trainer.setup(progress=progress,
                             tensorboard=not args.no_tensorboard)
 

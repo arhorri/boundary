@@ -108,6 +108,16 @@ DEFAULTS = {
     "threshold_sweep_max": 0.95,
     "threshold_sweep_step": 0.05,
     "boundary_tolerance_px": 2,    # for the boundary F-score
+    # Stop after this many epochs with no new best-threshold Dice on the
+    # held-out dataset. None disables early stopping (the loop always runs to
+    # `epochs`, today's behaviour). A run that stopped early costs nothing --
+    # that is the entire point of raising `epochs` and gating it with this.
+    "patience": None,
+    # Region-level evaluation (watershed + ARI/VI/PQ/over-segmentation), run
+    # against an already-trained checkpoint -- see evaluate_region_metrics().
+    # Off switch for the step 6c ablation table; on by default because it is
+    # eval-only and cheap next to a training epoch.
+    "region_metrics": {"enabled": True, "watershed_marker_threshold": 0.3},
     "cldice_probe_tiles": 24,      # fixed val tiles for the clDice diagnostic
     "log_every": 20,               # train steps between progress updates
     "checkpoint_subdir": "checkpoints",
@@ -126,6 +136,11 @@ HASHED_TRAIN_KEYS = (
     "epochs", "batch_size", "optimizer", "lr", "encoder_lr_scale",
     "weight_decay", "scheduler", "warmup_epochs", "min_lr_scale", "grad_clip",
     "seed", "deterministic", "sampler", "threshold", "boundary_tolerance_px",
+    # In the hash alongside `epochs`: together they define what "this
+    # training run" means. A checkpoint that stopped early under one patience
+    # value resuming under a different one would silently change why the run
+    # is allowed to end.
+    "patience",
     # In the hash because they change WHICH CHECKPOINT is selected: best.pt is
     # chosen on best-threshold Dice, so a run started under a different sweep
     # grid produced a different `best`, and resuming into it would leave two
@@ -157,7 +172,19 @@ def load_config(config_path: Optional[Path] = None) -> dict:
             f"configs/default.yaml: unknown train keys {sorted(unknown)}; "
             f"known keys are {sorted(DEFAULTS)}")
     for key, value in section.items():
-        if value is not None:
+        if key == "region_metrics" and isinstance(value, dict):
+            # Merged, not replaced -- setting only region_metrics.enabled must
+            # not silently lose watershed_marker_threshold's default.
+            unknown_rm = set(value) - set(DEFAULTS["region_metrics"])
+            if unknown_rm:
+                raise TrainError(
+                    f"configs/default.yaml: unknown train.region_metrics keys "
+                    f"{sorted(unknown_rm)}; known keys are "
+                    f"{sorted(DEFAULTS['region_metrics'])}")
+            merged = dict(DEFAULTS["region_metrics"])
+            merged.update(value)
+            settings[key] = merged
+        elif value is not None:
             settings[key] = value
     if int(settings["epochs"]) < 1:
         raise TrainError(f"train.epochs must be >= 1, got {settings['epochs']}")
@@ -197,6 +224,24 @@ def load_config(config_path: Optional[Path] = None) -> dict:
             f"train.warmup_epochs ({settings['warmup_epochs']}) must be less "
             f"than train.epochs ({settings['epochs']}); otherwise the cosine "
             "phase never runs.")
+
+    if settings["patience"] is not None:
+        patience = int(settings["patience"])
+        if patience < 1:
+            raise TrainError(
+                f"train.patience must be >= 1 or null, got {settings['patience']}")
+        settings["patience"] = patience
+
+    settings["region_metrics"] = dict(settings["region_metrics"])
+    settings["region_metrics"]["enabled"] = bool(
+        settings["region_metrics"]["enabled"])
+    threshold = float(settings["region_metrics"]["watershed_marker_threshold"])
+    if not 0.0 < threshold < 1.0:
+        raise TrainError(
+            "train.region_metrics.watershed_marker_threshold must be in "
+            f"(0, 1), got {threshold}")
+    settings["region_metrics"]["watershed_marker_threshold"] = threshold
+
     return settings
 
 
@@ -923,6 +968,20 @@ def migrate_config_hash(path: Path, new_hash: str, new_hashed_config: dict,
 # --------------------------------------------------------------------------
 # the trainer
 # --------------------------------------------------------------------------
+def epochs_since_improvement(history: list) -> int:
+    """How many epochs since the last ``is_best`` entry, from history alone.
+
+    A pure function of ``history`` (not a counter carried on ``Trainer``) so a
+    RESUMED run reconstructs its patience budget from what actually happened
+    rather than getting a fresh one it did not earn: a run resumed mid-plateau
+    keeps the plateau it was already in.
+    """
+    for i in range(len(history) - 1, -1, -1):
+        if history[i].get("is_best"):
+            return len(history) - 1 - i
+    return len(history)
+
+
 class Trainer:
     """One fold, end to end, resumable.
 
@@ -974,6 +1033,24 @@ class Trainer:
         # loaders all describe the same experiment.
         self.excluded = resolve_exclusions(self.fold, self.settings,
                                            self.fold_entry)
+
+        # FiLM's embedding table is sized by THIS fold's actual training
+        # mixture -- the fold's recorded train_datasets minus whatever this
+        # run excludes -- so it is stable for the run's whole lifetime: any
+        # change to it is already hash-gated, because exclude_datasets is in
+        # HASHED_TRAIN_KEYS (a checkpoint trained under a different vocabulary
+        # can never be resumed into a fresh one under a mismatched hash).
+        self.film_enabled = bool(
+            (self.model_settings.get("film") or {}).get("enabled", False))
+        self.film_vocabulary = (
+            sorted(set(self.fold_entry.get("train_datasets") or [])
+                  - set(self.excluded))
+            if self.film_enabled else None)
+        if self.film_enabled and not self.film_vocabulary:
+            raise TrainError(
+                f"model.film.enabled is true but fold {self.fold!r} has no "
+                "training datasets left after exclusions "
+                f"({self.excluded!r}) to build a FiLM vocabulary from.")
         # A distinct run name, so the two arms of an exclusion experiment keep
         # separate checkpoints, logs and reports instead of overwriting each
         # other. Without this the comparison the exclusion exists to enable
@@ -1114,7 +1191,8 @@ class Trainer:
         self._build_loaders()
 
         self.model = self._model_mod.build_model(
-            settings=self.model_settings).to(self.device)
+            settings=self.model_settings,
+            film_vocabulary=self.film_vocabulary).to(self.device)
         self.criterion = self._losses.BoundaryLoss.for_fold(
             self.fold, settings=self.loss_settings,
             fold_stats=self.fold_stats).to(self.device)
@@ -1493,6 +1571,16 @@ class Trainer:
             "synced": synced,
         }
 
+    def _forward(self, images: "torch.Tensor", dataset_names) -> "torch.Tensor":
+        """``self.model(images)``, passing the true dataset names when FiLM
+        is enabled and leaving the call unchanged otherwise -- the only
+        branch point in the whole training/validation loop that knows FiLM
+        exists at all.
+        """
+        if self.film_enabled:
+            return self.model(images, dataset_names=list(dataset_names))
+        return self.model(images)
+
     def train_one_epoch(self, epoch: int,
                         progress: Optional[Callable] = None) -> dict:
         self.model.train()
@@ -1511,7 +1599,7 @@ class Trainer:
             last_lr = self.scheduler.apply(self.optimizer)
             self.optimizer.zero_grad(set_to_none=True)
             with autocast(self.device.type, self.amp_enabled):
-                logits = self.model(images)
+                logits = self._forward(images, batch["dataset"])
             # The LOSS runs in fp32, outside autocast, on purpose. Dice and
             # clDice sum over 65,536 pixels per tile; in fp16 that sum can
             # exceed 65,504 and become inf, and the NaN that follows would look
@@ -1563,7 +1651,7 @@ class Trainer:
             images = batch["image"].to(self.device, non_blocking=True)
             masks = batch["mask"].to(self.device, non_blocking=True)
             with autocast(self.device.type, self.amp_enabled):
-                logits = self.model(images)
+                logits = self._forward(images, batch["dataset"])
             logits = logits.float()
             terms = self.criterion.components(logits, masks)
             batch_n = images.shape[0]
@@ -1605,7 +1693,7 @@ class Trainer:
             images = batch["image"].to(self.device, non_blocking=True)
             masks = batch["mask"].to(self.device, non_blocking=True)
             with autocast(self.device.type, self.amp_enabled):
-                logits = self.model(images)
+                logits = self._forward(images, batch["dataset"])
             logits = logits.float()
 
             parts = self._losses.cldice_parts(
@@ -1674,11 +1762,23 @@ class Trainer:
     def fit(self, epochs: Optional[int] = None,
             on_epoch_end: Optional[Callable] = None,
             progress: Optional[Callable] = None) -> list:
-        """Run to ``train.epochs``, checkpointing after every single epoch."""
+        """Run to ``train.epochs``, checkpointing after every single epoch.
+
+        Stops early once ``train.patience`` epochs have passed with no new
+        best-threshold Dice on the held-out dataset, if ``train.patience`` is
+        set (it is ``null`` by default: unset, the loop always runs to
+        ``total_epochs``, today's behaviour unchanged). On resume, the
+        patience counter is RECONSTRUCTED from ``self.history``'s ``is_best``
+        flags rather than reset to zero, so a run resumed mid-plateau does
+        not get a fresh patience budget it did not earn.
+        """
         if self.model is None:
             raise TrainError("call setup() before fit().")
         total_epochs = int(epochs or self.settings["epochs"])
+        patience = self.settings.get("patience")
         started = time.perf_counter()
+
+        since_improvement = epochs_since_improvement(self.history)
 
         for epoch in range(self.start_epoch, total_epochs):
             epoch_started = time.perf_counter()
@@ -1695,6 +1795,11 @@ class Trainer:
                                                        score_key),
                     "criterion": "best-threshold Dice on the held-out dataset",
                 }
+                since_improvement = 0
+            else:
+                since_improvement += 1
+            stopped_early = (patience is not None
+                             and since_improvement >= int(patience))
 
             elapsed = time.perf_counter() - epoch_started
             done = epoch - self.start_epoch + 1
@@ -1721,6 +1826,8 @@ class Trainer:
                     name: entry["best_threshold"] for name, entry
                     in val_stats["metrics"]["per_dataset"].items()},
                 "is_best": is_best,
+                "epochs_since_improvement": since_improvement,
+                "stopped_early": stopped_early,
             }
             self.history.append(record)
             self._log_tensorboard(record)
@@ -1728,6 +1835,9 @@ class Trainer:
 
             if on_epoch_end is not None:
                 on_epoch_end(record, self)
+
+            if stopped_early:
+                break
 
         if self.writer is not None:
             self.writer.flush()
@@ -1789,7 +1899,7 @@ class Trainer:
             sample = self.val_ds[index]
             image = torch.from_numpy(sample["image"])[None].to(self.device)
             with autocast(self.device.type, self.amp_enabled):
-                logits = self.model(image)
+                logits = self._forward(image, [name])
             prob = torch.sigmoid(logits.float())[0, 0].cpu().numpy()
             fixed = float(self.settings["threshold"])
             tuned = float((thresholds or {}).get(name, fixed))
@@ -1815,7 +1925,8 @@ class Trainer:
 # --------------------------------------------------------------------------
 def load_checkpoint_model(path: Path, model_settings: dict, fold: str,
                           expected_hash: Optional[str] = None,
-                          device=None) -> tuple:
+                          device=None,
+                          film_vocabulary: Optional[Sequence[str]] = None) -> tuple:
     """Build a fresh model and load ``path`` into it. Verifies fold and hash.
 
     Returns ``(model, state)``. The same two guards ``Trainer.maybe_resume``
@@ -1823,6 +1934,14 @@ def load_checkpoint_model(path: Path, model_settings: dict, fold: str,
     ``pos_weight``'s worth of training and the wrong held-out dataset, and one
     under a different config hash is not the run this notebook just described.
     Both are refused rather than silently loaded.
+
+    ``film_vocabulary`` is required to load a checkpoint trained with
+    ``model.film.enabled`` true -- same reason ``Trainer`` passes it to
+    ``build_model``: the embedding table's size is a property of the fold
+    that trained the checkpoint, not of ``model_settings`` alone. Pass the
+    same vocabulary the training run used (``sorted(train_datasets - excluded)``
+    for its fold), or ``load_state_dict`` below will fail on a shape mismatch
+    rather than something clearer.
     """
     from src import model as model_mod
 
@@ -1839,7 +1958,8 @@ def load_checkpoint_model(path: Path, model_settings: dict, fold: str,
             "produced; load it deliberately with expected_hash=None if that "
             "is intended.")
 
-    model = model_mod.build_model(settings=model_settings)
+    model = model_mod.build_model(settings=model_settings,
+                                  film_vocabulary=film_vocabulary)
     model.load_state_dict(state["model"])
     if device is not None:
         model = model.to(device)
@@ -2240,7 +2360,8 @@ def summarise_decomposition(slot: dict, radii: Sequence,
 def decompose_error(model: "nn.Module", val_ds, thresholds: dict, device,
                     amp_enabled: bool = False, dilations: Sequence = (1, 2, 3),
                     distances: Sequence = (1, 2, 3, 5),
-                    batch_size: int = 32, num_workers: int = 0) -> dict:
+                    batch_size: int = 32, num_workers: int = 0,
+                    dataset_embedding: Optional["torch.Tensor"] = None) -> dict:
     """Split a low pixel Dice into PLACEMENT error and THICKNESS error.
 
     A pixel Dice of 0.146 has two very different explanations that no single
@@ -2264,6 +2385,12 @@ def decompose_error(model: "nn.Module", val_ds, thresholds: dict, device,
         the sharpest of the three measurements here.
 
     Validation only: no gradient, no optimizer, nothing retrained.
+
+    ``dataset_embedding``, when given, overrides per-sample dataset-name
+    lookup with a single fixed FiLM conditioning vector for every tile in
+    this pass -- how the held-out dataset (which has no vocabulary row of its
+    own) is scored under each of the three inference-mode embeddings in
+    :func:`evaluate_film_inference_modes`. Ignored for a non-FiLM model.
     """
     from torch.utils.data import DataLoader
 
@@ -2292,7 +2419,12 @@ def decompose_error(model: "nn.Module", val_ds, thresholds: dict, device,
         images = batch["image"].to(device, non_blocking=True)
         masks = batch["mask"].numpy()
         with autocast(device.type, amp_enabled):
-            logits = model(images)
+            if dataset_embedding is not None:
+                logits = model(images, dataset_embedding=dataset_embedding)
+            elif dataset_embedding is None and hasattr(model, "film_vocabulary"):
+                logits = model(images, dataset_names=list(batch["dataset"]))
+            else:
+                logits = model(images)
         probs = torch.sigmoid(logits.float()).cpu().numpy()
 
         for i in range(probs.shape[0]):
@@ -2416,6 +2548,458 @@ def reference_decomposition(dilations: Sequence = (1, 2, 3),
             slot, decomposition_counts(pred, true, radii, distances))
         out[name] = summarise_decomposition(slot, radii, distances)
     return out
+
+
+# --------------------------------------------------------------------------
+# region-level metrics (step 6c) -- is the PARTITION usable, not just the line
+# --------------------------------------------------------------------------
+# This is a prior generator for a downstream unsupervised segmentation stage
+# (see CLAUDE.md), not a final segmenter. The MISPLACED verdict above says
+# predicted centrelines do not spatially coincide with true ones -- which
+# matters more for a watershed seed than for pixel Dice, because watershed
+# needs boundary LOCATION, not just presence nearby. These metrics measure
+# that directly: build the region partition a marker-controlled watershed on
+# the probability map actually produces, compare it to the partition the
+# ground-truth boundary implies, and score the comparison the way region/
+# instance segmentation is normally scored -- not with pixel Dice again.
+def _comb2(counts) -> "np.ndarray":
+    """n choose 2, elementwise, for the contingency-table sums ARI needs."""
+    counts = np.asarray(counts, dtype=np.int64)
+    return counts * (counts - 1) // 2
+
+
+def _contingency_table(true_labels: "np.ndarray",
+                       pred_labels: "np.ndarray") -> tuple:
+    true_ids, true_inv = np.unique(true_labels, return_inverse=True)
+    pred_ids, pred_inv = np.unique(pred_labels, return_inverse=True)
+    table = np.zeros((len(true_ids), len(pred_ids)), dtype=np.int64)
+    np.add.at(table, (true_inv.ravel(), pred_inv.ravel()), 1)
+    return table, true_ids, pred_ids
+
+
+def adjusted_rand_index(true_labels: "np.ndarray",
+                        pred_labels: "np.ndarray") -> float:
+    """Hubert-Arabie ARI from the contingency table, in plain numpy.
+
+    Not imported from sklearn: scikit-learn is not among the packages
+    CLAUDE.md lists as preinstalled on Colab/Kaggle and is not in
+    requirements-notebook.txt, so this is one formula rather than one more
+    dependency for the bootstrap to install.
+    """
+    table, _, _ = _contingency_table(true_labels, pred_labels)
+    n = int(table.sum())
+    if n < 2:
+        return 1.0
+    sum_comb_c = float(_comb2(table).sum())
+    sum_comb_a = float(_comb2(table.sum(axis=1)).sum())
+    sum_comb_b = float(_comb2(table.sum(axis=0)).sum())
+    total_comb = float(_comb2(np.array([n]))[0])
+    expected = _safe_div(sum_comb_a * sum_comb_b, total_comb)
+    max_index = 0.5 * (sum_comb_a + sum_comb_b)
+    denom = max_index - expected
+    if denom == 0:
+        # Both partitions are a single block, or every pixel is its own
+        # block -- the usual formula divides by zero. The only case this
+        # arises in practice here is perfect agreement (one true region, one
+        # predicted region, both covering the whole tile).
+        return 1.0 if sum_comb_c == max_index else 0.0
+    return float((sum_comb_c - expected) / denom)
+
+
+def variation_of_information(true_labels: "np.ndarray",
+                             pred_labels: "np.ndarray") -> float:
+    """VI(true, pred) = H(true) + H(pred) - 2*MI(true, pred), in nats."""
+    table, _, _ = _contingency_table(true_labels, pred_labels)
+    n = float(table.sum())
+    if n == 0:
+        return 0.0
+    p_ij = table / n
+    p_i = p_ij.sum(axis=1)
+    p_j = p_ij.sum(axis=0)
+    h_true = -float(np.sum(p_i[p_i > 0] * np.log(p_i[p_i > 0])))
+    h_pred = -float(np.sum(p_j[p_j > 0] * np.log(p_j[p_j > 0])))
+    outer = np.outer(p_i, p_j)
+    nz = p_ij > 0
+    mi = float(np.sum(p_ij[nz] * np.log(p_ij[nz] / outer[nz])))
+    return h_true + h_pred - 2.0 * mi
+
+
+def panoptic_quality(true_labels: "np.ndarray",
+                     pred_labels: "np.ndarray") -> dict:
+    """PQ = SQ * RQ, matched at IoU > 0.5 (which guarantees a UNIQUE match --
+    two predicted regions cannot both exceed 0.5 IoU with one true region, so
+    a greedy best-IoU match needs no Hungarian algorithm here).
+    """
+    true_ids = np.unique(true_labels)
+    true_ids = true_ids[true_ids != 0]
+    pred_ids = np.unique(pred_labels)
+    pred_ids = pred_ids[pred_ids != 0]
+    matched_iou, matched_pred = [], set()
+    for t in true_ids:
+        t_mask = true_labels == t
+        best_iou, best_p = 0.0, None
+        for p in np.unique(pred_labels[t_mask]):
+            if p == 0:
+                continue
+            p_mask = pred_labels == p
+            inter = int(np.count_nonzero(t_mask & p_mask))
+            union = int(np.count_nonzero(t_mask | p_mask))
+            iou = _safe_div(inter, union)
+            if iou > best_iou:
+                best_iou, best_p = iou, p
+        if best_iou > 0.5:
+            matched_iou.append(best_iou)
+            matched_pred.add(best_p)
+    tp = len(matched_iou)
+    fn = int(len(true_ids)) - tp
+    fp = int(len(pred_ids)) - len(matched_pred)
+    denom = tp + 0.5 * fp + 0.5 * fn
+    sq = _safe_div(sum(matched_iou), tp) if tp else 0.0
+    rq = _safe_div(tp, denom) if denom > 0 else 0.0
+    if denom > 0:
+        pq = _safe_div(sum(matched_iou), denom)
+    else:
+        # No true regions and no predicted regions -- an empty tile scored
+        # against an empty tile. Agreement, not a failure to match anything.
+        pq = 1.0
+    return {"pq": pq, "sq": sq, "rq": rq, "pq_tp": tp, "pq_fp": fp, "pq_fn": fn}
+
+
+def watershed_regions(prob: "np.ndarray", marker_threshold: float) -> "np.ndarray":
+    """Marker-controlled watershed on the RAW probability map.
+
+    Markers are connected components of low-probability pixels (interior
+    candidates, far from any predicted boundary); the watershed floods
+    uphill from them across the continuous probability landscape, so a
+    region's border is wherever probability rises fastest -- not wherever it
+    crosses a hard threshold, which is what plain connected-component
+    labelling of a thresholded mask would give instead.
+    """
+    from skimage.measure import label
+    from skimage.segmentation import watershed
+
+    prob = np.asarray(prob, dtype=np.float64)
+    markers = label(prob < float(marker_threshold))
+    if not markers.any():
+        # Nothing scored below the marker threshold: no seed to flood from,
+        # so the whole tile is one predicted region rather than undefined.
+        return np.ones(prob.shape, dtype=np.int64)
+    return watershed(prob, markers=markers).astype(np.int64)
+
+
+def true_regions_from_boundary(true_mask: "np.ndarray") -> "np.ndarray":
+    """The region partition a ground-truth BOUNDARY mask implies.
+
+    Connected components of the non-boundary pixels, then expanded through
+    the boundary's own thin band so every pixel gets a region label (the
+    standard BSDS-style boundary-to-region conversion) -- there is no
+    "boundary" class to compare against watershed_regions' dense labelling.
+    """
+    from skimage.measure import label
+    from skimage.segmentation import expand_labels
+
+    true_mask = np.asarray(true_mask, dtype=bool)
+    labeled = label(~true_mask)
+    if not labeled.any():
+        return np.ones(true_mask.shape, dtype=np.int64)
+    reach = int(np.hypot(*true_mask.shape)) + 1
+    return expand_labels(labeled, distance=reach).astype(np.int64)
+
+
+def region_metrics_single(pred_regions: "np.ndarray",
+                          true_regions: "np.ndarray") -> dict:
+    """Every region-level measurement the step 6c ablation reports, for ONE tile."""
+    pq = panoptic_quality(true_regions, pred_regions)
+    n_true = int(len(np.unique(true_regions)))
+    n_pred = int(len(np.unique(pred_regions)))
+    return {
+        "ari": adjusted_rand_index(true_regions, pred_regions),
+        "vi": variation_of_information(true_regions, pred_regions),
+        **pq,
+        "n_true_regions": n_true,
+        "n_pred_regions": n_pred,
+        "over_segmentation_factor": _safe_div(n_pred, n_true),
+    }
+
+
+@torch.no_grad()
+def evaluate_region_metrics(model: "nn.Module", val_ds, thresholds: dict, device,
+                            marker_threshold: float = 0.3,
+                            amp_enabled: bool = False,
+                            batch_size: int = 32, num_workers: int = 0,
+                            dataset_embedding: Optional["torch.Tensor"] = None) -> dict:
+    """Region-level quality per dataset, against an already-trained checkpoint.
+
+    Complements :func:`decompose_error`'s pixel/skeleton view: a model can
+    place its centrelines correctly there and still fragment or merge
+    regions in a way that would break a downstream watershed seed. ARI/VI/PQ
+    are per-TILE (unlike pixel Dice's counts, they do not pool across
+    tiles), so each dataset's row here is a MEAN over its validation tiles.
+
+    Boundary-F is deliberately NOT recomputed here -- pull it from the same
+    validate()/MetricAccumulator pass already run for this checkpoint, so
+    there is one source of truth for that number; this only adds what
+    MetricAccumulator does not measure.
+
+    ``dataset_embedding``, when given, overrides per-sample dataset-name
+    FiLM lookup with one fixed conditioning vector for every tile in this
+    pass -- see :func:`decompose_error`, same contract.
+
+    Validation only: no gradient, no optimizer, nothing retrained. This is
+    the function step 6c's arm A calls against the EXISTING best.pt, with no
+    retraining, per its "score the current model on its real objective
+    first" instruction.
+    """
+    from torch.utils.data import DataLoader
+
+    if not 0.0 < marker_threshold < 1.0:
+        raise TrainError(
+            f"watershed_marker_threshold must be in (0, 1), got {marker_threshold}")
+    present = sorted({r["dataset"] for r in val_ds.rows})
+    missing = sorted(set(present) - set(thresholds))
+    if missing:
+        raise TrainError(
+            f"evaluate_region_metrics has no threshold for {missing}; pass "
+            "one for every dataset in the validation split.")
+
+    model.eval()
+    loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False,
+                        num_workers=num_workers)
+    per_dataset, row_index = {}, 0
+    for batch in loader:
+        images = batch["image"].to(device, non_blocking=True)
+        masks = batch["mask"].numpy()
+        with autocast(device.type, amp_enabled):
+            if dataset_embedding is not None:
+                logits = model(images, dataset_embedding=dataset_embedding)
+            elif hasattr(model, "film_vocabulary"):
+                logits = model(images, dataset_names=list(batch["dataset"]))
+            else:
+                logits = model(images)
+        probs = torch.sigmoid(logits.float()).cpu().numpy()
+
+        for i in range(probs.shape[0]):
+            row = val_ds.rows[row_index]
+            dataset = row["dataset"]
+            prob = probs[i, 0]
+            true = masks[i, 0] > 0.5
+            metrics = region_metrics_single(
+                watershed_regions(prob, marker_threshold),
+                true_regions_from_boundary(true))
+            metrics["pred_fraction"] = float(
+                (prob >= float(thresholds[dataset])).mean())
+            per_dataset.setdefault(dataset, []).append(metrics)
+            row_index += 1
+
+    if row_index != len(val_ds):
+        raise TrainError(
+            f"evaluate_region_metrics scored {row_index} tiles but val_ds "
+            f"has {len(val_ds)}.")
+
+    out = {}
+    for dataset, rows in sorted(per_dataset.items()):
+        numeric_keys = [k for k in rows[0] if isinstance(rows[0][k], (int, float))]
+        out[dataset] = {
+            "tiles": len(rows),
+            **{k: float(np.mean([r[k] for r in rows])) for k in numeric_keys},
+        }
+    return out
+
+
+def region_metrics_report_paths(run_name: str, platform: str,
+                                reports_dir: Optional[Path] = None) -> tuple:
+    """``reports/region_metrics_<run>_<platform>.{md,json}``.
+
+    Kept separate from :func:`report_paths` (which is a live Trainer's own
+    artefact) because this report can be written for an already-saved
+    checkpoint with no Trainer involved at all.
+    """
+    reports_dir = Path(reports_dir) if reports_dir else Path(REPO_ROOT) / "reports"
+    if not platform:
+        raise TrainError(
+            "no platform to key the report by; resolve_paths() supplies it.")
+    stem = f"region_metrics_{run_name}_{platform}"
+    return reports_dir / f"{stem}.md", reports_dir / f"{stem}.json"
+
+
+def write_region_metrics_report(run_name: str, platform: str, results: dict,
+                                marker_threshold: float,
+                                reports_dir: Optional[Path] = None) -> tuple:
+    """Writes and returns ``reports/region_metrics_<run>_<platform>.{md,json}``."""
+    md_path, json_path = region_metrics_report_paths(run_name, platform, reports_dir)
+    lines = [
+        f"# Region-level metrics -- {run_name} ({platform})",
+        "",
+        "Marker-controlled watershed on the probability map "
+        f"(watershed_marker_threshold={marker_threshold}), scored against "
+        "the region partition the ground-truth boundary implies. Values are "
+        "MEANS over validation tiles -- ARI/VI/PQ are per-tile, not additive "
+        "the way pixel counts are.",
+        "",
+        "| dataset | tiles | ARI | VI | PQ | SQ | RQ | true regions | "
+        "pred regions | over-seg factor |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+    ]
+    for dataset, row in results.items():
+        lines.append(
+            f"| {dataset} | {row['tiles']:.0f} | {row['ari']:.3f} | "
+            f"{row['vi']:.3f} | {row['pq']:.3f} | {row['sq']:.3f} | "
+            f"{row['rq']:.3f} | {row['n_true_regions']:.1f} | "
+            f"{row['n_pred_regions']:.1f} | "
+            f"{row['over_segmentation_factor']:.2f} |")
+    md_path.parent.mkdir(parents=True, exist_ok=True)
+    md_path.write_text("\n".join(lines) + "\n")
+    payload = {"run_name": run_name, "platform": platform,
+              "watershed_marker_threshold": marker_threshold,
+              "results": results}
+    json_path.write_text(json.dumps(payload, indent=2, sort_keys=True))
+    return md_path, json_path
+
+
+# --------------------------------------------------------------------------
+# FiLM: scoring the held-out dataset, which has no embedding of its own
+# --------------------------------------------------------------------------
+def evaluate_film_inference_modes(model: "nn.Module", val_ds, thresholds: dict,
+                                  device, vocabulary: Sequence[str],
+                                  fold_entry: dict, held_out: str,
+                                  amp_enabled: bool = False,
+                                  region_marker_threshold: float = 0.3,
+                                  dilations: Sequence = (1, 2, 3),
+                                  distances: Sequence = (1, 2, 3, 5),
+                                  batch_size: int = 32,
+                                  num_workers: int = 0) -> dict:
+    """Score the HELD-OUT dataset under each of FiLM's three inference modes.
+
+    A held-out dataset has no vocabulary row: it was never trained on, by
+    construction. ``_FiLMUnetMixin.embed`` already substitutes the MEAN
+    training embedding for it automatically during ordinary validation --
+    that is mode 1, and this re-derives it explicitly so all three modes are
+    directly comparable in one table:
+
+      1. **mean**   -- the mean of the training vocabulary's embeddings.
+      2. **per-X**  -- each training dataset X's own embedding, in turn.
+      3. **closest**-- whichever training dataset's embedding (from mode 2)
+                       gave a predicted boundary fraction closest to the
+                       held-out dataset's TRUE one (``fold_entry``'s
+                       ``val_boundary_fraction.mean``, already measured in
+                       step 3) -- so mode 3 costs nothing beyond mode 2.
+
+    Each row carries the full MISPLACED/OVER-DETECTION/THICKNESS
+    decomposition (:func:`decompose_error`) and region metrics
+    (:func:`evaluate_region_metrics`), not just pixel Dice, per the step 6c
+    run order's requirement to say whether a change moved the VERDICT or
+    only its magnitude. This runs ``len(vocabulary) + 1`` full validation
+    passes (one per mode) -- fine for the 1-3 dataset vocabularies this
+    project's folds produce.
+    """
+    if not hasattr(model, "film_vocabulary"):
+        raise TrainError(
+            "evaluate_film_inference_modes needs a FiLM-conditioned model "
+            "(model.film.enabled must be true); this one has no "
+            "film_vocabulary.")
+    vocabulary = sorted(set(vocabulary))
+    if not vocabulary:
+        raise TrainError(
+            "evaluate_film_inference_modes needs a non-empty vocabulary.")
+    unknown = sorted(set(vocabulary) - set(model.film_vocabulary))
+    if unknown:
+        raise TrainError(
+            f"vocabulary names {unknown} have no row in this model's FiLM "
+            f"embedding table (built with {sorted(model.film_vocabulary)}).")
+
+    device_emb = model.film_embedding.weight.device
+    per_name_embedding = {
+        name: model.film_embedding.weight[model.film_vocabulary[name]].detach()
+        for name in vocabulary}
+    mean_embedding = model.film_embedding.weight.detach().mean(dim=0)
+
+    def _score(embedding: "torch.Tensor", mode_name: str) -> dict:
+        emb = embedding.unsqueeze(0).to(device_emb)
+        decomposition = decompose_error(
+            model, val_ds, thresholds, device, amp_enabled=amp_enabled,
+            dilations=dilations, distances=distances, batch_size=batch_size,
+            num_workers=num_workers, dataset_embedding=emb)
+        region = evaluate_region_metrics(
+            model, val_ds, thresholds, device,
+            marker_threshold=region_marker_threshold, amp_enabled=amp_enabled,
+            batch_size=batch_size, num_workers=num_workers,
+            dataset_embedding=emb)
+        entry = decomposition.get(held_out)
+        if entry is None:
+            raise TrainError(
+                f"mode {mode_name!r}: held-out dataset {held_out!r} has no "
+                "decomposition entry; it must be present in val_ds.")
+        region_entry = region.get(held_out) or {}
+        return {
+            "mode": mode_name,
+            "decomposition": entry,
+            "region_metrics": region_entry,
+            "pred_fraction": region_entry.get("pred_fraction"),
+        }
+
+    out = {"mean": _score(mean_embedding, "mean")}
+    for name in vocabulary:
+        out[f"per-{name}"] = _score(per_name_embedding[name], f"per-{name}")
+
+    true_fraction = float(
+        ((fold_entry.get("val_boundary_fraction") or {}).get("mean")) or 0.0)
+    closest_name = min(
+        vocabulary,
+        key=lambda n: abs((out[f"per-{n}"]["pred_fraction"] or 0.0)
+                          - true_fraction))
+    out["closest"] = dict(out[f"per-{closest_name}"])
+    out["closest"]["mode"] = "closest"
+    out["closest"]["chosen_dataset"] = closest_name
+    out["closest"]["target_true_fraction"] = true_fraction
+    return out
+
+
+def film_inference_report_paths(run_name: str, platform: str,
+                                reports_dir: Optional[Path] = None) -> tuple:
+    reports_dir = Path(reports_dir) if reports_dir else Path(REPO_ROOT) / "reports"
+    if not platform:
+        raise TrainError(
+            "no platform to key the report by; resolve_paths() supplies it.")
+    stem = f"film_inference_{run_name}_{platform}"
+    return reports_dir / f"{stem}.md", reports_dir / f"{stem}.json"
+
+
+def write_film_inference_report(run_name: str, platform: str, held_out: str,
+                                modes: dict,
+                                reports_dir: Optional[Path] = None) -> tuple:
+    """Writes and returns ``reports/film_inference_<run>_<platform>.{md,json}``."""
+    md_path, json_path = film_inference_report_paths(run_name, platform, reports_dir)
+    lines = [
+        f"# FiLM inference-mode comparison -- {run_name} ({platform})",
+        "",
+        f"Held-out dataset: **{held_out}**, which has no FiLM embedding of "
+        "its own. Three ways to condition it at inference, scored on the "
+        "same validation tiles:",
+        "",
+        "| mode | pixel Dice | verdict | ARI | VI | PQ | pred/true frac |",
+        "| --- | --- | --- | --- | --- | --- | --- |",
+    ]
+    for name, row in modes.items():
+        dec = row["decomposition"]
+        reg = row["region_metrics"] or {}
+        pred_frac = row.get("pred_fraction")
+        lines.append(
+            f"| {name} | {dec['pixel_dice']:.4f} | {dec['label']} | "
+            f"{reg.get('ari', float('nan')):.3f} | "
+            f"{reg.get('vi', float('nan')):.3f} | "
+            f"{reg.get('pq', float('nan')):.3f} | "
+            f"{(pred_frac if pred_frac is not None else float('nan')):.3f} |")
+    if "closest" in modes:
+        lines += ["",
+                 f"**closest** chose `{modes['closest']['chosen_dataset']}` "
+                 "(target = held-out dataset's true boundary fraction "
+                 f"{modes['closest']['target_true_fraction']:.4f})."]
+    md_path.parent.mkdir(parents=True, exist_ok=True)
+    md_path.write_text("\n".join(lines) + "\n")
+    payload = {"run_name": run_name, "platform": platform, "held_out": held_out,
+              "modes": modes}
+    json_path.write_text(json.dumps(payload, indent=2, sort_keys=True, default=str))
+    return md_path, json_path
 
 
 def _diff_config(saved: dict, current: dict) -> list:
@@ -2582,6 +3166,33 @@ def diff_runs(reports: dict, left: tuple, right: tuple) -> list:
     return _diff_config(payloads[left], payloads[right])
 
 
+def _boundary_gt_line_width_note(trainer: Trainer) -> list:
+    """One report line naming ``boundary_gt.line_width_px``, if it can be read.
+
+    Step 6c's arm B changes this and regenerates the ground truth under it;
+    a reader comparing ``train_dev_colab.md`` against
+    ``train_dev-w4_colab.md`` needs to see the width differed without
+    cross-referencing config history. Best-effort: this file has never read
+    ``boundary_gt:`` before, tests build Trainers over minimal configs that
+    may not carry it, and a report must still get written without this one
+    line rather than fail on it.
+    """
+    try:
+        from src import paths as paths_mod
+
+        config_path = trainer.configs_dir / "default.yaml"
+        cfg = paths_mod.load_config(config_path if config_path.is_file() else None)
+        line_width_px = (cfg.get("boundary_gt") or {}).get("line_width_px")
+    except Exception:                                      # noqa: BLE001
+        line_width_px = None
+    if line_width_px is None:
+        return []
+    return [f"- boundary_gt.line_width_px {line_width_px} (the ground truth "
+           "this run trained on -- NOT directly comparable to a report "
+           "written under a different value: pos_weight and every boundary "
+           "fraction move with it)"]
+
+
 def write_report(trainer: Trainer, reports_dir: Optional[Path] = None) -> tuple:
     """reports/train_<fold>_<platform>.{md,json}. This step's committed artefact."""
     reports_dir = Path(reports_dir or trainer.resolved["reports_dir"])
@@ -2660,6 +3271,11 @@ def write_report(trainer: Trainer, reports_dir: Optional[Path] = None) -> tuple:
         f"{final['metrics']['thresholds'][-1]:.2f} "
         f"({len(final['metrics']['thresholds'])} points); fixed reference "
         f"{final['metrics']['fixed_threshold']:.2f}",
+        f"- FiLM: {'enabled, vocabulary ' + str(trainer.film_vocabulary) if trainer.film_enabled else 'disabled'}",
+        f"- patience {trainer.settings.get('patience')}"
+        + (f" (stopped early at epoch {final['epoch']})"
+           if final.get("stopped_early") else ""),
+        *_boundary_gt_line_width_note(trainer),
         "",
         "## Per-dataset validation metrics (the headline)",
         "",

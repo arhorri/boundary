@@ -33,6 +33,17 @@ model:
   # into a pretrained encoder in epoch 1 erases the pretraining before it is
   # used. A starting value for step 6 to confirm, not a measured one.
   freeze_encoder_epochs: 3
+  # Per-dataset FiLM conditioning (step 6c), off by default -- see
+  # src/model.py's _FiLMUnetMixin. The direct fix attempt for the uhcs1/uhcs2
+  # annotation clash (src/train.py's exclude_datasets comment above): a model
+  # trained on both conventions may trace paths that belong to neither
+  # cleanly, and conditioning on which dataset produced a tile lets it learn
+  # dataset-specific boundary conventions instead of averaging them. Step 6c's
+  # arm D turns this on as a per-run override, not here, so every other arm
+  # (and `dev`'s already-committed report) is unaffected by this file alone.
+  film:
+    enabled: false
+    embed_dim: 16
 
 # The compound loss (step 5). Consumed by src/losses.py.
 #   L = w_bce * BCEWithLogits(pos_weight) + w_dice * SoftDice + w_cldice * clDice
@@ -115,15 +126,29 @@ train:
   #
   # The annotation clash described above is real -- it is visible in the
   # gallery exactly as predicted -- but removing uhcs1 is not what fixes this
-  # model. The placement/thickness decomposition (notebook 06) found the
-  # larger problem is OVER-DETECTION: the model draws roughly 3x too many
-  # boundary curves, each roughly 2x too fat, on both uhcs2 and Steel1. That is
-  # a confidence/threshold problem, not a training-mixture problem, and it is
-  # not solved by which datasets are in the mixture.
+  # model.
+  #
+  # UPDATE (step 6c): the placement/thickness decomposition's FIRST verdict
+  # (OVER-DETECTION, "3x too many curves, 2x too fat") was WRONG -- its
+  # calibration set had no over-detected case, only "fat but placed",
+  # "misplaced" and "noise", so a genuinely over-detected prediction and a
+  # genuinely misplaced one skeletonized to the same low skeleton Dice and the
+  # rule could not tell them apart. Fixed in decomposition_counts /
+  # summarise_decomposition (src/train.py) and confirmed across two
+  # independent full runs (epoch 12 and epoch 22 checkpoints, both ~0.149
+  # pixel Dice on uhcs2): the real verdict is MISPLACED. Skeleton Dice (0.057)
+  # sits BELOW pixel Dice (0.149) -- the opposite of every over-detected case
+  # in the (now corrected) calibration set, where skeleton Dice is 0.98+. The
+  # model's predicted centrelines do not spatially coincide with the true
+  # ones, even though loose (5px) proximity is high. That is a worse sign for
+  # the downstream watershed-seeding use case than over-detection would have
+  # been, since watershed needs boundary LOCATION, not just presence nearby.
   #
   # Exclusion is therefore OFF again. The mechanism stays -- this is where the
   # next exclusion experiment is set, the same way -- but nothing is currently
-  # excluded from any fold.
+  # excluded from any fold. See train.region_metrics, model.film and the
+  # step-6c experiment arms (dev-w4 / dev-w4-sched / dev-w4-sched-film) for
+  # what is being tried against the MISPLACED finding instead.
   exclude_datasets: {}
   # The fixed operating point every epoch is reported at, and the reference
   # the sweep is compared against. Must land on the sweep grid below.
@@ -137,6 +162,20 @@ train:
   threshold_sweep_max: 0.95
   threshold_sweep_step: 0.05
   boundary_tolerance_px: 2  # slack for the boundary F-score; the GT is 2 px wide
+  # Stop after this many epochs with no new best-threshold Dice on the
+  # held-out dataset. null disables early stopping (today's behaviour: always
+  # run to `epochs`). Step 6c's arm C sets this to 10 alongside epochs: 80, as
+  # a per-run override -- not here -- so `dev`'s already-committed report
+  # stays reproducible from this file unchanged.
+  patience: null
+  # Region-level evaluation (marker-controlled watershed + ARI/VI/PQ/
+  # over-segmentation factor), run against an already-trained checkpoint --
+  # see evaluate_region_metrics() in src/train.py. On by default: it is
+  # eval-only and cheap next to a training epoch. watershed_marker_threshold
+  # is the boundary-probability cutoff below which a pixel seeds a region.
+  region_metrics:
+    enabled: true
+    watershed_marker_threshold: 0.3
   cldice_probe_tiles: 24    # fixed val tiles for the clDice diagnostic
   log_every: 20
   checkpoint_subdir: checkpoints

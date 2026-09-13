@@ -42,7 +42,7 @@ Nothing here trains, loads a checkpoint or touches data.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Sequence
 
 
 class ModelError(RuntimeError):
@@ -72,6 +72,11 @@ DEFAULTS = {
     # random; its opening gradients are noise. 3 is a starting point for step 6
     # to confirm, not a measured value.
     "freeze_encoder_epochs": 3,
+    # Per-dataset FiLM conditioning (step 6c), off by default. See
+    # build_model(film_vocabulary=...) and _FiLMUnetMixin below. The embedding
+    # table is sized by the CALLER's vocabulary (Trainer resolves it from the
+    # fold's train_datasets), not by anything in this dict.
+    "film": {"enabled": False, "embed_dim": 16},
 }
 
 #: Architectures this project will build. Anything else is a typo, not a feature.
@@ -101,8 +106,27 @@ def load_config(config_path: Optional[Path] = None) -> dict:
     for key, value in section.items():
         # encoder_weights: null is a real choice (random init), so it is only
         # honoured when the key is present at all.
-        if value is not None or key == "encoder_weights":
+        if key == "film" and isinstance(value, dict):
+            # A nested dict is MERGED, not replaced -- a config that sets only
+            # film.enabled must not silently lose film.embed_dim's default.
+            unknown_film = set(value) - set(DEFAULTS["film"])
+            if unknown_film:
+                raise ModelError(
+                    f"configs/default.yaml: unknown model.film keys "
+                    f"{sorted(unknown_film)}; known keys are "
+                    f"{sorted(DEFAULTS['film'])}")
+            merged = dict(DEFAULTS["film"])
+            merged.update(value)
+            settings[key] = merged
+        elif value is not None or key == "encoder_weights":
             settings[key] = value
+    settings["film"] = dict(settings["film"])
+    settings["film"]["enabled"] = bool(settings["film"]["enabled"])
+    settings["film"]["embed_dim"] = int(settings["film"]["embed_dim"])
+    if settings["film"]["embed_dim"] < 1:
+        raise ModelError(
+            f"model.film.embed_dim must be >= 1, got "
+            f"{settings['film']['embed_dim']}")
     return settings
 
 
@@ -297,15 +321,144 @@ def adapt_first_conv(model: "nn.Module", settings: dict,
     return report
 
 
+# --------------------------------------------------------------------------
+# conditioning: per-dataset FiLM (step 6c)
+# --------------------------------------------------------------------------
+class _FiLMUnetMixin:
+    """Feature-wise linear modulation of the encoder's feature maps.
+
+    Mixed into a fresh class (``type(f"FiLM{cls.__name__}", (_FiLMUnetMixin,
+    cls), {})``, see :func:`_film_class`) rather than wrapping a built
+    instance, so ``model.encoder`` / ``model.decoder`` / ``model.segmentation_head``
+    stay top-level attributes -- every existing freeze-schedule, optimizer
+    param-grouping and checkpoint-checksum call that reaches into those needs
+    no change.
+
+    Every FiLM linear layer is ZERO-initialised (gamma = 1 + 0, beta = 0), so a
+    freshly built FiLM model is the IDENTITY of the unconditioned one until it
+    trains: conditioning is learned, not assumed, and a from-scratch comparison
+    against the unconditioned baseline starts from the same point.
+    """
+
+    def _init_film(self, vocabulary: Sequence[str], embed_dim: int,
+                   in_channels: int) -> None:
+        if not vocabulary:
+            raise ModelError(
+                "film_vocabulary is empty; FiLM needs at least one training "
+                "dataset to build an embedding table for.")
+        channels = tuple(int(c) for c in self.encoder.out_channels)
+        # Verified against a real forward pass, not assumed: an smp encoder
+        # whose out_channels disagreed with what encoder(x) actually returns
+        # would silently modulate the wrong tensor shapes.
+        with torch.no_grad():
+            probe = torch.zeros(1, int(in_channels), 32, 32)
+            try:
+                features = self.encoder(probe)
+            except Exception as exc:                       # noqa: BLE001
+                raise ModelError(
+                    "could not probe the encoder to size FiLM's per-stage "
+                    f"layers: {type(exc).__name__}: {exc}") from exc
+        if len(features) != len(channels):
+            raise ModelError(
+                f"encoder.out_channels has {len(channels)} entries but a "
+                f"probe forward pass returned {len(features)} feature maps; "
+                "FiLM's per-stage layers would not line up with the real "
+                "features. Re-check this against the installed "
+                "segmentation_models_pytorch version on this host.")
+        for i, (feature, c) in enumerate(zip(features, channels)):
+            if feature.shape[1] != c:
+                raise ModelError(
+                    f"encoder.out_channels[{i}]={c} but the probe feature map "
+                    f"has {feature.shape[1]} channels; FiLM cannot be sized "
+                    "from encoder.out_channels for this encoder.")
+
+        self.film_vocabulary = {name: i for i, name in enumerate(vocabulary)}
+        self.film_embedding = nn.Embedding(len(vocabulary), embed_dim)
+        self.film_layers = nn.ModuleList(
+            nn.Linear(embed_dim, 2 * c) for c in channels)
+        for layer in self.film_layers:
+            nn.init.zeros_(layer.weight)
+            nn.init.zeros_(layer.bias)
+
+    def embed(self, dataset_names: Sequence[str]) -> "torch.Tensor":
+        """One embedding row per name.
+
+        A name outside the vocabulary is NOT an error here: validation is a
+        MIXTURE that includes the held-out dataset, which by construction has
+        no embedding of its own (it was never trained on). Such a name gets
+        the MEAN of the training vocabulary's embeddings -- this is
+        inference mode 1 ("mean embedding"), applied automatically so
+        ordinary per-epoch validation (and therefore best.pt selection) works
+        without the caller having to know FiLM exists. The explicit
+        ``dataset_embedding=`` override on :meth:`forward` is how modes 2
+        ("each training dataset in turn") and 3 ("closest") are scored
+        instead, post-hoc, in :func:`src.train.evaluate_film_inference_modes`.
+        """
+        device = self.film_embedding.weight.device
+        mean_embedding = self.film_embedding.weight.mean(dim=0)
+        rows = [self.film_embedding.weight[self.film_vocabulary[name]]
+               if name in self.film_vocabulary else mean_embedding
+               for name in dataset_names]
+        return torch.stack(rows, dim=0).to(device)
+
+    @staticmethod
+    def _apply_film(feature: "torch.Tensor", layer: "nn.Linear",
+                    embedding: "torch.Tensor") -> "torch.Tensor":
+        gamma_beta = layer(embedding)
+        c = feature.shape[1]
+        gamma = 1.0 + gamma_beta[:, :c].reshape(-1, c, 1, 1)
+        beta = gamma_beta[:, c:].reshape(-1, c, 1, 1)
+        return gamma * feature + beta
+
+    def forward(self, x: "torch.Tensor",
+               dataset_names: Optional[Sequence[str]] = None,
+               dataset_embedding: Optional["torch.Tensor"] = None):
+        if dataset_embedding is None and dataset_names is not None:
+            dataset_embedding = self.embed(dataset_names)
+        features = self.encoder(x)
+        if dataset_embedding is not None:
+            batch = x.shape[0]
+            if dataset_embedding.shape[0] == 1 and batch != 1:
+                dataset_embedding = dataset_embedding.expand(batch, -1)
+            elif dataset_embedding.shape[0] != batch:
+                raise ModelError(
+                    f"dataset_embedding has batch size "
+                    f"{dataset_embedding.shape[0]} but x has batch size "
+                    f"{batch}; pass one embedding row per input image, or a "
+                    "single row to broadcast to the whole batch.")
+            features = [self._apply_film(f, layer, dataset_embedding)
+                       for f, layer in zip(features, self.film_layers)]
+        decoder_output = self.decoder(*features)
+        return self.segmentation_head(decoder_output)
+
+
+def _film_class(base_cls):
+    """A subclass of ``base_cls`` with :class:`_FiLMUnetMixin` mixed in.
+
+    A fresh class per call rather than a module-level constant: ``base_cls``
+    is chosen at build time by ``model.arch`` (Unet or UnetPlusPlus), and the
+    mixin must come first in the MRO so its ``forward`` overrides the base
+    class's.
+    """
+    return type(f"FiLM{base_cls.__name__}", (_FiLMUnetMixin, base_cls), {})
+
+
 def build_model(settings: Optional[dict] = None,
                 config_path: Optional[Path] = None,
-                verify_first_conv: bool = True) -> "nn.Module":
+                verify_first_conv: bool = True,
+                film_vocabulary: Optional[Sequence[str]] = None) -> "nn.Module":
     """Build the segmentation model described by ``model:`` in the config.
 
     Returns the smp model itself -- not a wrapper -- so checkpoints stay
     interoperable with smp and with anything else that reads them. What was
     done to it is attached as ``model.build_report``, a plain dict (not a
     buffer or a submodule, so it never reaches ``state_dict``).
+
+    ``film_vocabulary`` is required when ``model.film.enabled`` is true: the
+    embedding table's size is a property of the FOLD being trained (its
+    resolved training datasets after exclusion), which this module has no way
+    to know on its own -- only ``Trainer`` does. Passing it explicitly keeps
+    that fact visible at the call site rather than reached for implicitly.
     """
     settings = settings or load_config(config_path)
     in_channels = int(settings["in_channels"])
@@ -321,6 +474,17 @@ def build_model(settings: Optional[dict] = None,
             "a different loss, not just a different number here.")
 
     cls = _architecture(settings)
+    film_settings = settings.get("film") or DEFAULTS["film"]
+    film_enabled = bool(film_settings.get("enabled", False))
+    if film_enabled:
+        if not film_vocabulary:
+            raise ModelError(
+                "model.film.enabled is true but build_model() was not given "
+                "film_vocabulary; the embedding table size depends on the "
+                "fold's resolved training datasets, which only the caller "
+                "(Trainer) knows.")
+        cls = _film_class(cls)
+
     weights = settings["encoder_weights"]
     model = cls(
         encoder_name=settings["encoder"],
@@ -329,11 +493,17 @@ def build_model(settings: Optional[dict] = None,
         classes=classes,
         activation=None,   # logits. Checked below, not trusted.
     )
+    vocabulary = sorted(set(film_vocabulary)) if film_enabled else None
+    if film_enabled:
+        model._init_film(vocabulary, int(film_settings["embed_dim"]), in_channels)
     assert_returns_logits(model)
     report = adapt_first_conv(model, settings, verify=verify_first_conv)
     report["arch"] = settings["arch"]
     report["classes"] = classes
     report["freeze_encoder_epochs"] = int(settings["freeze_encoder_epochs"])
+    report["film"] = ({"enabled": True, "vocabulary": vocabulary,
+                       "embed_dim": int(film_settings["embed_dim"])}
+                      if film_enabled else {"enabled": False})
     report["parameters"] = summarize(model)
     model.build_report = report
     return model
@@ -472,4 +642,11 @@ def describe(model: "nn.Module") -> str:
         f"encoder frozen  : {state['fully_frozen']} "
         f"({state['norm_layers_in_eval']}/{state['norm_layers']} norm layers in eval)",
     ]
+    film = report.get("film") or {"enabled": False}
+    if film.get("enabled"):
+        lines.append(
+            f"FiLM            : enabled, embed_dim={film.get('embed_dim')}, "
+            f"vocabulary={film.get('vocabulary')}")
+    else:
+        lines.append("FiLM            : disabled")
     return "\n".join(lines)
