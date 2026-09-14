@@ -2823,7 +2823,8 @@ def region_metrics_report_paths(run_name: str, platform: str,
 
 
 def write_region_metrics_report(run_name: str, platform: str, results: dict,
-                                marker_threshold: float,
+                                marker_threshold: float, config_hash: str,
+                                epoch: int,
                                 reports_dir: Optional[Path] = None,
                                 decomposition: Optional[dict] = None) -> tuple:
     """Writes and returns ``reports/region_metrics_<run>_<platform>.{md,json}``.
@@ -2834,10 +2835,23 @@ def write_region_metrics_report(run_name: str, platform: str, results: dict,
     Without it this report answers "is the partition usable" but not "why" in
     the same vocabulary the rest of step 6c uses; every arm's notebook cell
     passes it so the committed JSON carries the verdict, not just stdout.
+
+    ``config_hash`` and ``epoch`` identify the EXACT checkpoint these numbers
+    were measured on -- pass ``best_state["config_hash"]`` and
+    ``best_state["epoch"]`` from :func:`load_checkpoint_model`, not
+    ``trainer.hash``: for an ARM that trains nothing (arm A) those can differ,
+    and it is the checkpoint's OWN recorded identity that was actually
+    evaluated, not the identity of the (possibly untrained) live Trainer.
+    :func:`write_report` already carries ``config_hash`` for the plain step-6
+    report; this mirrors it so a region-metrics report can be matched back to
+    the training report and checkpoint it came from without trusting stdout,
+    which does not survive the session.
     """
     md_path, json_path = region_metrics_report_paths(run_name, platform, reports_dir)
     lines = [
         f"# Region-level metrics -- {run_name} ({platform})",
+        "",
+        f"Checkpoint: epoch {epoch}, config hash `{config_hash}`.",
         "",
         "Marker-controlled watershed on the probability map "
         f"(watershed_marker_threshold={marker_threshold}), scored against "
@@ -2880,6 +2894,7 @@ def write_region_metrics_report(run_name: str, platform: str, results: dict,
     md_path.parent.mkdir(parents=True, exist_ok=True)
     md_path.write_text("\n".join(lines) + "\n")
     payload = {"run_name": run_name, "platform": platform,
+              "config_hash": config_hash, "epoch": int(epoch),
               "watershed_marker_threshold": marker_threshold,
               "results": results}
     if decomposition:

@@ -1590,6 +1590,7 @@ def test_region_metrics_report_persists_the_decomposition(tmp_path):
 
     md_path, json_path = train_mod.write_region_metrics_report(
         "dev", "colab", region_results, marker_threshold=0.3,
+        config_hash="deadbeef00000000", epoch=22,
         reports_dir=tmp_path, decomposition=decomposition)
 
     assert json_path.is_file() and md_path.is_file()
@@ -1618,6 +1619,33 @@ def test_region_metrics_report_without_decomposition_omits_the_key(tmp_path):
                                 "over_segmentation_factor": 1.0}}
     _, json_path = train_mod.write_region_metrics_report(
         "dev", "colab", region_results, marker_threshold=0.3,
-        reports_dir=tmp_path)
+        config_hash="deadbeef00000000", epoch=5, reports_dir=tmp_path)
     payload = json.loads(json_path.read_text())
     assert "decomposition" not in payload
+
+
+def test_region_metrics_report_records_config_hash_and_epoch(tmp_path):
+    """The exact gap this test closes: a region-metrics report could not
+    previously be matched back to the checkpoint it was measured on.
+    write_report() already carries config_hash for the plain step-6 report;
+    this asserts the region-metrics report now carries the same identity,
+    plus the epoch -- both readable from the committed JSON alone, without
+    trusting a session's stdout, which does not survive.
+    """
+    region_results = {"uhcs2": {"tiles": 5, "ari": 1.0, "vi": 0.0, "pq": 1.0,
+                                "sq": 1.0, "rq": 1.0, "n_true_regions": 1.0,
+                                "n_pred_regions": 1.0,
+                                "over_segmentation_factor": 1.0}}
+    md_path, json_path = train_mod.write_region_metrics_report(
+        "dev", "colab", region_results, marker_threshold=0.3,
+        config_hash="067fecc2e06a7d0a", epoch=12, reports_dir=tmp_path)
+
+    payload = json.loads(json_path.read_text())
+    assert payload["config_hash"] == "067fecc2e06a7d0a"
+    assert payload["epoch"] == 12
+    assert isinstance(payload["epoch"], int), (
+        "epoch must round-trip as an int, not a numpy scalar or a string")
+
+    md_text = md_path.read_text()
+    assert "067fecc2e06a7d0a" in md_text
+    assert "epoch 12" in md_text
