@@ -1507,7 +1507,14 @@ def test_panoptic_quality_of_an_exact_match_is_one():
     pred = np.zeros((10, 10), dtype=int)
     pred[2:8, 2:8] = 1                       # exact match -> IoU 1.0
     pq = train_mod.panoptic_quality(true, pred)
-    assert pq["tp"] == 1
+    # panoptic_quality() prefixes tp/fp/fn as pq_tp/pq_fp/pq_fn -- deliberately,
+    # since region_metrics_single spreads this dict (**pq) alongside ari/vi and
+    # a bare "tp" would be ambiguous with any other counter added there later.
+    # This is the key evaluate_region_metrics actually aggregates and the
+    # report actually persists (see reports/region_metrics_dev_colab.json,
+    # which has pq_tp/pq_fp/pq_fn) -- a bare pq["tp"] here was always wrong,
+    # never reached by the real pipeline, and is what raised the KeyError.
+    assert pq["pq_tp"] == 1
     assert pq["pq"] == pytest.approx(1.0)
     assert pq["sq"] == pytest.approx(1.0)
     assert pq["rq"] == pytest.approx(1.0)
@@ -1519,7 +1526,7 @@ def test_panoptic_quality_matches_an_iou_just_above_half():
     pred = np.zeros((10, 20), dtype=int)
     pred[:, :10] = 1                         # 10x10 = 100 px, IoU = 100/120
     pq = train_mod.panoptic_quality(true, pred)
-    assert pq["tp"] == 1
+    assert pq["pq_tp"] == 1
     assert pq["sq"] == pytest.approx(100 / 120)
 
 
