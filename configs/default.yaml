@@ -198,7 +198,7 @@ inference:
 # every value here is echoed into reports/gt_extraction.md so a run can be
 # reproduced from the report alone.
 boundary_gt:
-  line_width_px: 2          # uniform width of the final boundary line
+  line_width_px: 4          # uniform width of the final boundary line
   # Speckle removal. "speckle" drops connected components smaller than
   # open_kernel**2 pixels. "morph" is the literal 3x3 morphological OPEN --
   # do not use it here: its erosion keeps a pixel only if all 9 neighbours are
