@@ -70,7 +70,23 @@ DEFAULTS = {
 }
 
 #: A boundary map covering less/more than this is not a boundary map.
+#: Calibrated at DEFAULTS["line_width_px"] (2 px): a uniform-width skeleton
+#: dilation covers area roughly proportional to width for a fixed line
+#: network, so the upper bound must scale with the configured width via
+#: ``sane_fraction_band()`` rather than being read off directly.
 SANE_FRACTION_BAND = (0.005, 0.25)
+
+
+def sane_fraction_band(settings: dict) -> tuple:
+    """Width-scaled (lo, hi) boundary-fraction band for the given settings.
+
+    A thicker configured line covers proportionally more pixels for the same
+    boundary network, so the fixed SANE_FRACTION_BAND (calibrated at the
+    reference width) is scaled by ``line_width_px / reference width``.
+    """
+    lo, hi = SANE_FRACTION_BAND
+    scale = float(settings["line_width_px"]) / float(DEFAULTS["line_width_px"])
+    return (lo, min(0.95, hi * scale))
 
 
 class ExtractionError(RuntimeError):
@@ -557,15 +573,31 @@ def clean_boundary(raw: np.ndarray, settings: dict) -> tuple:
 
 
 def measured_line_width(binary: np.ndarray) -> Optional[float]:
-    """Mean thickness of a boundary map: area / skeleton length."""
+    """Median line thickness via the distance transform at skeleton pixels.
+
+    area / skeleton_length was tried first and rejected: a boundary network
+    has triple points where three lines of width W meet, and each junction
+    contributes a roughly W x W patch of area to the numerator while adding
+    almost nothing to skeleton length (a branch point, not a branch). That
+    bias grows with W, so it passed at line_width_px=2 by luck and failed at
+    line_width_px=4 even though the dilation itself was correct. The distance
+    transform instead measures thickness locally, at each skeleton pixel, and
+    is insensitive to junction area.
+    """
+    import cv2
     from skimage.morphology import skeletonize
 
-    hit = binary > 0
-    area = int(hit.sum())
-    if area == 0:
+    hit = (binary > 0)
+    if not hit.any():
         return None
-    skel = int(skeletonize(hit).sum())
-    return (float(area) / float(skel)) if skel else None
+    skel = skeletonize(hit)
+    if not skel.any():
+        return None
+    dist = cv2.distanceTransform(hit.astype(np.uint8), cv2.DIST_L2, 5)
+    # dist is 1.0 for a foreground pixel one step from the background, so the
+    # local diameter at a medial-axis pixel is 2*dist - 1, not 2*dist.
+    widths = 2.0 * dist[skel] - 1.0
+    return float(np.median(widths)) if widths.size else None
 
 
 # --------------------------------------------------------------------------
@@ -765,7 +797,7 @@ def extract_all(
         "out_root": str(out_root),
         "settings": {k: settings[k] for k in sorted(settings)},
         "mode_overrides": dict(mode_overrides or {}),
-        "sane_fraction_band": list(SANE_FRACTION_BAND),
+        "sane_fraction_band": list(sane_fraction_band(settings)),
         "datasets": {},
         "failures": {},
     }
