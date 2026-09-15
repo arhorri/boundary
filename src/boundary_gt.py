@@ -572,7 +572,8 @@ def clean_boundary(raw: np.ndarray, settings: dict) -> tuple:
     return out, frac_before, stages["after_dilate"], stages
 
 
-def measured_line_width(binary: np.ndarray) -> Optional[float]:
+def measured_line_width(binary: np.ndarray, width_hint: Optional[int] = None
+                         ) -> Optional[float]:
     """Median line thickness via the distance transform at skeleton pixels.
 
     area / skeleton_length was tried first and rejected: a boundary network
@@ -583,6 +584,17 @@ def measured_line_width(binary: np.ndarray) -> Optional[float]:
     line_width_px=4 even though the dilation itself was correct. The distance
     transform instead measures thickness locally, at each skeleton pixel, and
     is insensitive to junction area.
+
+    ``skeletonize`` always returns a strictly 1-px skeleton, even for a W-px
+    strip. At the single surviving skeleton pixel of a straight strip, the
+    distance transform (distance to the nearest background pixel, in pixel
+    units) works out to ``ceil(W / 2)`` for EITHER parity of W: a width-3 and
+    a width-4 strip both give a skeleton-point distance of 2. So the raw
+    distance alone cannot tell a width-3 line from a width-4 one -- the
+    correction back to true width (``2*dist - 1`` for odd W, ``2*dist`` for
+    even W) depends on which parity W actually is. ``width_hint`` supplies
+    that parity (the configured ``line_width_px`` this measurement is meant
+    to verify); with no hint, odd is assumed to preserve prior behaviour.
     """
     import cv2
     from skimage.morphology import skeletonize
@@ -594,9 +606,8 @@ def measured_line_width(binary: np.ndarray) -> Optional[float]:
     if not skel.any():
         return None
     dist = cv2.distanceTransform(hit.astype(np.uint8), cv2.DIST_L2, 5)
-    # dist is 1.0 for a foreground pixel one step from the background, so the
-    # local diameter at a medial-axis pixel is 2*dist - 1, not 2*dist.
-    widths = 2.0 * dist[skel] - 1.0
+    offset = 0.0 if (width_hint is not None and int(width_hint) % 2 == 0) else 1.0
+    widths = 2.0 * dist[skel] - offset
     return float(np.median(widths)) if widths.size else None
 
 
