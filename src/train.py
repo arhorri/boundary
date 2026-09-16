@@ -294,7 +294,17 @@ def seed_worker(worker_id: int) -> None:
 
 
 def set_seed(seed: int, deterministic: bool = False) -> dict:
-    """Seed every generator that touches this run, and say what was set."""
+    """Seed every generator that touches this run, and say what was set.
+
+    Not bitwise reproducible across a resume even when ``deterministic`` is
+    True: the WeightedRandomSampler's draw order comes from a separate
+    ``torch.Generator`` built fresh in ``Trainer._build_loaders`` on every
+    process start, seeded from ``settings["seed"]`` but never checkpointed
+    or restored, so a resumed run's epoch-to-epoch sampling order does not
+    match what an uninterrupted run would have produced from the same seed.
+    Trained weights and reported metrics are unaffected -- the sampler is
+    still correctly weighted on every draw regardless of stream position.
+    """
     seed = int(seed)
     random.seed(seed)
     np.random.seed(seed)
@@ -1222,6 +1232,10 @@ class Trainer:
         from torch.utils.data import DataLoader, Subset
 
         ds = self._ds
+        # Local to this process, not the global RNGs rng_state()/load_rng_state()
+        # checkpoint -- re-seeded from scratch on every setup(), resume included.
+        # See set_seed()'s docstring: a resumed run's sampler draw order does not
+        # match an uninterrupted run's, for the same reason its "note" caveats.
         generator = torch.Generator()
         generator.manual_seed(int(self.settings["seed"]))
         batch_size = int(self.settings["batch_size"])
