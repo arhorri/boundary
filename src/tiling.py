@@ -80,7 +80,43 @@ DEFAULTS = {
 }
 
 #: pos_weight outside this band means the class balance is not what we think.
+#: Calibrated at the reference line width (2 px, ``_POS_WEIGHT_REFERENCE_WIDTH``
+#: below): a uniform-width skeleton dilation covers area roughly proportional
+#: to width for a fixed boundary network (same reasoning as
+#: ``boundary_gt.SANE_FRACTION_BAND``), so boundary_fraction scales
+#: proportionally with the configured width and pos_weight -- which is
+#: (1-fraction)/fraction -- scales roughly INVERSELY with it. The raw constant
+#: must not be compared against directly once line_width_px has changed; use
+#: ``sane_pos_weight_band()``.
 SANE_POS_WEIGHT_BAND = (5.0, 200.0)
+_POS_WEIGHT_REFERENCE_WIDTH = 2.0
+
+
+def sane_pos_weight_band(line_width_px) -> tuple:
+    """Width-scaled (lo, hi) pos_weight band for the given ``line_width_px``.
+
+    A thicker configured line covers proportionally more boundary pixels for
+    the same network, which proportionally LOWERS pos_weight (more positives,
+    same total) -- the inverse of how ``boundary_gt.sane_fraction_band``
+    scales its band. Confirmed against a real run: doubling line_width_px
+    2 -> 4 took pos_weight from 15.974/7.45/7.111 (MetalDam/uhcs1/uhcs2) to
+    6.928/3.016/2.84, a factor of ~2.2-2.5 -- close enough to this band's own
+    2x that the scaled band still has margin on every fold, not just the ones
+    that happened to clear the old fixed one.
+
+    Pass the width that ACTUALLY PRODUCED the tiles being checked --
+    ``reports/gt_extraction.json``'s recorded ``settings.line_width_px``, not
+    whatever ``configs/default.yaml`` currently says, which can have moved on
+    since. The lower bound is floored at 1.0: a pos_weight below that would
+    mean more positive than negative pixels, which no boundary-map width makes
+    sane.
+    """
+    lo, hi = SANE_POS_WEIGHT_BAND
+    width = float(line_width_px)
+    if width <= 0:
+        raise TilingError(f"line_width_px must be positive, got {line_width_px}")
+    scale = _POS_WEIGHT_REFERENCE_WIDTH / width
+    return (max(1.0, lo * scale), hi * scale)
 
 MANIFEST_COLUMNS = [
     "tile_id", "dataset", "parent_id", "source_image", "x", "y",
