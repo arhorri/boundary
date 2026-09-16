@@ -467,6 +467,48 @@ def test_cache_key_ignores_tiling_but_tracks_crops():
         [dict(rows[0], crop_top=1), rows[1]])
 
 
+def test_cache_key_changes_with_gt_signature_even_when_crops_do_not():
+    """The bug this guards against: step 2 overwrites the same filename, so
+    a regenerated boundary map (line_width_px, HSV retune, ...) leaves crop
+    geometry untouched. Without gt_signature in the key, a persistent cache
+    built before the regeneration would keep matching after it and silently
+    serve the old mask pixels."""
+    rows = _fake_rows()
+    assert ds.cache_key(rows) == ds.cache_key(rows, gt_signature=None)
+    assert ds.cache_key(rows, gt_signature="width-2") != ds.cache_key(
+        rows, gt_signature="width-4")
+
+
+def test_gt_generation_signature_reads_recorded_settings(tmp_path):
+    report = {"settings": {"line_width_px": 2, "close_kernel": 3}}
+    (tmp_path / "gt_extraction.json").write_text(json.dumps(report))
+    sig_2px = ds.gt_generation_signature(tmp_path)
+
+    report["settings"]["line_width_px"] = 4
+    (tmp_path / "gt_extraction.json").write_text(json.dumps(report))
+    sig_4px = ds.gt_generation_signature(tmp_path)
+
+    assert sig_2px != sig_4px
+    # deterministic: unchanged settings hash the same way twice
+    assert ds.gt_generation_signature(tmp_path) == sig_4px
+
+
+def test_gt_generation_signature_missing_report_is_a_placeholder_not_a_crash(tmp_path):
+    assert ds.gt_generation_signature(tmp_path) == "no-gt-extraction-report"
+
+
+def test_tile_dataset_cache_key_incorporates_the_real_gt_signature(settings):
+    """TileDataset always scopes its cache key to reports/gt_extraction.json,
+    unlike the bare module-level cache_key() unit tests above which pin
+    gt_signature explicitly (or leave it None) to isolate crop behaviour."""
+    rows = [dict(r, split="val") for r in _fake_rows()]
+    dataset = ds.TileDataset(rows, settings=settings)
+    real_signature = ds.gt_generation_signature()
+    assert dataset.cache_key() == ds.cache_key(rows, gt_signature=real_signature)
+    if real_signature != "no-gt-extraction-report":
+        assert dataset.cache_key() != ds.cache_key(rows)
+
+
 def test_ensure_cache_reports_cold_then_warm(settings, rows, roots, tmp_path):
     row = _first_available(rows, roots)
     if row is None:

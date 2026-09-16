@@ -186,6 +186,25 @@ def load_manifest(
     return out
 
 
+def gt_generation_signature(reports_dir: Optional[Path] = None) -> str:
+    """Identity of the settings that produced the boundary maps on disk.
+
+    Step 2 overwrites the same filename (``<stem>.png``) on every
+    regeneration -- a line_width_px change or an HSV/despeckle retune leaves
+    no trace in the path, only in the pixels. cache_key() otherwise derives
+    identity purely from source-image/crop geometry, which a mask repaint
+    never touches, so a stale persistent cache would keep serving the old
+    pixels under an unchanged key. Read from reports/gt_extraction.json,
+    never recomputed, the same rule load_crops follows.
+    """
+    path = Path(reports_dir or (REPO_ROOT / "reports")) / "gt_extraction.json"
+    if not path.is_file():
+        return "no-gt-extraction-report"
+    report = json.loads(path.read_text())
+    payload = json.dumps(report.get("settings") or {}, sort_keys=True)
+    return hashlib.sha256(payload.encode()).hexdigest()[:16]
+
+
 def load_crops(reports_dir: Optional[Path] = None) -> dict:
     """(dataset, image filename) -> the image_crop step 2 actually applied.
 
@@ -320,21 +339,29 @@ def estimate_cache_bytes(rows: Sequence) -> dict:
 CACHE_FORMAT_VERSION = 1
 
 
-def cache_key(rows: Sequence) -> str:
+def cache_key(rows: Sequence, gt_signature: Optional[str] = None) -> str:
     """Identity of the decoded arrays a set of rows needs.
 
-    Derived from the source images and the crops applied to them -- the only
-    inputs that change what gets decoded. Tiling coordinates and augmentation
-    are deliberately NOT part of it: they act after decoding, so including them
-    would invalidate a perfectly good cache for no reason. If any of these do
-    change, the key changes, the file is not found, and the cache is rebuilt
-    rather than silently serving arrays that no longer match the manifest.
+    Derived from the source images and the crops applied to them -- the crop
+    geometry that changes what gets decoded from the source image. That is
+    not the whole story for the paired boundary map, though: it is read from
+    the SAME filename regardless of what produced it, so a GT regeneration
+    (line_width_px, an HSV retune, a mode override) is invisible to crop
+    geometry alone. ``gt_signature`` -- see gt_generation_signature() --
+    closes that gap; it is optional so callers that only care about crop
+    identity (most of the unit tests here) are unaffected, but
+    TileDataset.cache_key() always supplies the real one. Tiling coordinates
+    and augmentation are deliberately NOT part of the key: they act after
+    decoding, so including them would invalidate a perfectly good cache for
+    no reason. If any of the included fields change, the key changes, the
+    file is not found, and the cache is rebuilt rather than silently serving
+    arrays that no longer match the manifest or the on-disk masks.
     """
     images = sorted({(r["dataset"], r["source_image"], int(r["crop_left"]),
                       int(r["crop_top"]), int(r["crop_width"]),
                       int(r["crop_height"])) for r in rows})
-    payload = json.dumps({"version": CACHE_FORMAT_VERSION, "images": images},
-                         sort_keys=True)
+    payload = json.dumps({"version": CACHE_FORMAT_VERSION, "images": images,
+                         "gt_signature": gt_signature}, sort_keys=True)
     return hashlib.sha256(payload.encode()).hexdigest()[:16]
 
 
@@ -929,7 +956,7 @@ class TileDataset(_TorchDataset):
         return {(r["dataset"], r["source_image"]) for r in self.rows}
 
     def cache_key(self) -> str:
-        return cache_key(self.rows)
+        return cache_key(self.rows, gt_signature=gt_generation_signature())
 
     def ensure_cache(
         self,
