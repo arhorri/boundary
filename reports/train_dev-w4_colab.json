@@ -81,7 +81,7 @@
  },
  "platform": "colab",
  "held_out": "uhcs2",
- "generated_utc": "2026-09-16T13:18:00Z",
+ "generated_utc": "2026-09-16T14:02:45Z",
  "summary": {
   "fold": "dev",
   "run_name": "dev-w4",
@@ -156,13 +156,13 @@
   "log_dir": "/content/drive/MyDrive/phase11-persistent/logs/dev-w4",
   "cache": {
    "train": {
-    "source": "warm",
-    "seconds": 3.79,
+    "source": "cold",
+    "seconds": 551.72,
     "images": 779
    },
    "val": {
-    "source": "warm",
-    "seconds": 5.01,
+    "source": "cold",
+    "seconds": 154.63,
     "images": 212
    }
   },
@@ -46835,10 +46835,7 @@
    },
    "is_best": false,
    "epochs_since_improvement": 17,
-   "stopped_early": false,
-   "checkpoints": {
-    "last": "/content/drive/MyDrive/phase11-persistent/checkpoints/dev-w4/last.pt"
-   }
+   "stopped_early": false
   }
  ]
 }

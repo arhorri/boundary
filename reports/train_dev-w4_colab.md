@@ -1,6 +1,6 @@
 # Training report -- dev-w4 on colab
 
-Held-out dataset: **uhcs2**. Generated 2026-09-16T13:18:00Z on colab (Tesla T4).
+Held-out dataset: **uhcs2**. Generated 2026-09-16T14:02:45Z on colab (Tesla T4).
 
 This file is keyed by run and host: `train_dev-w4_colab.md`. The same fold trained on another host writes its own file beside this one rather than overwriting it -- two runs of one fold are two measurements, and they differ in GPU, worker count and I/O path.
 
