@@ -41,6 +41,7 @@ Nothing here trains, loads a checkpoint or touches data.
 
 from __future__ import annotations
 
+import inspect
 from pathlib import Path
 from typing import Optional, Sequence
 
@@ -321,6 +322,27 @@ def adapt_first_conv(model: "nn.Module", settings: dict,
     return report
 
 
+def _call_decoder(decoder: "nn.Module",
+                  features: Sequence["torch.Tensor"]) -> "torch.Tensor":
+    """Call an smp decoder with its per-stage feature maps.
+
+    ``segmentation_models_pytorch`` has shipped two different decoder
+    calling conventions across releases: older ones declare
+    ``forward(self, *features)`` (variadic -- call as ``decoder(*features)``),
+    newer ones declare ``forward(self, features)`` (a single list -- call as
+    ``decoder(features)``). ``requirements-notebook.txt`` pins no smp
+    version, so which one a given Colab/Kaggle session resolves is not known
+    ahead of time, and guessing wrong raises a bare ``TypeError`` about
+    argument counts from deep inside smp with no obvious link back to this
+    file. The real signature is checked once instead of assumed -- the same
+    principle :func:`adapt_first_conv` already applies to smp's first-conv
+    summing rather than trusting it across versions.
+    """
+    variadic = any(p.kind is inspect.Parameter.VAR_POSITIONAL
+                   for p in inspect.signature(decoder.forward).parameters.values())
+    return decoder(*features) if variadic else decoder(features)
+
+
 # --------------------------------------------------------------------------
 # conditioning: per-dataset FiLM (step 6c)
 # --------------------------------------------------------------------------
@@ -437,7 +459,7 @@ class _FiLMUnetMixin:
                     "single row to broadcast to the whole batch.")
             features = [self._apply_film(f, layer, dataset_embedding)
                        for f, layer in zip(features, self.film_layers)]
-        decoder_output = self.decoder(*features)
+        decoder_output = _call_decoder(self.decoder, features)
         return self.segmentation_head(decoder_output)
 
 
