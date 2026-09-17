@@ -1,13 +1,13 @@
-# Region-level metrics -- dev-w4 (colab)
+# Region-level metrics -- dev-w4-sched (colab)
 
-Checkpoint: epoch 20, config hash `067fecc2e06a7d0a`.
+Checkpoint: epoch 20, config hash `360884933d0f8082`.
 
 Marker-controlled watershed on the probability map (watershed_marker_threshold=0.3), scored against the region partition the ground-truth boundary implies. Values are MEANS over validation tiles -- ARI/VI/PQ are per-tile, not additive the way pixel counts are.
 
 | dataset | tiles | ARI | VI | PQ | SQ | RQ | true regions | pred regions | over-seg factor |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| Steel1 | 189 | 0.480 | 0.789 | 0.328 | 0.738 | 0.442 | 10.9 | 12.1 | 1.27 |
-| uhcs2 | 265 | 0.175 | 2.469 | 0.035 | 0.622 | 0.049 | 20.3 | 77.5 | 6.56 |
+| Steel1 | 189 | 0.558 | 0.646 | 0.324 | 0.752 | 0.432 | 10.9 | 10.5 | 1.09 |
+| uhcs2 | 265 | 0.202 | 2.550 | 0.038 | 0.702 | 0.051 | 20.3 | 80.0 | 6.90 |
 
 ## MISPLACED / OVER-DETECTION / THICKNESS decomposition
 
@@ -15,8 +15,8 @@ The pixel/skeleton view (:func:`decompose_error`) this region view complements -
 
 | dataset | verdict | pixel Dice | skeleton Dice | curve-length ratio | width ratio |
 | --- | --- | --- | --- | --- | --- |
-| Steel1 | MISPLACED | 0.5143 | 0.1272 | 1.10 | 1.33 |
-| uhcs2 | MISPLACED | 0.2618 | 0.0628 | 2.70 | 1.56 |
+| Steel1 | MISPLACED | 0.5189 | 0.1242 | 0.99 | 1.37 |
+| uhcs2 | MISPLACED | 0.2705 | 0.0671 | 2.69 | 1.54 |
 
 Verdicts, in full:
 
