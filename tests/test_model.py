@@ -160,6 +160,23 @@ def film_model():
     return model
 
 
+def test_film_forward_pass_produces_expected_output_shape(film_model):
+    """A real, conditioned forward pass through encoder -> decoder -> head.
+
+    This is the path that actually broke on Colab: the decoder call has to
+    match whichever calling convention the installed
+    segmentation_models_pytorch resolved (``requirements-notebook.txt`` pins
+    no version), and nothing above this test ever calls ``self.decoder`` --
+    ``_init_film()``'s probe only runs the encoder, and every
+    ``build_model()``-only test never runs forward() at all. Only an actual
+    forward pass exercises ``_call_decoder``.
+    """
+    x = torch.randn(2, 1, 64, 64)
+    with torch.no_grad():
+        out = film_model(x, dataset_names=["MetalDam", "Steel1"])
+    assert out.shape == (2, 1, 64, 64)
+
+
 def test_film_is_the_identity_at_init(film_model):
     """Zero-initialised gamma=1,beta=0 must not move a single logit.
 
