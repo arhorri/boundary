@@ -105,6 +105,49 @@ def test_film_vocabulary_is_deduplicated_and_sorted():
 
 
 # --------------------------------------------------------------------------
+# _init_film()'s probe: batch size 1, encoder mode must not leak
+# --------------------------------------------------------------------------
+def test_film_init_succeeds_with_encoder_in_training_mode():
+    """_init_film's probe forward pass used to crash here: build_model()
+    never puts the encoder in eval mode before calling it, so the probe runs
+    with the encoder in its default training mode and batch size 1. On
+    resnet34, later stages collapse a 32x32 input to a 1x1 spatial map, and
+    BatchNorm in training mode raises when a channel has only one value to
+    compute a batch variance from ("Expected more than 1 value per channel
+    when training, got input size ... 1, 1"). This is the real code path
+    build_model() takes, not a contrived one.
+    """
+    settings = _settings(film={"enabled": True, "embed_dim": 4})
+    model = model_mod.build_model(settings=settings,
+                                  film_vocabulary=["MetalDam", "Steel1"])
+    assert model.film_embedding.weight.shape == (2, 4)
+
+
+def test_film_init_does_not_leak_eval_mode_onto_the_encoder():
+    """The probe must flip the encoder to eval() only for its own forward
+    pass and restore the mode it actually found -- build_model() leaves a
+    freshly constructed encoder in training mode, so that is what must still
+    be true once _init_film() returns.
+    """
+    settings = _settings(film={"enabled": True, "embed_dim": 4})
+    model = model_mod.build_model(settings=settings,
+                                  film_vocabulary=["MetalDam", "Steel1"])
+    assert model.encoder.training is True
+
+
+def test_film_init_restores_eval_mode_when_encoder_started_in_eval():
+    """The restore must reproduce whichever mode the encoder was actually
+    in, not unconditionally re-enable training mode.
+    """
+    settings = _settings(film={"enabled": True, "embed_dim": 4})
+    model = model_mod.build_model(settings=settings,
+                                  film_vocabulary=["MetalDam", "Steel1"])
+    model.encoder.eval()
+    model._init_film(["MetalDam", "Steel1"], 4, int(settings["in_channels"]))
+    assert model.encoder.training is False
+
+
+# --------------------------------------------------------------------------
 # forward(): identity at init, embedding lookup, unknown-name fallback
 # --------------------------------------------------------------------------
 @pytest.fixture

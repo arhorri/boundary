@@ -350,14 +350,23 @@ class _FiLMUnetMixin:
         # Verified against a real forward pass, not assumed: an smp encoder
         # whose out_channels disagreed with what encoder(x) actually returns
         # would silently modulate the wrong tensor shapes.
-        with torch.no_grad():
-            probe = torch.zeros(1, int(in_channels), 32, 32)
-            try:
-                features = self.encoder(probe)
-            except Exception as exc:                       # noqa: BLE001
-                raise ModelError(
-                    "could not probe the encoder to size FiLM's per-stage "
-                    f"layers: {type(exc).__name__}: {exc}") from exc
+        # Batch size 1: some encoder stages collapse to a 1x1 spatial map, and
+        # BatchNorm in training mode needs more than one value per channel to
+        # compute a batch variance. eval() disables that requirement for the
+        # probe; the encoder's original mode is restored either way.
+        was_training = self.encoder.training
+        self.encoder.eval()
+        try:
+            with torch.no_grad():
+                probe = torch.zeros(1, int(in_channels), 32, 32)
+                try:
+                    features = self.encoder(probe)
+                except Exception as exc:                       # noqa: BLE001
+                    raise ModelError(
+                        "could not probe the encoder to size FiLM's per-stage "
+                        f"layers: {type(exc).__name__}: {exc}") from exc
+        finally:
+            self.encoder.train(was_training)
         if len(features) != len(channels):
             raise ModelError(
                 f"encoder.out_channels has {len(channels)} entries but a "
