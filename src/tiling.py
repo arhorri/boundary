@@ -859,31 +859,69 @@ def sampling_weights(rows: Sequence, settings: dict) -> dict:
     }
 
 
+def fold_entry_statistics(fold: dict, settings: dict) -> dict:
+    """The per-fold summary, for ONE fold entry.
+
+    Split out of ``fold_statistics`` so that a fold built on its own -- the
+    pooled ``fold_steel_combined``, which a partial Steel1+Steel2 index can
+    produce without ever calling ``build_folds()`` -- is summarised by the
+    SAME code that summarises a LODO fold, rather than by a second copy that
+    would be free to drift. ``pos_weight`` and the sampler weights are
+    therefore measured from ``fold["rows"]`` the one way, for every fold.
+    """
+    train = [r for r in fold["rows"] if r["split"] == "train"]
+    val = [r for r in fold["rows"] if r["split"] == "val"]
+    pw = pos_weight(train)
+    return {
+        "held_out": fold["held_out"],
+        "alias_of": fold.get("alias_of"),
+        "n_train_tiles": len(train),
+        "n_val_tiles": len(val),
+        "train_datasets": sorted({r["dataset"] for r in train}),
+        "val_datasets": sorted({r["dataset"] for r in val}),
+        "n_train_parents": len({(r["dataset"], r["parent_id"]) for r in train}),
+        "n_val_parents": len({(r["dataset"], r["parent_id"]) for r in val}),
+        "train_boundary_fraction": _stats([r["boundary_fraction"] for r in train]),
+        "val_boundary_fraction": _stats([r["boundary_fraction"] for r in val]),
+        "pos_weight": None if pw is None else round(pw, 3),
+        "sampling": sampling_weights(train, settings),
+    }
+
+
 def fold_statistics(folds: dict, settings: dict) -> dict:
     """Everything a training run needs to know about a fold before it starts."""
-    stats = {}
-    for name, fold in folds["folds"].items():
-        train = [r for r in fold["rows"] if r["split"] == "train"]
-        val = [r for r in fold["rows"] if r["split"] == "val"]
-        pw = pos_weight(train)
-        stats[name] = {
-            "held_out": fold["held_out"],
-            "alias_of": fold.get("alias_of"),
-            "n_train_tiles": len(train),
-            "n_val_tiles": len(val),
-            "train_datasets": sorted({r["dataset"] for r in train}),
-            "val_datasets": sorted({r["dataset"] for r in val}),
-            "n_train_parents": len({(r["dataset"], r["parent_id"]) for r in train}),
-            "n_val_parents": len({(r["dataset"], r["parent_id"]) for r in val}),
-            "train_boundary_fraction": _stats([r["boundary_fraction"] for r in train]),
-            "val_boundary_fraction": _stats([r["boundary_fraction"] for r in val]),
-            "pos_weight": None if pw is None else round(pw, 3),
-            "sampling": sampling_weights(train, settings),
-        }
+    stats = {name: fold_entry_statistics(fold, settings)
+             for name, fold in folds["folds"].items()}
     stats["test"] = test_slice_statistics(
         folds["test"]["rows"], folds["test"]["datasets"],
         "domain-shift fold: evaluated, never trained or validated on")
     return stats
+
+
+def steel_combined_statistics(fold: dict, settings: dict) -> dict:
+    """The complete ``fold_stats.yaml`` entry for ``fold_steel_combined``.
+
+    The base summary every fold gets, plus the two things only this fold has:
+    its OWN held-out test slice (``test``) and the parent allocation that
+    produced all three splits (``parent_allocation``).
+
+    It lives here rather than inline in a caller because there are now two
+    callers -- ``scripts/build_tiles.py``, which builds this fold alongside
+    the LODO folds from a full index, and the pooled-split notebook, which
+    builds it alone from a Steel1+Steel2-only index -- and an entry assembled
+    twice is an entry that can disagree with itself. ``pos_weight`` here comes
+    from ``fold["rows"]``, this fold's own train split, exactly as it does for
+    every other fold; it is never copied from Steel1's or Steel2's value in
+    any other fold's entry.
+    """
+    entry = fold_entry_statistics(fold, settings)
+    entry["test"] = test_slice_statistics(
+        fold["test_rows"], fold["datasets"],
+        f"{fold['name']}'s own held-out test slice: parent-level, never "
+        "touched by training or checkpoint selection, and never merged into "
+        "the shared test manifest.")
+    entry["parent_allocation"] = fold["parent_allocation"]
+    return entry
 
 
 def test_slice_statistics(rows: Sequence, datasets: Sequence, note: str) -> dict:
@@ -974,6 +1012,237 @@ def write_fold_stats(
     )
     path.write_text(header + yaml.safe_dump(doc, sort_keys=False))
     return path
+
+
+#: Top-level keys in configs/fold_stats.yaml that describe the TILE GEOMETRY
+#: every fold in the file was cut under. A merge that changed one of these
+#: would leave folds in one file that disagree about what a tile even is.
+_GEOMETRY_KEYS = ("patch_size", "stride", "min_boundary_frac", "seed")
+
+
+def merge_fold_stats(
+    entries: dict,
+    settings: dict,
+    configs_dir: Optional[Path] = None,
+) -> tuple:
+    """Add or replace named folds in configs/fold_stats.yaml, keeping the rest.
+
+    ``write_fold_stats`` rewrites the whole file from one run's ``stats``, which
+    is right when that run indexed every dataset. It is WRONG for a partial
+    run: a Steel1+Steel2-only index produces stats for those folds alone, and
+    writing them would silently delete ``fold_MetalDam``, ``fold_uhcs1``,
+    ``fold_uhcs2``, ``dev`` and ``test`` from the file that training reads.
+    The deletion would not raise anywhere -- it would surface later as
+    ``fold 'dev' is not in configs/fold_stats.yaml``, a long way from its
+    cause. This function is the read-modify-write that makes a partial run
+    safe: it touches ONLY the fold keys named in ``entries``.
+
+    ``entries`` is ``{fold_name: stats_entry}``. Refuses, rather than
+    guessing, when:
+
+    - the file does not exist yet (there is nothing to merge into; a first
+      full run must produce it with ``write_fold_stats``)
+    - the file's recorded tile geometry disagrees with ``settings``. Folds in
+      one ``fold_stats.yaml`` must all describe tiles cut the same way; a
+      merge under a different ``patch_size``/``stride``/``min_boundary_frac``/
+      ``seed`` would put two incompatible fold definitions in one file and
+      nothing downstream would notice.
+    - an entry is not a mapping, or names no fold.
+
+    Returns ``(path, summary)`` where summary records which fold keys were
+    added, which were replaced, and which were left untouched -- so a caller
+    can PRINT the additive-ness rather than assert it on faith.
+    """
+    import yaml
+
+    configs_dir = Path(configs_dir or (REPO_ROOT / "configs"))
+    path = configs_dir / "fold_stats.yaml"
+    if not path.is_file():
+        raise TilingError(
+            f"{path} does not exist, so there is nothing to merge into. "
+            "Run the full tiling step (notebooks/03_tiling.ipynb, every "
+            "dataset) once to create it before merging a single fold in.")
+    if not entries:
+        raise TilingError("merge_fold_stats was given no fold entries.")
+    for name, entry in entries.items():
+        if not isinstance(entry, dict):
+            raise TilingError(
+                f"merge_fold_stats: entry for {name!r} must be a mapping, got "
+                f"{type(entry).__name__}")
+
+    doc = yaml.safe_load(path.read_text())
+    if not isinstance(doc, dict) or not isinstance(doc.get("folds"), dict):
+        raise TilingError(
+            f"{path} is not a fold-stats document (no top-level 'folds' "
+            "mapping). Refusing to merge into a file this did not write.")
+
+    mismatched = []
+    for key in _GEOMETRY_KEYS:
+        if key not in doc or key not in settings:
+            continue
+        have, want = doc[key], settings[key]
+        if key == "min_boundary_frac":
+            same = abs(float(have) - float(want)) < 1e-12
+        else:
+            same = int(have) == int(want)
+        if not same:
+            mismatched.append(f"{key}: file has {have!r}, this run has {want!r}")
+    if mismatched:
+        raise TilingError(
+            f"{path} was written under a different tile geometry:\n  "
+            + "\n  ".join(mismatched)
+            + "\nMerging a fold cut one way into a file describing folds cut "
+              "another way would put two incompatible definitions of a tile in "
+              "one file. Re-run the full tiling step instead.")
+
+    before = set(doc["folds"])
+    added = sorted(set(entries) - before)
+    replaced = sorted(set(entries) & before)
+    for name, entry in entries.items():
+        doc["folds"][name] = entry
+    untouched = sorted(before - set(entries))
+
+    doc["generated_utc"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    doc["merged_folds"] = sorted(entries)
+
+    header = (
+        "# Fold statistics and sampling weights, generated by src/tiling.py.\n"
+        "# Do not hand-edit: notebooks/03_tiling.ipynb overwrites this file,\n"
+        "# and merge_fold_stats() rewrites individual fold entries in place.\n"
+        "#\n"
+        "# sampling.weights is a PER-TILE weight keyed by dataset, for a\n"
+        "# WeightedRandomSampler. Mean weight is 1, so an epoch keeps its size\n"
+        "# while each dataset's share of it becomes sampling.target_share.\n"
+        "# pos_weight is n_negative/n_positive over the train split, for\n"
+        "# BCEWithLogitsLoss.\n"
+    )
+    path.write_text(header + yaml.safe_dump(doc, sort_keys=False))
+    return path, {"added": added, "replaced": replaced, "untouched": untouched,
+                  "n_folds_after": len(doc["folds"])}
+
+
+def write_fold_report(
+    fold: dict,
+    entry: dict,
+    index: dict,
+    manifests: dict,
+    reports_dir: Optional[Path] = None,
+) -> tuple:
+    """reports/tiling_<fold>.{md,json} -- one fold's own report.
+
+    A partial run must not write ``reports/tiling.md``: that file describes
+    EVERY dataset and every fold, and regenerating it from a two-dataset
+    index would quietly shrink it to those two. This writes a report scoped
+    to the one fold instead, beside the repo-wide one rather than over it.
+
+    Takes the ``fold`` itself, not just its stats entry, because the per
+    dataset per split TILE counts -- the thing the task asks to be made
+    visible rather than silently absorbed -- are only derivable by counting
+    rows; the stats entry records totals and parent lists, not the crossing
+    of the two.
+    """
+    name = fold["name"]
+    reports_dir = Path(reports_dir or (REPO_ROOT / "reports"))
+    reports_dir.mkdir(parents=True, exist_ok=True)
+    datasets = list(fold["datasets"])
+
+    rows_by_split = {
+        "train": [r for r in fold["rows"] if r["split"] == "train"],
+        "val": [r for r in fold["rows"] if r["split"] == "val"],
+        "test": list(fold["test_rows"]),
+    }
+    alloc = fold["parent_allocation"]
+    tiles = {s: {d: sum(1 for r in rows if r["dataset"] == d) for d in datasets}
+             for s, rows in rows_by_split.items()}
+    parents = {s: {d: len((alloc.get(s) or {}).get(d, [])) for d in datasets}
+               for s in rows_by_split}
+
+    payload = {
+        "generated_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "fold": name,
+        "settings": {k: index["settings"][k] for k in sorted(index["settings"])},
+        "datasets_indexed": {
+            ds: {k: v for k, v in d.items() if k != "tiles"}
+            for ds, d in index["datasets"].items()
+        },
+        "tiles_per_split_per_dataset": tiles,
+        "parents_per_split_per_dataset": parents,
+        "parent_allocation": alloc,
+        "stats": entry,
+        "manifests": manifests,
+    }
+    json_path = _write(reports_dir / f"tiling_{name}.json",
+                       json.dumps(payload, indent=2))
+
+    totals = {s: sum(tiles[s].values()) for s in rows_by_split}
+    grand = sum(totals.values())
+    cfg = index["settings"]["steel_combined"]
+
+    lines = [
+        f"# {name}",
+        "",
+        f"- generated: {payload['generated_utc']}",
+        f"- pooled from {datasets}, split BY PARENT with seed "
+        f"{index['settings']['seed']}",
+        f"- held out: `{entry['held_out']}` — this fold has no single held-out "
+        "DATASET in the LODO sense. The label is descriptive and matches no "
+        "dataset in any per-dataset metrics breakdown by construction, which "
+        "is what makes the held-out-specific paths in `src/train.py` fall "
+        "back to their pooled behaviour instead of mislabelling a real "
+        "dataset as this fold's held-out one.",
+        f"- pos_weight **{entry['pos_weight']}**, measured on THIS fold's own "
+        "train split, never inherited from another fold",
+        "",
+        "## Parents and tiles per split",
+        "",
+        "Printed per dataset so an imbalance is visible rather than absorbed "
+        "into a total. Steel2 has only 4 parents, so "
+        f"`min_parents_per_split: {cfg['min_parents_per_split']}` is what "
+        "guarantees it appears in every split at all.",
+        "",
+        "| split | " + " | ".join(f"{d} p/t" for d in datasets)
+        + " | tiles | share |",
+        "| --- | " + " | ".join("---" for _ in datasets) + " | --- | --- |",
+    ]
+    for s in ("train", "val", "test"):
+        cells = [f"{parents[s][d]}p / {tiles[s][d]}t" for d in datasets]
+        share = totals[s] / grand if grand else 0.0
+        lines.append(f"| {s} | " + " | ".join(cells)
+                     + f" | {totals[s]} | {share:.3f} |")
+    lines += ["",
+              f"Total {grand} tiles. Target "
+              f"{cfg['train_frac']}/{cfg['val_frac']}/{cfg['test_frac']}, "
+              "achieved "
+              + "/".join(f"{totals[s] / grand:.3f}" for s in
+                         ("train", "val", "test"))
+              + " by TILE count (the ratio is measured in tiles, not parents: "
+              "Steel1 and Steel2 have very different tiles-per-parent).",
+              ""]
+
+    lines += ["## Boundary fraction", "",
+              "| split | min | mean | median | max | n |",
+              "| --- | --- | --- | --- | --- | --- |"]
+    for label, s in (("train", entry["train_boundary_fraction"]),
+                     ("val", entry["val_boundary_fraction"]),
+                     ("test", entry["test"]["boundary_fraction"])):
+        lines.append(f"| {label} | {s['min']} | {s['mean']} | {s['median']} | "
+                     f"{s['max']} | {s['n']} |")
+
+    lines += ["", "## Parent allocation", "",
+              "Every parent appears in exactly one split; a parent's tiles "
+              "never straddle two splits. Listed in full so the split can be "
+              "checked by eye and reproduced.", ""]
+    for s in ("train", "val", "test"):
+        lines.append(f"- **{s}**")
+        for d in datasets:
+            plist = (alloc.get(s) or {}).get(d, [])
+            lines.append(f"  - {d} ({len(plist)}): "
+                         + (", ".join(f"`{p}`" for p in plist) or "—"))
+
+    lines += ["", "## Manifests", ""]
+    lines += [f"- `{k}`: `{v}`" for k, v in manifests.items()]
+    md_path = _write(reports_dir / f"tiling_{name}.md", "\n".join(lines) + "\n")
+    return md_path, json_path
 
 
 def write_parents_md(index: dict, reports_dir: Optional[Path] = None) -> Path:

@@ -85,12 +85,10 @@ def main(argv=None) -> int:
     stats = tiling.fold_statistics(folds, settings)
     if steel_fold is not None:
         name = steel_fold["name"]
-        stats[name]["test"] = tiling.test_slice_statistics(
-            steel_fold["test_rows"], steel_fold["datasets"],
-            f"{name}'s own held-out test slice: parent-level, never touched "
-            "by training or checkpoint selection, and never merged into the "
-            "shared test manifest.")
-        stats[name]["parent_allocation"] = steel_fold["parent_allocation"]
+        # The same entry notebooks/06d_steel_combined.ipynb builds, from the
+        # same helper: this fold's stats are assembled in exactly one place,
+        # so the CLI path and the pooled-split notebook path cannot drift.
+        stats[name] = tiling.steel_combined_statistics(steel_fold, settings)
         print(f"\n{name} parent/tile allocation (dataset: n_parents/n_tiles):")
         for split in ("train", "val", "test"):
             per_ds = steel_fold["parent_allocation"][split]
