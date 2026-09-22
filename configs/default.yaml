@@ -319,6 +319,23 @@ tiling:
   gt_subdir: gt_boundaries
   manifest_subdir: manifests
 
+  # fold_steel_combined: a SEPARATE experiment-specific fold. Pools Steel1 +
+  # Steel2 into one fresh, parent-split train/val/test split, replacing the
+  # LODO protocol above for this experiment only -- it does not change
+  # test_only/parent_split/lodo_datasets, which every other fold still obeys.
+  # Ratios are measured by TILE COUNT (Steel1 ~47 tiles/parent, Steel2 ~126
+  # tiles/parent -- a parent-count split would not hit these ratios).
+  # Overriding this key replaces it whole (same shallow-merge rule as
+  # parent_rules/parent_split above), so list every sub-key if you do.
+  steel_combined:
+    name: fold_steel_combined
+    datasets: [Steel1, Steel2]
+    train_frac: 0.70
+    val_frac: 0.15
+    test_frac: 0.15
+    min_parents_per_split: 1   # Steel2 has only 4 parents -- guarantees >=1 per split
+    held_out_label: "mixed(Steel1+Steel2)"
+
   # The 48 Steel1 tiles of parent im_val_cut10-400-01-V-9mm-4000x13, which
   # ships images but no masks. They have no ground truth and cannot be
   # trained on; naming them here means they are reported, not silently

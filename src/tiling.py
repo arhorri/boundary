@@ -77,6 +77,27 @@ DEFAULTS = {
     "exclusions": {},            # dataset -> [image filename, ...]
     "gt_subdir": "gt_boundaries",
     "manifest_subdir": "manifests",
+
+    # fold_steel_combined: a SEPARATE experiment-specific fold that pools
+    # Steel1 and Steel2 into one fresh, parent-split 70/15/15 train/val/test
+    # split, replacing the LODO protocol for this experiment only. It is
+    # built alongside build_folds(), never inside it -- see
+    # build_steel_combined_fold(). test_frac's slice is Steel2/Steel1 tiles
+    # this fold pools and re-splits itself; it is written to its own
+    # fold_steel_combined_test.csv, never to the shared test.csv that
+    # test_only/lodo_datasets above produce.
+    "steel_combined": {
+        "name": "fold_steel_combined",
+        "datasets": ["Steel1", "Steel2"],
+        "train_frac": 0.70,
+        "val_frac": 0.15,
+        "test_frac": 0.15,
+        # Steel2 has only 4 parents total; this guarantees that many of them
+        # land in EVERY split rather than leaving it to chance where a small
+        # dataset could end up entirely on one side.
+        "min_parents_per_split": 1,
+        "held_out_label": "mixed(Steel1+Steel2)",
+    },
 }
 
 #: pos_weight outside this band means the class balance is not what we think.
@@ -585,6 +606,204 @@ def build_folds(index: dict, settings: dict) -> dict:
 
 
 # --------------------------------------------------------------------------
+# fold_steel_combined -- a separate, pooled train/val/test split
+# --------------------------------------------------------------------------
+def allocate_parents_by_tile_ratio(
+    parent_tiles: dict, fracs: dict, seed: int, min_parents_per_split: int = 1,
+) -> dict:
+    """Assign every (dataset, parent) to train/val/test by TILE COUNT ratio.
+
+    ``parent_tiles`` is ``{dataset: {parent_id: n_tiles}}``. The split is made
+    BY PARENT -- a parent's tiles move together -- but the TARGET ratio
+    (``fracs``, a ``{"train": f, "val": f, "test": f}`` summing to 1.0) is
+    measured in tiles, because parents are not equal-sized: pooling Steel1
+    (19 parents, ~47 tiles each) with Steel2 (4 parents, ~126 tiles each)
+    means a parent-count split and a tile-count split disagree, and the tile
+    count is what a training epoch actually sees.
+
+    Deterministic in two stages, both driven by one ``random.Random(seed)``
+    and both iterating in a fixed (sorted) order so the result never depends
+    on dict or set iteration order:
+
+    1. **Minimum guarantee.** For each dataset, ``min_parents_per_split``
+       parents are handed to EACH split before anything else is decided, by
+       shuffling that dataset's own parent list and popping from it. This is
+       what keeps a small dataset (Steel2's 4 parents) from landing entirely
+       on one side of the split by chance -- without it, a dataset with only
+       a few parents could easily miss a split altogether.
+    2. **The rest.** Every remaining (dataset, parent) pair, pooled across
+       datasets, is shuffled once and then assigned ONE PARENT AT A TIME to
+       whichever split is currently furthest BELOW its target tile-count
+       share. This greedy balance converges on the requested ratio without
+       ever moving a parent once it is placed, which is what makes stage 2
+       reproducible: the same seed always shuffles the remainder into the
+       same order and hands out the same sequence of "furthest behind"
+       decisions.
+
+    Raises if a dataset does not have enough parents to give every split its
+    minimum -- silently shrinking the guarantee would defeat the point of it.
+
+    Returns ``{"train": {dataset: [parent_id, ...]}, "val": {...}, "test": {...}}``,
+    every list sorted.
+    """
+    splits = ("train", "val", "test")
+    missing_frac = sorted(set(splits) - set(fracs))
+    if missing_frac:
+        raise TilingError(f"allocate_parents_by_tile_ratio: fracs is missing {missing_frac}")
+    if abs(sum(fracs[s] for s in splits) - 1.0) > 1e-6:
+        raise TilingError(
+            f"allocate_parents_by_tile_ratio: fracs must sum to 1.0, got {fracs}")
+    if min_parents_per_split < 0:
+        raise TilingError(
+            f"min_parents_per_split must be >= 0, got {min_parents_per_split}")
+
+    rng = random.Random(seed)
+    assigned = {s: defaultdict(list) for s in splits}
+    used = {ds: set() for ds in parent_tiles}
+
+    for ds in sorted(parent_tiles):
+        parents = sorted(parent_tiles[ds])
+        needed = min_parents_per_split * len(splits)
+        if len(parents) < needed:
+            raise TilingError(
+                f"{ds} has {len(parents)} parents, too few to guarantee "
+                f"{min_parents_per_split} per split across {list(splits)} "
+                f"({needed} needed).")
+        pool = list(parents)
+        rng.shuffle(pool)
+        for s in splits:
+            for _ in range(min_parents_per_split):
+                p = pool.pop()
+                assigned[s][ds].append(p)
+                used[ds].add(p)
+
+    remainder = [(ds, p) for ds in sorted(parent_tiles)
+                 for p in sorted(parent_tiles[ds]) if p not in used[ds]]
+    rng.shuffle(remainder)
+
+    totals = {s: sum(parent_tiles[ds][p] for ds, plist in assigned[s].items()
+                     for p in plist) for s in splits}
+    grand_total = sum(sum(v.values()) for v in parent_tiles.values())
+
+    for ds, p in remainder:
+        n = parent_tiles[ds][p]
+        deficit = {s: fracs[s] * grand_total - totals[s] for s in splits}
+        target = max(splits, key=lambda s: deficit[s])
+        assigned[target][ds].append(p)
+        totals[target] += n
+
+    return {s: {ds: sorted(plist) for ds, plist in assigned[s].items()}
+            for s in splits}
+
+
+def build_steel_combined_fold(index: dict, settings: dict) -> dict:
+    """``fold_steel_combined``: pooled Steel1+Steel2, its own 70/15/15 split.
+
+    This is a deliberate, SELF-CONTAINED exception to the global
+    ``tiling.test_only`` / ``tiling.lodo_datasets`` protocol every other fold
+    obeys, not a change to it:
+
+    - Steel2 is globally ``test_only`` -- it never appears in any LODO fold's
+      train or val split, only in the shared ``test`` manifest, whole. This
+      fold pools Steel2 WITH Steel1 and gives the pool a fresh parent-level
+      split instead, so Steel2 tiles DO appear in this fold's train and val,
+      despite the global policy. That is only sound because this fold's own
+      held-out slice is a genuine, disjoint parent-level test split of its
+      own -- it is not reusing Steel2's "held out" status as license to peek.
+    - MetalDam, uhcs1 and uhcs2 play no part here; their tiles are simply
+      absent from every one of this fold's three splits, and their existing
+      folds (which this function never touches) are unaffected.
+    - Its held-out test slice is written to ITS OWN manifest
+      (``fold_steel_combined_test.csv``, by the caller), never merged into
+      the shared ``test.csv`` -- the two test sets answer different
+      questions (domain shift onto an unseen microscope vs. generalisation
+      to unseen parents of the SAME two microscopes) and must not be
+      confused for one another downstream.
+
+    Returns a dict shaped like a ``build_folds()`` fold entry --
+    ``name``/``held_out``/``alias_of``/``rows`` (train+val, split-tagged) --
+    plus this fold's own extras: ``test_rows`` (its held-out test slice,
+    never in ``rows``) and ``parent_allocation`` (the full
+    ``{split: {dataset: [parent_id, ...]}}`` this run produced, so it can be
+    reported and checked for reproducibility). Callers insert the returned
+    entry into ``build_folds()``'s ``folds["folds"]`` dict themselves --
+    this function never mutates a LODO fold or the shared ``test`` manifest.
+    """
+    cfg = settings["steel_combined"]
+    datasets = list(cfg["datasets"])
+
+    by_dataset = defaultdict(list)
+    for t in all_tiles(index):
+        if t["dataset"] in datasets:
+            by_dataset[t["dataset"]].append(t)
+    missing = [d for d in datasets if not by_dataset.get(d)]
+    if missing:
+        raise TilingError(
+            f"{cfg['name']} needs tiles from {datasets}; none indexed for "
+            f"{missing}. Check --datasets or that both datasets extracted "
+            "boundary maps in reports/gt_extraction.json.")
+
+    parent_tiles = {}
+    for ds in datasets:
+        counts = defaultdict(int)
+        for t in by_dataset[ds]:
+            counts[t["parent_id"]] += 1
+        parent_tiles[ds] = dict(counts)
+
+    fracs = {"train": float(cfg["train_frac"]), "val": float(cfg["val_frac"]),
+             "test": float(cfg["test_frac"])}
+    if abs(sum(fracs.values()) - 1.0) > 1e-6:
+        raise TilingError(
+            f"tiling.steel_combined train/val/test_frac must sum to 1.0, "
+            f"got {fracs} (sum {sum(fracs.values())})")
+
+    assignment = allocate_parents_by_tile_ratio(
+        parent_tiles, fracs, seed=int(settings["seed"]),
+        min_parents_per_split=int(cfg["min_parents_per_split"]))
+
+    # Loud, not assumed: no parent may appear on more than one side. The
+    # allocator cannot produce this by construction (every parent is popped
+    # from a single pool once), but the fold this replaces exists precisely
+    # because that invariant was worth asserting rather than trusting.
+    seen = {}
+    for split in ("train", "val", "test"):
+        for ds, plist in assignment[split].items():
+            for p in plist:
+                key = (ds, p)
+                if key in seen:
+                    raise TilingError(
+                        f"{cfg['name']}: parent {key} was assigned to both "
+                        f"{seen[key]} and {split}.")
+                seen[key] = split
+
+    rows_by_split = {"train": [], "val": [], "test": []}
+    for split, per_dataset in assignment.items():
+        wanted = {ds: set(plist) for ds, plist in per_dataset.items()}
+        for ds in datasets:
+            keep = wanted.get(ds, set())
+            for t in by_dataset[ds]:
+                if t["parent_id"] in keep:
+                    rows_by_split[split].append(dict(t, split=split))
+
+    return {
+        "name": cfg["name"],
+        # A descriptive label, not a real dataset name: this fold has no
+        # single held-out DATASET in the LODO sense, so nothing downstream
+        # that keys per-dataset metrics by held_out (best_key(), the FiLM
+        # inference-mode report, the final-epoch table) finds a match for
+        # it -- which is exactly what makes each of them fall back to their
+        # existing "held-out dataset absent" pooled behaviour instead of
+        # crashing or mislabelling a real dataset as this fold's held-out one.
+        "held_out": cfg["held_out_label"],
+        "alias_of": None,
+        "rows": rows_by_split["train"] + rows_by_split["val"],
+        "test_rows": rows_by_split["test"],
+        "parent_allocation": assignment,
+        "datasets": datasets,
+    }
+
+
+# --------------------------------------------------------------------------
 # statistics + sampling weights
 # --------------------------------------------------------------------------
 def pos_weight(rows: Sequence) -> Optional[float]:
@@ -661,15 +880,27 @@ def fold_statistics(folds: dict, settings: dict) -> dict:
             "pos_weight": None if pw is None else round(pw, 3),
             "sampling": sampling_weights(train, settings),
         }
-    test = folds["test"]["rows"]
-    stats["test"] = {
-        "datasets": folds["test"]["datasets"],
-        "n_tiles": len(test),
-        "n_parents": len({(r["dataset"], r["parent_id"]) for r in test}),
-        "boundary_fraction": _stats([r["boundary_fraction"] for r in test]),
-        "note": "domain-shift fold: evaluated, never trained or validated on",
-    }
+    stats["test"] = test_slice_statistics(
+        folds["test"]["rows"], folds["test"]["datasets"],
+        "domain-shift fold: evaluated, never trained or validated on")
     return stats
+
+
+def test_slice_statistics(rows: Sequence, datasets: Sequence, note: str) -> dict:
+    """The same summary shape used for every held-out test slice.
+
+    Shared by the global ``test`` manifest (the LODO folds' test_only
+    datasets, whole) and by ``fold_steel_combined``'s own held-out test
+    parents, so the two are reported identically even though they are
+    produced by different code paths and never share rows.
+    """
+    return {
+        "datasets": list(datasets),
+        "n_tiles": len(rows),
+        "n_parents": len({(r["dataset"], r["parent_id"]) for r in rows}),
+        "boundary_fraction": _stats([r["boundary_fraction"] for r in rows]),
+        "note": note,
+    }
 
 
 def _stats(values: Sequence) -> dict:
@@ -880,7 +1111,13 @@ def write_tiling_report(
               "Steel2 is test-only: the domain-shift fold, evaluated but never "
               "learned from. Steel1 is split by parent with a fixed seed, so its "
               "tiles never straddle train and val. The remaining three datasets "
-              "rotate as the held-out validation set.",
+              "rotate as the held-out validation set. `fold_steel_combined` is a "
+              "separate experiment: it pools Steel1+Steel2 into one fresh, "
+              "parent-split 70/15/15 train/val/test split (its `held_out` is a "
+              "descriptive label, not a real dataset -- it has no single "
+              "held-out dataset in the LODO sense), replacing the LODO protocol "
+              "for that experiment only. MetalDam/uhcs1/uhcs2 and the LODO "
+              "folds above are untouched by it.",
               "",
               "| fold | held out | train tiles | val tiles | train parents | val parents | pos_weight | train frac (mean) |",
               "| --- | --- | --- | --- | --- | --- | --- | --- |"]
@@ -897,6 +1134,19 @@ def write_tiling_report(
     lines += ["", f"- test manifest: {t['datasets']}, {t['n_tiles']} tiles from "
               f"{t['n_parents']} parents, mean boundary fraction "
               f"{t['boundary_fraction']['mean']}"]
+
+    # Any fold with its own held-out test slice (currently just
+    # fold_steel_combined) gets its own line here, distinct from the global
+    # test manifest above: same shape, different rows, never confused.
+    for name, f in stats.items():
+        if name == "test" or "test" not in f:
+            continue
+        ft = f["test"]
+        lines += ["", f"- {name} test manifest: {ft['datasets']}, "
+                  f"{ft['n_tiles']} tiles from {ft['n_parents']} parents, "
+                  f"mean boundary fraction {ft['boundary_fraction']['mean']} "
+                  "(this fold's own held-out parents, never the shared test "
+                  "manifest above)"]
 
     lines += ["", "## Sampling weights", "",
               "Raw tile counts do not measure independent information: Steel1's "
