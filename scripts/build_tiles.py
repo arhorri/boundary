@@ -66,9 +66,47 @@ def main(argv=None) -> int:
     index = tiling.build_index(extraction, audit, gt_root, settings,
                                datasets=args.datasets, progress=progress)
     folds = tiling.build_folds(index, settings)
+
+    # fold_steel_combined: a separate, pooled Steel1+Steel2 train/val/test
+    # split (see src.tiling.build_steel_combined_fold), built ALONGSIDE the
+    # LODO folds above -- never inside build_folds() -- and only when both
+    # its datasets survived --datasets filtering. It is additive: nothing
+    # above this line is touched by it.
+    steel_cfg = settings["steel_combined"]
+    steel_fold = None
+    if all(d in index["datasets"] for d in steel_cfg["datasets"]):
+        steel_fold = tiling.build_steel_combined_fold(index, settings)
+        folds["folds"][steel_fold["name"]] = steel_fold
+    else:
+        missing = [d for d in steel_cfg["datasets"] if d not in index["datasets"]]
+        print(f"skipping {steel_cfg['name']}: {missing} not in this index "
+              "(--datasets filtered it out)")
+
     stats = tiling.fold_statistics(folds, settings)
+    if steel_fold is not None:
+        name = steel_fold["name"]
+        stats[name]["test"] = tiling.test_slice_statistics(
+            steel_fold["test_rows"], steel_fold["datasets"],
+            f"{name}'s own held-out test slice: parent-level, never touched "
+            "by training or checkpoint selection, and never merged into the "
+            "shared test manifest.")
+        stats[name]["parent_allocation"] = steel_fold["parent_allocation"]
+        print(f"\n{name} parent/tile allocation (dataset: n_parents/n_tiles):")
+        for split in ("train", "val", "test"):
+            per_ds = steel_fold["parent_allocation"][split]
+            rows_this_split = (steel_fold["test_rows"] if split == "test"
+                               else [r for r in steel_fold["rows"] if r["split"] == split])
+            counts = {ds: sum(1 for r in rows_this_split if r["dataset"] == ds)
+                     for ds in steel_cfg["datasets"]}
+            print(f"  {split:<5} " + "  ".join(
+                f"{ds}={len(per_ds.get(ds, []))}p/{counts.get(ds, 0)}t"
+                for ds in steel_cfg["datasets"]))
 
     manifests = tiling.write_manifests(folds, manifest_dir)
+    if steel_fold is not None:
+        test_manifest_path = manifest_dir / f"{steel_fold['name']}_test.csv"
+        manifests[f"{steel_fold['name']}_test"] = str(
+            tiling.write_manifest(steel_fold["test_rows"], test_manifest_path))
     parents_path = tiling.write_parents_md(index, reports_dir)
     md_path, json_path = tiling.write_tiling_report(
         index, folds, stats, manifests, reports_dir)
