@@ -1,0 +1,642 @@
+{
+  "generated_utc": "2026-09-24T07:56:28Z",
+  "fold": "fold_steel_combined",
+  "settings": {
+    "assert_single_tile": [
+      "Steel1",
+      "Steel2"
+    ],
+    "exclusions": {
+      "Steel1": [
+        "im_val_cut10-400-01-V-9mm-4000x13_1_1.png",
+        "im_val_cut10-400-01-V-9mm-4000x13_1_2.png",
+        "im_val_cut10-400-01-V-9mm-4000x13_1_3.png",
+        "im_val_cut10-400-01-V-9mm-4000x13_1_4.png",
+        "im_val_cut10-400-01-V-9mm-4000x13_1_5.png",
+        "im_val_cut10-400-01-V-9mm-4000x13_1_6.png",
+        "im_val_cut10-400-01-V-9mm-4000x13_2_1.png",
+        "im_val_cut10-400-01-V-9mm-4000x13_2_2.png",
+        "im_val_cut10-400-01-V-9mm-4000x13_2_3.png",
+        "im_val_cut10-400-01-V-9mm-4000x13_2_4.png",
+        "im_val_cut10-400-01-V-9mm-4000x13_2_5.png",
+        "im_val_cut10-400-01-V-9mm-4000x13_2_6.png",
+        "im_val_cut10-400-01-V-9mm-4000x13_3_1.png",
+        "im_val_cut10-400-01-V-9mm-4000x13_3_2.png",
+        "im_val_cut10-400-01-V-9mm-4000x13_3_3.png",
+        "im_val_cut10-400-01-V-9mm-4000x13_3_4.png",
+        "im_val_cut10-400-01-V-9mm-4000x13_3_5.png",
+        "im_val_cut10-400-01-V-9mm-4000x13_3_6.png",
+        "im_val_cut10-400-01-V-9mm-4000x13_4_1.png",
+        "im_val_cut10-400-01-V-9mm-4000x13_4_2.png",
+        "im_val_cut10-400-01-V-9mm-4000x13_4_3.png",
+        "im_val_cut10-400-01-V-9mm-4000x13_4_4.png",
+        "im_val_cut10-400-01-V-9mm-4000x13_4_5.png",
+        "im_val_cut10-400-01-V-9mm-4000x13_4_6.png",
+        "im_val_cut10-400-01-V-9mm-4000x13_5_1.png",
+        "im_val_cut10-400-01-V-9mm-4000x13_5_2.png",
+        "im_val_cut10-400-01-V-9mm-4000x13_5_3.png",
+        "im_val_cut10-400-01-V-9mm-4000x13_5_4.png",
+        "im_val_cut10-400-01-V-9mm-4000x13_5_5.png",
+        "im_val_cut10-400-01-V-9mm-4000x13_5_6.png",
+        "im_val_cut10-400-01-V-9mm-4000x13_6_1.png",
+        "im_val_cut10-400-01-V-9mm-4000x13_6_2.png",
+        "im_val_cut10-400-01-V-9mm-4000x13_6_3.png",
+        "im_val_cut10-400-01-V-9mm-4000x13_6_4.png",
+        "im_val_cut10-400-01-V-9mm-4000x13_6_5.png",
+        "im_val_cut10-400-01-V-9mm-4000x13_6_6.png",
+        "im_val_cut10-400-01-V-9mm-4000x13_7_1.png",
+        "im_val_cut10-400-01-V-9mm-4000x13_7_2.png",
+        "im_val_cut10-400-01-V-9mm-4000x13_7_3.png",
+        "im_val_cut10-400-01-V-9mm-4000x13_7_4.png",
+        "im_val_cut10-400-01-V-9mm-4000x13_7_5.png",
+        "im_val_cut10-400-01-V-9mm-4000x13_7_6.png",
+        "im_val_cut10-400-01-V-9mm-4000x13_8_1.png",
+        "im_val_cut10-400-01-V-9mm-4000x13_8_2.png",
+        "im_val_cut10-400-01-V-9mm-4000x13_8_3.png",
+        "im_val_cut10-400-01-V-9mm-4000x13_8_4.png",
+        "im_val_cut10-400-01-V-9mm-4000x13_8_5.png",
+        "im_val_cut10-400-01-V-9mm-4000x13_8_6.png"
+      ]
+    },
+    "expected_parents": {
+      "Steel1": 19
+    },
+    "gt_subdir": "gt_boundaries",
+    "lodo_datasets": [
+      "MetalDam",
+      "uhcs1",
+      "uhcs2"
+    ],
+    "manifest_subdir": "manifests",
+    "min_boundary_frac": 0.005,
+    "pad_mode": "reflect",
+    "parent_rules": {
+      "Steel1": "_\\d+_\\d+$",
+      "Steel2": "_tile_\\d+_\\d+$"
+    },
+    "parent_split": {
+      "Steel1": {
+        "val_parents": 4
+      }
+    },
+    "patch_size": 256,
+    "seed": 0,
+    "steel_combined": {
+      "name": "fold_steel_combined",
+      "datasets": [
+        "Steel1",
+        "Steel2"
+      ],
+      "train_frac": 0.7,
+      "val_frac": 0.15,
+      "test_frac": 0.15,
+      "min_parents_per_split": 1,
+      "held_out_label": "mixed(Steel1+Steel2)"
+    },
+    "stride": 128,
+    "test_only": [
+      "Steel2"
+    ],
+    "weight_mode": "parents"
+  },
+  "datasets_indexed": {
+    "Steel1": {
+      "dataset": "Steel1",
+      "folder": "/content/drive/MyDrive/phase11-data/data/Steel1",
+      "gt_dir": "/content/drive/MyDrive/phase11-persistent/gt_boundaries/Steel1",
+      "n_images": 904,
+      "n_parents": 19,
+      "parents": [
+        "im_val_cut10-400-01-H-12mm-4000x14",
+        "im_val_cut10-400-01-H-6mm-4000x06",
+        "im_val_cut10-400-01-H-9mm-4000x10",
+        "im_val_cut10-400-01-H-9mm-4000x12",
+        "im_val_cut10-400-01-V-12mm-4000x16",
+        "im_val_cut10-400-01-V-12mm-4000x17",
+        "im_val_cut10-400-01-V-6mm-4000x07",
+        "im_val_cut10-400-01-V-6mm-4000x08",
+        "im_val_cut10-400-01-V-9mm-4000x12",
+        "im_val_cut10_400-H-12mm-4000x14",
+        "im_val_cut10_400-H-6mm-4000x06",
+        "im_val_cut10_400-H-6mm-4000x07",
+        "im_val_cut10_400-H-9mm-4000x10",
+        "im_val_cut10_400-H-9mm-4000x11",
+        "im_val_cut10_400-V-12mm-4000x14",
+        "im_val_cut10_400-V-6mm-4000x06",
+        "im_val_cut10_400-V-6mm-4000x07",
+        "im_val_cut10_400-V-9mm-4000x10",
+        "im_val_cut10_400-V-9mm-4000x11"
+      ],
+      "n_tiles": 904,
+      "n_dropped": 3,
+      "n_excluded": 0,
+      "n_skipped": 0,
+      "n_padded_images": 0,
+      "padded_pixels": 0,
+      "padded_images": [],
+      "n_orphans": 48,
+      "n_orphans_listed": 48,
+      "listed_but_absent": [],
+      "dropped": [
+        {
+          "tile_id": "Steel1/im_val_cut10-400-01-H-12mm-4000x14_7_1/x0_y0",
+          "boundary_fraction": 0.000488
+        },
+        {
+          "tile_id": "Steel1/im_val_cut10_400-V-12mm-4000x14_3_6/x0_y0",
+          "boundary_fraction": 0.002335
+        },
+        {
+          "tile_id": "Steel1/im_val_cut10_400-V-6mm-4000x07_2_3/x0_y0",
+          "boundary_fraction": 0.003937
+        }
+      ],
+      "excluded": [],
+      "skipped": [],
+      "orphans": [
+        {
+          "image": "im_val_cut10-400-01-V-9mm-4000x13_1_1.png",
+          "why": "image has no matching mask (never had ground truth)",
+          "listed_in_exclusions": true
+        },
+        {
+          "image": "im_val_cut10-400-01-V-9mm-4000x13_1_2.png",
+          "why": "image has no matching mask (never had ground truth)",
+          "listed_in_exclusions": true
+        },
+        {
+          "image": "im_val_cut10-400-01-V-9mm-4000x13_1_3.png",
+          "why": "image has no matching mask (never had ground truth)",
+          "listed_in_exclusions": true
+        },
+        {
+          "image": "im_val_cut10-400-01-V-9mm-4000x13_1_4.png",
+          "why": "image has no matching mask (never had ground truth)",
+          "listed_in_exclusions": true
+        },
+        {
+          "image": "im_val_cut10-400-01-V-9mm-4000x13_1_5.png",
+          "why": "image has no matching mask (never had ground truth)",
+          "listed_in_exclusions": true
+        },
+        {
+          "image": "im_val_cut10-400-01-V-9mm-4000x13_1_6.png",
+          "why": "image has no matching mask (never had ground truth)",
+          "listed_in_exclusions": true
+        },
+        {
+          "image": "im_val_cut10-400-01-V-9mm-4000x13_2_1.png",
+          "why": "image has no matching mask (never had ground truth)",
+          "listed_in_exclusions": true
+        },
+        {
+          "image": "im_val_cut10-400-01-V-9mm-4000x13_2_2.png",
+          "why": "image has no matching mask (never had ground truth)",
+          "listed_in_exclusions": true
+        },
+        {
+          "image": "im_val_cut10-400-01-V-9mm-4000x13_2_3.png",
+          "why": "image has no matching mask (never had ground truth)",
+          "listed_in_exclusions": true
+        },
+        {
+          "image": "im_val_cut10-400-01-V-9mm-4000x13_2_4.png",
+          "why": "image has no matching mask (never had ground truth)",
+          "listed_in_exclusions": true
+        },
+        {
+          "image": "im_val_cut10-400-01-V-9mm-4000x13_2_5.png",
+          "why": "image has no matching mask (never had ground truth)",
+          "listed_in_exclusions": true
+        },
+        {
+          "image": "im_val_cut10-400-01-V-9mm-4000x13_2_6.png",
+          "why": "image has no matching mask (never had ground truth)",
+          "listed_in_exclusions": true
+        },
+        {
+          "image": "im_val_cut10-400-01-V-9mm-4000x13_3_1.png",
+          "why": "image has no matching mask (never had ground truth)",
+          "listed_in_exclusions": true
+        },
+        {
+          "image": "im_val_cut10-400-01-V-9mm-4000x13_3_2.png",
+          "why": "image has no matching mask (never had ground truth)",
+          "listed_in_exclusions": true
+        },
+        {
+          "image": "im_val_cut10-400-01-V-9mm-4000x13_3_3.png",
+          "why": "image has no matching mask (never had ground truth)",
+          "listed_in_exclusions": true
+        },
+        {
+          "image": "im_val_cut10-400-01-V-9mm-4000x13_3_4.png",
+          "why": "image has no matching mask (never had ground truth)",
+          "listed_in_exclusions": true
+        },
+        {
+          "image": "im_val_cut10-400-01-V-9mm-4000x13_3_5.png",
+          "why": "image has no matching mask (never had ground truth)",
+          "listed_in_exclusions": true
+        },
+        {
+          "image": "im_val_cut10-400-01-V-9mm-4000x13_3_6.png",
+          "why": "image has no matching mask (never had ground truth)",
+          "listed_in_exclusions": true
+        },
+        {
+          "image": "im_val_cut10-400-01-V-9mm-4000x13_4_1.png",
+          "why": "image has no matching mask (never had ground truth)",
+          "listed_in_exclusions": true
+        },
+        {
+          "image": "im_val_cut10-400-01-V-9mm-4000x13_4_2.png",
+          "why": "image has no matching mask (never had ground truth)",
+          "listed_in_exclusions": true
+        },
+        {
+          "image": "im_val_cut10-400-01-V-9mm-4000x13_4_3.png",
+          "why": "image has no matching mask (never had ground truth)",
+          "listed_in_exclusions": true
+        },
+        {
+          "image": "im_val_cut10-400-01-V-9mm-4000x13_4_4.png",
+          "why": "image has no matching mask (never had ground truth)",
+          "listed_in_exclusions": true
+        },
+        {
+          "image": "im_val_cut10-400-01-V-9mm-4000x13_4_5.png",
+          "why": "image has no matching mask (never had ground truth)",
+          "listed_in_exclusions": true
+        },
+        {
+          "image": "im_val_cut10-400-01-V-9mm-4000x13_4_6.png",
+          "why": "image has no matching mask (never had ground truth)",
+          "listed_in_exclusions": true
+        },
+        {
+          "image": "im_val_cut10-400-01-V-9mm-4000x13_5_1.png",
+          "why": "image has no matching mask (never had ground truth)",
+          "listed_in_exclusions": true
+        },
+        {
+          "image": "im_val_cut10-400-01-V-9mm-4000x13_5_2.png",
+          "why": "image has no matching mask (never had ground truth)",
+          "listed_in_exclusions": true
+        },
+        {
+          "image": "im_val_cut10-400-01-V-9mm-4000x13_5_3.png",
+          "why": "image has no matching mask (never had ground truth)",
+          "listed_in_exclusions": true
+        },
+        {
+          "image": "im_val_cut10-400-01-V-9mm-4000x13_5_4.png",
+          "why": "image has no matching mask (never had ground truth)",
+          "listed_in_exclusions": true
+        },
+        {
+          "image": "im_val_cut10-400-01-V-9mm-4000x13_5_5.png",
+          "why": "image has no matching mask (never had ground truth)",
+          "listed_in_exclusions": true
+        },
+        {
+          "image": "im_val_cut10-400-01-V-9mm-4000x13_5_6.png",
+          "why": "image has no matching mask (never had ground truth)",
+          "listed_in_exclusions": true
+        },
+        {
+          "image": "im_val_cut10-400-01-V-9mm-4000x13_6_1.png",
+          "why": "image has no matching mask (never had ground truth)",
+          "listed_in_exclusions": true
+        },
+        {
+          "image": "im_val_cut10-400-01-V-9mm-4000x13_6_2.png",
+          "why": "image has no matching mask (never had ground truth)",
+          "listed_in_exclusions": true
+        },
+        {
+          "image": "im_val_cut10-400-01-V-9mm-4000x13_6_3.png",
+          "why": "image has no matching mask (never had ground truth)",
+          "listed_in_exclusions": true
+        },
+        {
+          "image": "im_val_cut10-400-01-V-9mm-4000x13_6_4.png",
+          "why": "image has no matching mask (never had ground truth)",
+          "listed_in_exclusions": true
+        },
+        {
+          "image": "im_val_cut10-400-01-V-9mm-4000x13_6_5.png",
+          "why": "image has no matching mask (never had ground truth)",
+          "listed_in_exclusions": true
+        },
+        {
+          "image": "im_val_cut10-400-01-V-9mm-4000x13_6_6.png",
+          "why": "image has no matching mask (never had ground truth)",
+          "listed_in_exclusions": true
+        },
+        {
+          "image": "im_val_cut10-400-01-V-9mm-4000x13_7_1.png",
+          "why": "image has no matching mask (never had ground truth)",
+          "listed_in_exclusions": true
+        },
+        {
+          "image": "im_val_cut10-400-01-V-9mm-4000x13_7_2.png",
+          "why": "image has no matching mask (never had ground truth)",
+          "listed_in_exclusions": true
+        },
+        {
+          "image": "im_val_cut10-400-01-V-9mm-4000x13_7_3.png",
+          "why": "image has no matching mask (never had ground truth)",
+          "listed_in_exclusions": true
+        },
+        {
+          "image": "im_val_cut10-400-01-V-9mm-4000x13_7_4.png",
+          "why": "image has no matching mask (never had ground truth)",
+          "listed_in_exclusions": true
+        },
+        {
+          "image": "im_val_cut10-400-01-V-9mm-4000x13_7_5.png",
+          "why": "image has no matching mask (never had ground truth)",
+          "listed_in_exclusions": true
+        },
+        {
+          "image": "im_val_cut10-400-01-V-9mm-4000x13_7_6.png",
+          "why": "image has no matching mask (never had ground truth)",
+          "listed_in_exclusions": true
+        },
+        {
+          "image": "im_val_cut10-400-01-V-9mm-4000x13_8_1.png",
+          "why": "image has no matching mask (never had ground truth)",
+          "listed_in_exclusions": true
+        },
+        {
+          "image": "im_val_cut10-400-01-V-9mm-4000x13_8_2.png",
+          "why": "image has no matching mask (never had ground truth)",
+          "listed_in_exclusions": true
+        },
+        {
+          "image": "im_val_cut10-400-01-V-9mm-4000x13_8_3.png",
+          "why": "image has no matching mask (never had ground truth)",
+          "listed_in_exclusions": true
+        },
+        {
+          "image": "im_val_cut10-400-01-V-9mm-4000x13_8_4.png",
+          "why": "image has no matching mask (never had ground truth)",
+          "listed_in_exclusions": true
+        },
+        {
+          "image": "im_val_cut10-400-01-V-9mm-4000x13_8_5.png",
+          "why": "image has no matching mask (never had ground truth)",
+          "listed_in_exclusions": true
+        },
+        {
+          "image": "im_val_cut10-400-01-V-9mm-4000x13_8_6.png",
+          "why": "image has no matching mask (never had ground truth)",
+          "listed_in_exclusions": true
+        }
+      ],
+      "single_tile_drops": [
+        {
+          "dataset": "Steel1",
+          "image": "im_val_cut10-400-01-H-12mm-4000x14_7_1.png",
+          "boundary_fraction": 0.000488,
+          "why": "the image's only tile is below min_boundary_frac (0.005) -- the image is gone from every split"
+        },
+        {
+          "dataset": "Steel1",
+          "image": "im_val_cut10_400-V-12mm-4000x14_3_6.png",
+          "boundary_fraction": 0.002335,
+          "why": "the image's only tile is below min_boundary_frac (0.005) -- the image is gone from every split"
+        },
+        {
+          "dataset": "Steel1",
+          "image": "im_val_cut10_400-V-6mm-4000x07_2_3.png",
+          "boundary_fraction": 0.003937,
+          "why": "the image's only tile is below min_boundary_frac (0.005) -- the image is gone from every split"
+        }
+      ]
+    },
+    "Steel2": {
+      "dataset": "Steel2",
+      "folder": "/content/drive/MyDrive/phase11-data/data/Steel2",
+      "gt_dir": "/content/drive/MyDrive/phase11-persistent/gt_boundaries/Steel2",
+      "n_images": 504,
+      "n_parents": 4,
+      "parents": [
+        "87431041",
+        "87440491",
+        "87450661",
+        "87450741"
+      ],
+      "n_tiles": 504,
+      "n_dropped": 0,
+      "n_excluded": 0,
+      "n_skipped": 0,
+      "n_padded_images": 0,
+      "padded_pixels": 0,
+      "padded_images": [],
+      "n_orphans": 1,
+      "n_orphans_listed": 0,
+      "listed_but_absent": [],
+      "dropped": [],
+      "excluded": [],
+      "skipped": [],
+      "orphans": [
+        {
+          "image": "87431041_tile_768_512 (1).png",
+          "why": "image has no matching mask (never had ground truth)",
+          "listed_in_exclusions": false
+        }
+      ],
+      "single_tile_drops": []
+    }
+  },
+  "tiles_per_split_per_dataset": {
+    "train": {
+      "Steel1": 713,
+      "Steel2": 252
+    },
+    "val": {
+      "Steel1": 95,
+      "Steel2": 126
+    },
+    "test": {
+      "Steel1": 96,
+      "Steel2": 126
+    }
+  },
+  "parents_per_split_per_dataset": {
+    "train": {
+      "Steel1": 15,
+      "Steel2": 2
+    },
+    "val": {
+      "Steel1": 2,
+      "Steel2": 1
+    },
+    "test": {
+      "Steel1": 2,
+      "Steel2": 1
+    }
+  },
+  "parent_allocation": {
+    "train": {
+      "Steel1": [
+        "im_val_cut10-400-01-H-12mm-4000x14",
+        "im_val_cut10-400-01-H-9mm-4000x10",
+        "im_val_cut10-400-01-H-9mm-4000x12",
+        "im_val_cut10-400-01-V-12mm-4000x16",
+        "im_val_cut10-400-01-V-12mm-4000x17",
+        "im_val_cut10-400-01-V-6mm-4000x07",
+        "im_val_cut10-400-01-V-6mm-4000x08",
+        "im_val_cut10-400-01-V-9mm-4000x12",
+        "im_val_cut10_400-H-12mm-4000x14",
+        "im_val_cut10_400-H-6mm-4000x06",
+        "im_val_cut10_400-H-9mm-4000x10",
+        "im_val_cut10_400-V-12mm-4000x14",
+        "im_val_cut10_400-V-6mm-4000x06",
+        "im_val_cut10_400-V-6mm-4000x07",
+        "im_val_cut10_400-V-9mm-4000x10"
+      ],
+      "Steel2": [
+        "87440491",
+        "87450661"
+      ]
+    },
+    "val": {
+      "Steel1": [
+        "im_val_cut10_400-H-9mm-4000x11",
+        "im_val_cut10_400-V-9mm-4000x11"
+      ],
+      "Steel2": [
+        "87431041"
+      ]
+    },
+    "test": {
+      "Steel1": [
+        "im_val_cut10-400-01-H-6mm-4000x06",
+        "im_val_cut10_400-H-6mm-4000x07"
+      ],
+      "Steel2": [
+        "87450741"
+      ]
+    }
+  },
+  "stats": {
+    "held_out": "mixed(Steel1+Steel2)",
+    "alias_of": null,
+    "n_train_tiles": 965,
+    "n_val_tiles": 221,
+    "train_datasets": [
+      "Steel1",
+      "Steel2"
+    ],
+    "val_datasets": [
+      "Steel1",
+      "Steel2"
+    ],
+    "n_train_parents": 17,
+    "n_val_parents": 3,
+    "train_boundary_fraction": {
+      "min": 0.011673,
+      "mean": 0.133041,
+      "median": 0.103241,
+      "max": 0.420181,
+      "n": 965
+    },
+    "val_boundary_fraction": {
+      "min": 0.007782,
+      "mean": 0.19511,
+      "median": 0.193954,
+      "max": 0.370697,
+      "n": 221
+    },
+    "pos_weight": 6.516,
+    "sampling": {
+      "mode": "parents",
+      "weights": {
+        "Steel1": 1.194208,
+        "Steel2": 0.450514
+      },
+      "raw_counts": {
+        "Steel1": 713,
+        "Steel2": 252
+      },
+      "n_parents": {
+        "Steel1": 15,
+        "Steel2": 2
+      },
+      "target_share": {
+        "Steel1": 0.8824,
+        "Steel2": 0.1176
+      },
+      "effective_counts": {
+        "Steel1": 851,
+        "Steel2": 114
+      }
+    },
+    "test": {
+      "datasets": [
+        "Steel1",
+        "Steel2"
+      ],
+      "n_tiles": 222,
+      "n_parents": 3,
+      "boundary_fraction": {
+        "min": 0.015274,
+        "mean": 0.218955,
+        "median": 0.239509,
+        "max": 0.421494,
+        "n": 222
+      },
+      "note": "fold_steel_combined's own held-out test slice: parent-level, never touched by training or checkpoint selection, and never merged into the shared test manifest."
+    },
+    "parent_allocation": {
+      "train": {
+        "Steel1": [
+          "im_val_cut10-400-01-H-12mm-4000x14",
+          "im_val_cut10-400-01-H-9mm-4000x10",
+          "im_val_cut10-400-01-H-9mm-4000x12",
+          "im_val_cut10-400-01-V-12mm-4000x16",
+          "im_val_cut10-400-01-V-12mm-4000x17",
+          "im_val_cut10-400-01-V-6mm-4000x07",
+          "im_val_cut10-400-01-V-6mm-4000x08",
+          "im_val_cut10-400-01-V-9mm-4000x12",
+          "im_val_cut10_400-H-12mm-4000x14",
+          "im_val_cut10_400-H-6mm-4000x06",
+          "im_val_cut10_400-H-9mm-4000x10",
+          "im_val_cut10_400-V-12mm-4000x14",
+          "im_val_cut10_400-V-6mm-4000x06",
+          "im_val_cut10_400-V-6mm-4000x07",
+          "im_val_cut10_400-V-9mm-4000x10"
+        ],
+        "Steel2": [
+          "87440491",
+          "87450661"
+        ]
+      },
+      "val": {
+        "Steel1": [
+          "im_val_cut10_400-H-9mm-4000x11",
+          "im_val_cut10_400-V-9mm-4000x11"
+        ],
+        "Steel2": [
+          "87431041"
+        ]
+      },
+      "test": {
+        "Steel1": [
+          "im_val_cut10-400-01-H-6mm-4000x06",
+          "im_val_cut10_400-H-6mm-4000x07"
+        ],
+        "Steel2": [
+          "87450741"
+        ]
+      }
+    }
+  },
+  "manifests": {
+    "fold_steel_combined": "/content/boundary/reports/manifests/fold_steel_combined.csv",
+    "fold_steel_combined_test": "/content/boundary/reports/manifests/fold_steel_combined_test.csv"
+  }
+}
