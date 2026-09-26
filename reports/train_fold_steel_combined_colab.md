@@ -1,6 +1,6 @@
 # Training report -- fold_steel_combined on colab
 
-Held-out dataset: **mixed(Steel1+Steel2)**. Generated 2026-09-26T07:36:29Z on colab (Tesla T4).
+Held-out dataset: **mixed(Steel1+Steel2)**. Generated 2026-09-26T07:41:46Z on colab (Tesla T4).
 
 This file is keyed by run and host: `train_fold_steel_combined_colab.md`. The same fold trained on another host writes its own file beside this one rather than overwriting it -- two runs of one fold are two measurements, and they differ in GPU, worker count and I/O path.
 

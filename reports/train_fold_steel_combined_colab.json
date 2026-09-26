@@ -81,7 +81,7 @@
  },
  "platform": "colab",
  "held_out": "mixed(Steel1+Steel2)",
- "generated_utc": "2026-09-26T07:36:29Z",
+ "generated_utc": "2026-09-26T07:41:46Z",
  "summary": {
   "fold": "fold_steel_combined",
   "run_name": "fold_steel_combined",
