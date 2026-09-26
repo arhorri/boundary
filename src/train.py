@@ -2922,6 +2922,134 @@ def write_region_metrics_report(run_name: str, platform: str, results: dict,
 
 
 # --------------------------------------------------------------------------
+# ground-truth region-size profile -- is a dataset's mask dominated by
+# speckle-sized regions rather than the phase/grain regions it is meant to
+# outline? Complements evaluate_region_metrics (which scores a MODEL's
+# predicted partition against the ground truth): this instead profiles the
+# ground truth ALONE, over every mask a dataset has, not just a validation
+# or test split -- a systematic property of the labelling, not of any one
+# checkpoint's predictions.
+# --------------------------------------------------------------------------
+def region_size_profile(gt_paths: Sequence,
+                        min_thresholds: Sequence = (10, 25, 50, 100)) -> dict:
+    """Region count and region-area distribution over a set of boundary masks.
+
+    Uses :func:`true_regions_from_boundary` -- the SAME boundary-to-region
+    conversion :func:`evaluate_region_metrics` already scores predictions
+    against -- so a count here of "112 regions in this tile" is the identical
+    number that function's ``n_true_regions`` would report for it, not a
+    second implementation that could quietly disagree.
+
+    ``min_thresholds`` are region-AREA cutoffs in pixels: a boundary map whose
+    regions are mostly a few pixels across is not separating phases or
+    grains, it is noise the mask happens to be shaped like. Counted both as a
+    raw count and as a fraction of every region found, pooled across every
+    tile passed in -- pooling matters here because a handful of huge tiles
+    would otherwise swamp a per-tile mean and hide a dataset where most
+    individual regions, not most individual tiles, are tiny.
+
+    Raises if a path does not exist or decodes to an empty array; a missing
+    mask silently skipped would understate exactly the noise this exists to
+    surface.
+    """
+    from PIL import Image
+
+    if not gt_paths:
+        raise TrainError("region_size_profile was given no paths to profile.")
+
+    counts_per_tile, areas_all, per_tile = [], [], []
+    for path in gt_paths:
+        path = Path(path)
+        if not path.is_file():
+            raise TrainError(f"region_size_profile: {path} does not exist.")
+        mask = np.asarray(Image.open(path)) > 0
+        if mask.size == 0:
+            raise TrainError(f"region_size_profile: {path} decoded to an empty array.")
+        labels = true_regions_from_boundary(mask)
+        n_regions = int(labels.max())
+        areas = np.bincount(labels.ravel())[1:] if n_regions else np.array([], dtype=np.int64)
+        counts_per_tile.append(n_regions)
+        areas_all.extend(int(a) for a in areas)
+        per_tile.append({"path": str(path), "n_regions": n_regions})
+
+    areas_arr = np.asarray(areas_all, dtype=float)
+    percentiles = (5, 10, 25, 50, 75, 90, 95, 99)
+    counts_arr = np.asarray(counts_per_tile, dtype=float)
+    return {
+        "n_tiles": len(gt_paths),
+        "regions_per_tile": {
+            "mean": float(counts_arr.mean()),
+            "median": float(np.median(counts_arr)),
+            "min": int(counts_arr.min()),
+            "max": int(counts_arr.max()),
+        },
+        "n_regions_total": int(areas_arr.size),
+        "area_px": {
+            "percentiles": {str(p): float(np.percentile(areas_arr, p)) for p in percentiles}
+                          if areas_arr.size else {str(p): None for p in percentiles},
+            "below_count": {str(t): int((areas_arr < t).sum()) for t in min_thresholds},
+            "below_fraction": {str(t): float((areas_arr < t).mean()) if areas_arr.size else 0.0
+                              for t in min_thresholds},
+        },
+        "per_tile": per_tile,
+    }
+
+
+def write_gt_noise_report(profiles: dict, reports_dir: Optional[Path] = None) -> tuple:
+    """``reports/gt_noise_steel.{md,json}`` -- region-size profile, per dataset.
+
+    ``profiles`` is ``{dataset_name: region_size_profile(...) result}``. Kept
+    as its own report, separate from ``region_metrics_<run>_<platform>``,
+    because this profiles the GROUND TRUTH and is independent of any
+    checkpoint, run or fold -- it does not change if a model is retrained,
+    so it does not belong keyed by run name or platform.
+    """
+    reports_dir = Path(reports_dir or (REPO_ROOT / "reports"))
+    reports_dir.mkdir(parents=True, exist_ok=True)
+    md_path = reports_dir / "gt_noise_steel.md"
+    json_path = reports_dir / "gt_noise_steel.json"
+
+    lines = [
+        "# Ground-truth region-size profile",
+        "",
+        "Region count and region-area distribution of the boundary masks "
+        "THEMSELVES -- independent of any checkpoint -- using the same "
+        "boundary-to-region conversion `evaluate_region_metrics` scores "
+        "predictions against.",
+        "",
+        "| dataset | tiles | regions/tile (mean/median/min/max) | total regions | "
+        "p50 area px | p10 area px | < 10px | < 25px | < 50px | < 100px |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+    ]
+    for name, p in profiles.items():
+        r = p["regions_per_tile"]
+        a = p["area_px"]
+        lines.append(
+            f"| {name} | {p['n_tiles']} | "
+            f"{r['mean']:.1f}/{r['median']:.1f}/{r['min']}/{r['max']} | "
+            f"{p['n_regions_total']} | "
+            f"{a['percentiles']['50']:.1f} | {a['percentiles']['10']:.1f} | "
+            f"{a['below_count']['10']} ({a['below_fraction']['10']:.1%}) | "
+            f"{a['below_count']['25']} ({a['below_fraction']['25']:.1%}) | "
+            f"{a['below_count']['50']} ({a['below_fraction']['50']:.1%}) | "
+            f"{a['below_count']['100']} ({a['below_fraction']['100']:.1%}) |")
+    lines += ["", "## Area percentiles in full (pixels)", "",
+              "| dataset | " + " | ".join(f"p{p}" for p in
+                  (5, 10, 25, 50, 75, 90, 95, 99)) + " |",
+              "| --- | " + " | ".join("---" for _ in range(8)) + " |"]
+    for name, p in profiles.items():
+        vals = [p["area_px"]["percentiles"][str(pc)]
+               for pc in (5, 10, 25, 50, 75, 90, 95, 99)]
+        lines.append(f"| {name} | " + " | ".join(f"{v:.1f}" for v in vals) + " |")
+
+    md_path.write_text("\n".join(lines) + "\n")
+    payload = {"generated_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+              "profiles": profiles}
+    json_path.write_text(json.dumps(payload, indent=2, sort_keys=True, default=str))
+    return md_path, json_path
+
+
+# --------------------------------------------------------------------------
 # FiLM: scoring the held-out dataset, which has no embedding of its own
 # --------------------------------------------------------------------------
 def evaluate_film_inference_modes(model: "nn.Module", val_ds, thresholds: dict,
