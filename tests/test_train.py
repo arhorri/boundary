@@ -1897,3 +1897,205 @@ def test_write_gt_noise_report_persists_both_datasets(tmp_path):
     md_text = md_path.read_text()
     assert "Steel1" in md_text and "Steel2" in md_text
     assert "region-size profile" in md_text.lower()
+
+
+# --------------------------------------------------------------------------
+# width-aware placement calibration: reference_decomposition() and
+# decompose_error() at a line width other than boundary_gt's original 2 px
+# --------------------------------------------------------------------------
+def test_placement_tolerance_px_scales_identically_with_width():
+    """2 px at width 2 -> 4 px at width 4, exactly as recorded for this
+    project's actual GT change (line_width_px 2 -> 4). Floored at 1 px.
+    """
+    assert train_mod.placement_tolerance_px(2.0) == 2
+    assert train_mod.placement_tolerance_px(4.0) == 4
+    assert train_mod.placement_tolerance_px(1.0) == 1
+    assert train_mod.placement_tolerance_px(0.4) == 1, "floored, never 0"
+    with pytest.raises(train_mod.TrainError):
+        train_mod.placement_tolerance_px(0)
+    with pytest.raises(train_mod.TrainError):
+        train_mod.placement_tolerance_px(-2)
+
+
+def test_reference_decomposition_default_is_byte_identical_to_before_recalibration():
+    """The width-aware refactor must not move a single existing caller's
+    numbers: every caller that does not pass line_width_px (06_train.ipynb,
+    06b_step6c.ipynb, every existing test) gets EXACTLY today's cases, names
+    and labels -- this is the same assertion
+    test_every_calibration_case_receives_its_own_label makes, repeated here
+    to pin it specifically against the width-aware change.
+    """
+    reference = train_mod.reference_decomposition(size=256, seed=0)
+    assert set(reference) == set(EXPECTED_LABELS)
+    for name, entry in reference.items():
+        assert entry["label"] == EXPECTED_LABELS[name], name
+    # The two case names that now embed the tolerance/shift distances must
+    # still read exactly as they always have at the default width.
+    assert "displaced 2 px (in tolerance)" in reference
+    assert "misplaced by 5 px" in reference
+    assert "misplaced by 8 px" in reference
+
+
+def test_reference_decomposition_at_width_4_renames_the_tolerance_cases():
+    """Case names embed the ACTUAL pixel counts used, not a stale '2 px' /
+    '5 px' / '8 px' left over from the default -- this is pure string
+    construction from placement_tolerance_px's output and is exact
+    regardless of anything decompose_error's arithmetic does.
+    """
+    reference = train_mod.reference_decomposition(
+        distances=(1, 2, 3, 4, 5), line_width_px=4.0)
+    assert "displaced 4 px (in tolerance)" in reference
+    assert "misplaced by 7 px" in reference
+    assert "misplaced by 10 px" in reference
+    assert "displaced 2 px (in tolerance)" not in reference
+    assert "misplaced by 5 px" not in reference
+
+
+def test_reference_decomposition_at_width_4_the_certain_cases_still_separate():
+    """Recalibrated at the project's real line_width_px (4), with the target
+    tolerance (4) itself included in ``distances`` so it is read exactly
+    rather than resolved to the nearest available value.
+
+    Scoped to the cases whose label is a mathematical certainty regardless
+    of the exact pixel geometry euclidean_disk-based dilation produces:
+
+    - "perfect" is pred compared to itself -- found/real/skeleton_dice are
+      exactly 1.0 and width_ratio exactly 1.0 by construction, at ANY width.
+    - the plain over-detected cases (no extra fattening) add curve LENGTH,
+      not width, so found stays high (the true curves are untouched) and
+      curve_length_ratio/real move the same way regardless of the base
+      line's own width -- OVER-DETECTION is not a close call here.
+    - "misplaced by 7/10 px" shift well past the read tolerance (4 px) in
+      BOTH directions of margin (+3, +6 over tolerance, same margins the
+      width-2 default already uses) -- MISPLACED is not a close call.
+    - "displaced 4 px (in tolerance)" shifts by EXACTLY the tolerance that is
+      read, the same relative configuration ("shift equals the exactly-
+      included read distance") as the width-2 default's "displaced 2 px",
+      which the existing calibration already relies on reading as OFFSET.
+
+    Cases NOT asserted here on purpose: "placed, 1 px too fat" (a fixed
+    absolute dilation radius is a smaller RELATIVE fattening of a wider base
+    line, so its margin above PLACEMENT_WIDTH_HIGH shrinks at width 4 and
+    this repo cannot execute code to confirm it still clears the gate) and
+    "noise at the same density" (a wider line raises the synthetic noise
+    case's boundary density, and this repo cannot execute code to confirm
+    that does not raise its coincidental "found" score past FOUND_OK). Both
+    are exactly the kind of case the task's "if they do not separate
+    cleanly, say so and show the table" instruction is for -- surfaced by
+    the notebook's own printed comparison on the host, not asserted blind
+    here.
+    """
+    reference = train_mod.reference_decomposition(
+        distances=(1, 2, 3, 4, 5), line_width_px=4.0)
+
+    perfect = reference["perfect"]
+    assert perfect["label"] == "GOOD"
+    assert perfect["found"] == pytest.approx(1.0)
+    assert perfect["real"] == pytest.approx(1.0)
+    assert perfect["skeleton_dice"] == pytest.approx(1.0)
+    assert perfect["width_ratio"] == pytest.approx(1.0)
+
+    for name in ("over-detected 1x", "over-detected 2x", "over-detected 3x"):
+        entry = reference[name]
+        assert entry["label"] == "OVER-DETECTION", (name, entry["verdict"])
+        assert entry["found"] > 0.95, name
+        assert entry["real"] < train_mod.PLACEMENT_REAL_OK, name
+
+    for name in ("misplaced by 7 px", "misplaced by 10 px"):
+        assert reference[name]["label"] == "MISPLACED", (name, reference[name]["verdict"])
+
+    offset = reference["displaced 4 px (in tolerance)"]
+    assert offset["label"] == "OFFSET", offset["verdict"]
+    assert offset["pixel_dice"] < 0.2
+    assert offset["found"] > 0.9 and offset["real"] > 0.9
+
+    # Every case that also adds extra fattening must be diagnosed as
+    # over-detection AT LEAST -- whether "+ THICKNESS" is appended depends on
+    # width_ratio clearing PLACEMENT_WIDTH_HIGH, which shrinks in relative
+    # terms at a wider base width the same way "placed, 1 px too fat" does,
+    # so only the certain half of the label is asserted here.
+    for name in ("over-detected 1x, 2x too fat", "over-detected 2x, 2x too fat",
+                "over-detected 3x, 2x too fat"):
+        assert reference[name]["label"].startswith("OVER-DETECTION"), name
+
+
+def test_decompose_error_reference_tolerance_defaults_to_2px_unchanged():
+    """decompose_error's new reference_tolerance parameter must default to
+    the exact value every existing caller relies on implicitly: passing
+    nothing must give the identical tolerance_px (and therefore found/real)
+    as before this parameter existed.
+    """
+    size = 24
+    band = np.zeros((size, size), dtype=np.float32)
+    band[8:10, :] = 1.0
+    exact = torch.where(torch.from_numpy(band) > 0,
+                        torch.tensor(10.0), torch.tensor(-10.0))
+    val_ds = _FakeValDataset([band], datasets=["A"])
+    model = _ConstantLogits([exact[None]])
+
+    out = train_mod.decompose_error(model, val_ds, {"A": 0.5},
+                                    device=torch.device("cpu"),
+                                    dilations=(1,), distances=(1, 2, 3, 5))
+    assert out["A"]["tolerance_px"] == 2
+
+
+def test_decompose_error_reference_tolerance_is_threaded_through():
+    """Passing reference_tolerance=4 must change WHICH distance found/real
+    are read at, exactly as summarise_decomposition would on its own --
+    decompose_error must not silently drop the parameter.
+    """
+    size = 24
+    band = np.zeros((size, size), dtype=np.float32)
+    band[8:10, :] = 1.0
+    exact = torch.where(torch.from_numpy(band) > 0,
+                        torch.tensor(10.0), torch.tensor(-10.0))
+    val_ds = _FakeValDataset([band], datasets=["A"])
+    model = _ConstantLogits([exact[None]])
+
+    out = train_mod.decompose_error(model, val_ds, {"A": 0.5},
+                                    device=torch.device("cpu"),
+                                    dilations=(1,), distances=(1, 2, 3, 4, 5),
+                                    reference_tolerance=4.0)
+    assert out["A"]["tolerance_px"] == 4
+
+
+def test_write_region_metrics_report_records_line_width_px(tmp_path):
+    """'Record the tolerance and width used in every region-metrics report':
+    tolerance_px already travels inside each dataset's decomposition entry
+    (summarise_decomposition's own output); line_width_px is the one field
+    this report did not carry before and must now, when a caller has one.
+    """
+    region_results = {"Steel1": {"tiles": 5, "ari": 1.0, "vi": 0.0, "pq": 1.0,
+                                 "sq": 1.0, "rq": 1.0, "n_true_regions": 1.0,
+                                 "n_pred_regions": 1.0,
+                                 "over_segmentation_factor": 1.0}}
+    reference = train_mod.reference_decomposition(line_width_px=4.0,
+                                                   distances=(1, 2, 3, 4, 5))
+    decomposition = {"Steel1": reference["perfect"]}
+
+    md_path, json_path = train_mod.write_region_metrics_report(
+        "fold_steel_combined", "colab", region_results, marker_threshold=0.3,
+        config_hash="0" * 16, epoch=21, reports_dir=tmp_path,
+        decomposition=decomposition, line_width_px=4.0)
+
+    payload = json.loads(json_path.read_text())
+    assert payload["line_width_px"] == 4.0
+    assert payload["decomposition"]["Steel1"]["tolerance_px"] == 4
+    md_text = md_path.read_text()
+    assert "line_width_px=4.0" in md_text
+    assert "tolerance px" in md_text.lower()
+
+
+def test_write_region_metrics_report_line_width_px_omitted_by_default(tmp_path):
+    """Backward compatible: an existing call site that never passes
+    line_width_px gets a report with no such key, not a null placeholder.
+    """
+    region_results = {"uhcs2": {"tiles": 5, "ari": 1.0, "vi": 0.0, "pq": 1.0,
+                                "sq": 1.0, "rq": 1.0, "n_true_regions": 1.0,
+                                "n_pred_regions": 1.0,
+                                "over_segmentation_factor": 1.0}}
+    _, json_path = train_mod.write_region_metrics_report(
+        "dev", "colab", region_results, marker_threshold=0.3,
+        config_hash="deadbeef00000000", epoch=5, reports_dir=tmp_path)
+    payload = json.loads(json_path.read_text())
+    assert "line_width_px" not in payload

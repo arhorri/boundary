@@ -2254,13 +2254,25 @@ def _accumulate_decomposition(slot: dict, counts: dict) -> None:
 
 
 def summarise_decomposition(slot: dict, radii: Sequence,
-                            distances: Sequence) -> dict:
+                            distances: Sequence,
+                            reference_tolerance: float = 2.0) -> dict:
     """Turn accumulated counts into the three measurements, plus a verdict.
 
     Counts are pooled over the dataset and the metric computed once, exactly as
     :class:`MetricAccumulator` does -- so ``pixel_dice`` here is directly
     comparable to the Dice the training loop reported, rather than being a mean
     of per-tile Dices, which is a different and larger number.
+
+    ``reference_tolerance`` is the placement tolerance (px) to read ``found``/
+    ``real`` at -- see :func:`placement_tolerance_px`. Defaults to 2, the
+    tolerance boundary_gt's reference width (2 px) was calibrated at, so every
+    existing caller that does not pass it keeps its exact current numbers. A
+    caller scoring ground truth generated at a different ``line_width_px``
+    should pass ``placement_tolerance_px(line_width_px)`` instead. The nearest
+    value actually present in ``distances`` is used and recorded as
+    ``tolerance_px`` below -- if the target is not itself in ``distances``,
+    the resolved value can differ from the target, which is why both belong in
+    a report rather than only the target.
     """
     pred_px, true_px = slot["dil_pred"][0], slot["dil_true"][0]
     pixel_dice = _safe_div(2 * slot["dil_tp"][0], pred_px + true_px)
@@ -2277,7 +2289,8 @@ def summarise_decomposition(slot: dict, radii: Sequence,
     # direction alone cannot tell over-detection from misplacement: in both,
     # most of what was drawn is off the truth, and only "did the true curves
     # get found" separates them.
-    tolerance = min(distances, key=lambda d: abs(d - 2)) if distances else 0
+    tolerance = (min(distances, key=lambda d: abs(d - reference_tolerance))
+                if distances else 0)
     real = skeleton_pred_within.get(tolerance, 0.0)   # what we drew IS boundary
     found = skeleton_true_within.get(tolerance, 0.0)  # we FOUND the boundary
 
@@ -2375,7 +2388,8 @@ def decompose_error(model: "nn.Module", val_ds, thresholds: dict, device,
                     amp_enabled: bool = False, dilations: Sequence = (1, 2, 3),
                     distances: Sequence = (1, 2, 3, 5),
                     batch_size: int = 32, num_workers: int = 0,
-                    dataset_embedding: Optional["torch.Tensor"] = None) -> dict:
+                    dataset_embedding: Optional["torch.Tensor"] = None,
+                    reference_tolerance: float = 2.0) -> dict:
     """Split a low pixel Dice into PLACEMENT error and THICKNESS error.
 
     A pixel Dice of 0.146 has two very different explanations that no single
@@ -2405,6 +2419,12 @@ def decompose_error(model: "nn.Module", val_ds, thresholds: dict, device,
     this pass -- how the held-out dataset (which has no vocabulary row of its
     own) is scored under each of the three inference-mode embeddings in
     :func:`evaluate_film_inference_modes`. Ignored for a non-FiLM model.
+
+    ``reference_tolerance`` is passed straight through to
+    :func:`summarise_decomposition` -- see its docstring. Defaults to 2 px,
+    boundary_gt's reference width, so every existing caller is unaffected; a
+    caller scoring ground truth at a different ``line_width_px`` should pass
+    :func:`placement_tolerance_px` of it instead.
     """
     from torch.utils.data import DataLoader
 
@@ -2454,13 +2474,41 @@ def decompose_error(model: "nn.Module", val_ds, thresholds: dict, device,
     if row_index != len(val_ds):
         raise TrainError(
             f"decomposed {row_index} tiles but val_ds has {len(val_ds)}.")
-    return {name: summarise_decomposition(slot, radii, distances)
+    return {name: summarise_decomposition(slot, radii, distances,
+                                          reference_tolerance=reference_tolerance)
             for name, slot in sorted(slots.items())}
+
+
+def placement_tolerance_px(line_width_px) -> int:
+    """The placement tolerance (px) ground truth of this width should be
+    judged at, for :func:`reference_decomposition`'s synthetic cases and
+    :func:`decompose_error`'s ``reference_tolerance``.
+
+    ``found``/``real`` (skeleton proximity) were calibrated at boundary_gt's
+    reference width -- 2 px -- where the annotation itself is accurate to
+    about 2 px, so 2 px tolerance is the honest slack to read them at. A
+    uniform line generated WIDER carries proportionally more slack in where
+    its centreline could sit, so this scales identically: tolerance equals
+    the width itself, floored at 1 px. Confirmed against the recorded change
+    2 px -> 4 px (``reports/gt_extraction.json``'s ``settings.line_width_px``
+    going from 2 to 4): the tolerance this returns for each is 2 and 4.
+
+    Pass the width that ACTUALLY produced the ground truth being scored --
+    ``reports/gt_extraction.json``'s recorded value, not whatever
+    ``configs/default.yaml`` currently says, which can have moved on since
+    (the same caution ``tiling.sane_pos_weight_band`` documents for the same
+    reason).
+    """
+    width = float(line_width_px)
+    if width <= 0:
+        raise TrainError(f"line_width_px must be positive, got {line_width_px}")
+    return max(1, int(round(width)))
 
 
 def reference_decomposition(dilations: Sequence = (1, 2, 3),
                             distances: Sequence = (1, 2, 3, 5),
-                            size: int = 256, seed: int = 0) -> dict:
+                            size: int = 256, seed: int = 0,
+                            line_width_px: float = 2.0) -> dict:
     """The same measurements on synthetic cases whose answer is already known.
 
     Printed beside the real results so "much higher" and "near" have concrete
@@ -2471,6 +2519,21 @@ def reference_decomposition(dilations: Sequence = (1, 2, 3),
     The cases bracket the two failure modes: a perfectly placed prediction that
     is merely 1-3 px too fat, a prediction of the right thickness shifted 2-5
     px off, and uniform noise at the same boundary density as a floor.
+
+    ``line_width_px`` is the width the synthetic ``true`` grid is drawn at --
+    default 2, boundary_gt's original reference width, which reproduces this
+    function's historical numbers EXACTLY (every existing caller that omits
+    this argument sees no change). Pass the width ground truth is ACTUALLY
+    generated at (``reports/gt_extraction.json``'s recorded
+    ``settings.line_width_px``) to calibrate against the real thing instead:
+    the placement tolerance (see :func:`placement_tolerance_px`) and the two
+    "misplaced" shift distances scale with it, and the case names update to
+    say the pixel counts actually used rather than a stale "2 px"/"5 px"/
+    "8 px" that would no longer match what was drawn. The gate CONSTANTS
+    (``PLACEMENT_FOUND_OK`` etc.) are never touched here or by this
+    parameter -- whether they still separate the recalibrated cases cleanly
+    is exactly what a caller comparing this output against known-expected
+    labels is checking, not something this function decides for them.
     """
     import cv2
 
@@ -2481,13 +2544,16 @@ def reference_decomposition(dilations: Sequence = (1, 2, 3),
     if not distances:
         raise TrainError("pass at least one proximity distance to reference_decomposition")
 
-    # A 2-px grid, the width boundary_gt.line_width_px actually produces.
+    width = max(1, int(round(float(line_width_px))))
+    tolerance = placement_tolerance_px(line_width_px)
+
+    # A grid drawn at the width boundary_gt.line_width_px actually produces.
     step = size // 5
-    offsets = list(range(size // 8, size - 2, step))
+    offsets = list(range(size // 8, size - width, step))
     true = np.zeros((size, size), dtype=bool)
     for offset in offsets:
-        true[offset:offset + 2, :] = True
-        true[:, offset:offset + 2] = True
+        true[offset:offset + width, :] = True
+        true[:, offset:offset + width] = True
 
     def fat(k):
         return cv2.dilate(true.astype(np.uint8),
@@ -2523,15 +2589,16 @@ def reference_decomposition(dilations: Sequence = (1, 2, 3),
         for offset in offsets:
             for i in range(1, int(multiple) + 1):
                 position = offset + int(step * i / (multiple + 1))
-                if position + 2 < size:
-                    pred[position:position + 2, :] = True
-                    pred[:, position:position + 2] = True
+                if position + width < size:
+                    pred[position:position + width, :] = True
+                    pred[:, position:position + width] = True
         if also_fat:
             pred = cv2.dilate(pred.astype(np.uint8),
                               euclidean_disk(1)).astype(bool)
         return pred
 
     rng = np.random.default_rng(seed)
+    misplaced_a, misplaced_b = tolerance + 3, tolerance + 6
     cases = {
         "perfect": true.copy(),
         "placed, 1 px too fat": fat(1),
@@ -2546,12 +2613,16 @@ def reference_decomposition(dilations: Sequence = (1, 2, 3),
         "over-detected 1x, 2x too fat": over_detected(1, also_fat=True),
         "over-detected 2x, 2x too fat": over_detected(2, also_fat=True),
         "over-detected 3x, 2x too fat": over_detected(3, also_fat=True),
-        # 2 px is INSIDE train.boundary_tolerance_px, so this is a registration
-        # offset rather than a placement failure -- and the verdict says so,
-        # which is the honest reading of a metric measured at 2 px tolerance.
-        "displaced 2 px (in tolerance)": shifted(2),
-        "misplaced by 5 px": shifted(5),
-        "misplaced by 8 px": shifted(8),
+        # `tolerance` px is INSIDE train.boundary_tolerance_px (scaled the same
+        # way -- see placement_tolerance_px), so this is a registration offset
+        # rather than a placement failure -- and the verdict says so, which is
+        # the honest reading of a metric measured at `tolerance` px tolerance.
+        # At the default line_width_px=2 this is "displaced 2 px (in
+        # tolerance)" / "misplaced by 5 px" / "misplaced by 8 px", identical
+        # to every existing caller's numbers.
+        f"displaced {tolerance} px (in tolerance)": shifted(tolerance),
+        f"misplaced by {misplaced_a} px": shifted(misplaced_a),
+        f"misplaced by {misplaced_b} px": shifted(misplaced_b),
         "noise at the same density": rng.random(true.shape) < true.mean(),
     }
 
@@ -2560,7 +2631,8 @@ def reference_decomposition(dilations: Sequence = (1, 2, 3),
         slot = _decomposition_slot(radii, distances)
         _accumulate_decomposition(
             slot, decomposition_counts(pred, true, radii, distances))
-        out[name] = summarise_decomposition(slot, radii, distances)
+        out[name] = summarise_decomposition(slot, radii, distances,
+                                            reference_tolerance=tolerance)
     return out
 
 
@@ -2840,7 +2912,8 @@ def write_region_metrics_report(run_name: str, platform: str, results: dict,
                                 marker_threshold: float, config_hash: str,
                                 epoch: int,
                                 reports_dir: Optional[Path] = None,
-                                decomposition: Optional[dict] = None) -> tuple:
+                                decomposition: Optional[dict] = None,
+                                line_width_px: Optional[float] = None) -> tuple:
     """Writes and returns ``reports/region_metrics_<run>_<platform>.{md,json}``.
 
     ``decomposition``, when given, is :func:`decompose_error`'s per-dataset
@@ -2860,12 +2933,25 @@ def write_region_metrics_report(run_name: str, platform: str, results: dict,
     report; this mirrors it so a region-metrics report can be matched back to
     the training report and checkpoint it came from without trusting stdout,
     which does not survive the session.
+
+    ``line_width_px``, when given, is the ground-truth line width the
+    ``decomposition`` was scored against (``reports/gt_extraction.json``'s
+    recorded ``settings.line_width_px``, NOT whatever
+    ``configs/default.yaml`` says now) -- recorded alongside each dataset's
+    own ``tolerance_px`` (already inside ``decomposition[name]``, from
+    :func:`summarise_decomposition`) so a report is self-describing about
+    which width/tolerance basis its verdicts were read at, without assuming
+    every report in this repo was measured the same way. Omitted (``None``)
+    for a caller that predates this parameter or does not have a recorded
+    width to hand; existing reports are not rewritten to add it.
     """
     md_path, json_path = region_metrics_report_paths(run_name, platform, reports_dir)
+    width_line = (f" Ground truth scored at line_width_px={line_width_px}."
+                 if line_width_px is not None else "")
     lines = [
         f"# Region-level metrics -- {run_name} ({platform})",
         "",
-        f"Checkpoint: epoch {epoch}, config hash `{config_hash}`.",
+        f"Checkpoint: epoch {epoch}, config hash `{config_hash}`.{width_line}",
         "",
         "Marker-controlled watershed on the probability map "
         f"(watershed_marker_threshold={marker_threshold}), scored against "
@@ -2893,15 +2979,15 @@ def write_region_metrics_report(run_name: str, platform: str, results: dict,
             "view complements -- same validation pass, same checkpoint.",
             "",
             "| dataset | verdict | pixel Dice | skeleton Dice | curve-length "
-            "ratio | width ratio |",
-            "| --- | --- | --- | --- | --- | --- |",
+            "ratio | width ratio | tolerance px |",
+            "| --- | --- | --- | --- | --- | --- | --- |",
         ]
         for dataset, entry in decomposition.items():
             lines.append(
                 f"| {dataset} | {entry['label']} | {entry['pixel_dice']:.4f} "
                 f"| {entry['skeleton_dice']:.4f} | "
                 f"{entry['curve_length_ratio']:.2f} | "
-                f"{entry['width_ratio']:.2f} |")
+                f"{entry['width_ratio']:.2f} | {entry.get('tolerance_px', '?')} |")
         lines += ["", "Verdicts, in full:", ""]
         for dataset, entry in decomposition.items():
             lines.append(f"- **{dataset}**: {entry['verdict']}")
@@ -2911,6 +2997,8 @@ def write_region_metrics_report(run_name: str, platform: str, results: dict,
               "config_hash": config_hash, "epoch": int(epoch),
               "watershed_marker_threshold": marker_threshold,
               "results": results}
+    if line_width_px is not None:
+        payload["line_width_px"] = float(line_width_px)
     if decomposition:
         payload["decomposition"] = decomposition
     # default=str: decomposition entries carry numpy scalars (dilated_dice,
