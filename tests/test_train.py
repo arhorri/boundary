@@ -2099,3 +2099,278 @@ def test_write_region_metrics_report_line_width_px_omitted_by_default(tmp_path):
         config_hash="deadbeef00000000", epoch=5, reports_dir=tmp_path)
     payload = json.loads(json_path.read_text())
     assert "line_width_px" not in payload
+
+
+# --------------------------------------------------------------------------
+# post-processing: the binarization mode threaded through the evaluators, and
+# the val-only sweep / selection behind notebooks/06d_steel_combined.ipynb's
+# Cell 21. Every name carries "postprocess" so that cell can run exactly these
+# with ``pytest -k postprocess``.
+# --------------------------------------------------------------------------
+def _postprocess_tiles(size=24):
+    """Two tiles of dataset "A" sharing one 2 px true line (rows 11-12).
+
+    Tile 0 predicts a 5 px band (rows 9-13) around it -- 2.5x too fat, but
+    centred, so its skeleton is exactly row 11 and a 2 px redilation lands on
+    rows 11-12, the truth. Tile 1 predicts the truth exactly.
+    """
+    true = np.zeros((size, size), dtype=np.float32)
+    true[11:13, :] = 1.0
+    fat = np.zeros((size, size), dtype=np.float32)
+    fat[9:14, :] = 1.0
+
+    def logits(mask):
+        return torch.where(torch.from_numpy(mask) > 0,
+                           torch.tensor(8.0), torch.tensor(-8.0))[None]
+
+    return [true, true], [logits(fat), logits(true)]
+
+
+def _postprocess_ds(masks, split):
+    ds = _FakeValDataset(masks, datasets=["A"] * len(masks))
+    for row in ds.rows:
+        row["split"] = split
+    return ds
+
+
+def test_postprocess_default_decompose_error_matches_the_plain_threshold():
+    """The default is byte-identical twice over: to an explicit "none", and to
+    the ``prob >= threshold`` expression decompose_error used before the
+    parameter existed, recomputed here by hand."""
+    masks, logits = _postprocess_tiles()
+    ds = _postprocess_ds(masks, "val")
+    kwargs = dict(device=torch.device("cpu"), dilations=(1,), distances=(1, 2),
+                  batch_size=2)
+    default = train_mod.decompose_error(_ConstantLogits(logits), ds, {"A": 0.5}, **kwargs)
+    explicit = train_mod.decompose_error(_ConstantLogits(logits), ds, {"A": 0.5},
+                                         postprocess_mode="none", **kwargs)
+    assert default == explicit
+
+    radii, dists = (0, 1), (1, 2)
+    slot = train_mod._decomposition_slot(radii, dists)
+    for lg, m in zip(logits, masks):
+        prob = torch.sigmoid(lg.float()).numpy()[0]
+        train_mod._accumulate_decomposition(
+            slot, train_mod.decomposition_counts(prob >= 0.5, m > 0.5, radii, dists))
+    assert default["A"] == train_mod.summarise_decomposition(slot, radii, dists)
+
+
+def test_postprocess_default_region_metrics_match_the_old_expression():
+    """evaluate_region_metrics' default path is still the watershed on the raw
+    probability map, with pred_fraction from ``prob >= threshold`` -- the old
+    per-tile code and aggregation, rewritten by hand, give the same dict."""
+    masks, logits = _postprocess_tiles()
+    ds = _postprocess_ds(masks, "val")
+    default = train_mod.evaluate_region_metrics(
+        _ConstantLogits(logits), ds, {"A": 0.5}, device=torch.device("cpu"),
+        marker_threshold=0.3, batch_size=2)
+
+    rows = []
+    for lg, m in zip(logits, masks):
+        prob = torch.sigmoid(lg.float()).numpy()[0]
+        metrics = train_mod.region_metrics_single(
+            train_mod.watershed_regions(prob, 0.3),
+            train_mod.true_regions_from_boundary(m > 0.5))
+        metrics["pred_fraction"] = float((prob >= 0.5).mean())
+        rows.append(metrics)
+    numeric = [k for k in rows[0] if isinstance(rows[0][k], (int, float))]
+    manual = {"tiles": 2, **{k: float(np.mean([r[k] for r in rows])) for k in numeric}}
+    assert default == {"A": manual}
+
+
+def test_postprocess_watershed_partition_refuses_a_postprocess_mode():
+    """Post-processing cannot move a partition built from the raw probability
+    map; asking for both is refused, not silently ignored."""
+    masks, logits = _postprocess_tiles()
+    ds = _postprocess_ds(masks, "val")
+    with pytest.raises(train_mod.TrainError):
+        train_mod.evaluate_region_metrics(
+            _ConstantLogits(logits), ds, {"A": 0.5}, device=torch.device("cpu"),
+            postprocess_mode="skeleton_redilate", target_width_px=2,
+            partition="watershed_prob")
+    with pytest.raises(train_mod.TrainError):
+        train_mod.evaluate_region_metrics(
+            _ConstantLogits(logits), ds, {"A": 0.5}, device=torch.device("cpu"),
+            partition="watersheed")
+    with pytest.raises(train_mod.TrainError):
+        train_mod.decompose_error(
+            _ConstantLogits(logits), ds, {"A": 0.5}, device=torch.device("cpu"),
+            postprocess_mode="skeleton_redilate")      # no target width
+
+
+def test_postprocess_skeleton_redilate_thins_a_fat_prediction_in_decompose_error():
+    """The one tile predicting a centred 5 px band against 2 px truth: plain
+    thresholding is 2.5x too fat (past PLACEMENT_WIDTH_HIGH); redilated to
+    2 px it lands on the truth rows, so width is no longer blamed and pixel
+    Dice rises. Both directions are certain by construction."""
+    masks, logits = _postprocess_tiles()
+    ds = _postprocess_ds(masks[:1], "val")
+    kwargs = dict(device=torch.device("cpu"), dilations=(1,), distances=(1, 2))
+    plain = train_mod.decompose_error(_ConstantLogits(logits[:1]), ds, {"A": 0.5},
+                                      **kwargs)["A"]
+    thin = train_mod.decompose_error(_ConstantLogits(logits[:1]), ds, {"A": 0.5},
+                                     postprocess_mode="skeleton_redilate",
+                                     target_width_px=2, **kwargs)["A"]
+    assert plain["width_ratio"] >= train_mod.PLACEMENT_WIDTH_HIGH
+    assert thin["width_ratio"] < train_mod.PLACEMENT_WIDTH_HIGH
+    assert thin["pixel_dice"] > plain["pixel_dice"]
+
+
+def test_postprocess_sweep_reproduces_decompose_error_and_region_metrics():
+    """The anchor property the notebook checks on real data, proven here on
+    synthetic data: on the same tiles, the sweep's ``none@tuned`` row IS
+    decompose_error, and its watershed reference row IS
+    evaluate_region_metrics -- same functions, same numbers, exactly."""
+    masks, logits = _postprocess_tiles()
+    ds = _postprocess_ds(masks, "val")
+    tiles = train_mod.predict_tiles(_ConstantLogits(logits), ds,
+                                    torch.device("cpu"), batch_size=2)
+    configs = train_mod.postprocess_grid(["A"], ("none",), (), target_width_px=2,
+                                         tuned_thresholds={"A": 0.5})
+    rows = train_mod.sweep_postprocess(tiles, configs, marker_threshold=0.3,
+                                       dilations=(1,), distances=(1, 2))
+    none_row = next(r for r in rows if r["config"] == "none@tuned")
+    ref_row = next(r for r in rows if r["reference"])
+
+    dec = train_mod.decompose_error(_ConstantLogits(logits), ds, {"A": 0.5},
+                                    device=torch.device("cpu"), dilations=(1,),
+                                    distances=(1, 2), batch_size=2)
+    reg = train_mod.evaluate_region_metrics(_ConstantLogits(logits), ds, {"A": 0.5},
+                                            device=torch.device("cpu"),
+                                            marker_threshold=0.3, batch_size=2)
+    assert none_row["decomposition"] == dec["A"]
+    assert ref_row["region"] == reg["A"]
+    assert {r["split"] for r in rows} == {"val"}
+
+
+def test_postprocess_selection_refuses_any_split_but_val():
+    """No test-split data may be used for selection -- enforced on the rows,
+    which carry the split their tiles came from."""
+    def row(split):
+        return {"config": "none@0.70", "dataset": "A", "split": split,
+                "mode": "none", "threshold": 0.7, "partition": "binary_boundary",
+                "reference": False, "decomposition": {}, "region": {"pq": 0.5}}
+
+    with pytest.raises(train_mod.TrainError):
+        train_mod.select_postprocess_config([row("test")])
+    with pytest.raises(train_mod.TrainError):
+        train_mod.select_postprocess_config([row("val"), row("test")])
+    with pytest.raises(train_mod.TrainError):
+        train_mod.select_postprocess_config([row("val,test")])
+    assert train_mod.select_postprocess_config([row("val")])["A"]["config"] == "none@0.70"
+
+
+def test_postprocess_selection_is_best_pq_ignores_reference_and_ties_to_none():
+    def row(config, dataset, mode, thr, pq, reference=False):
+        return {"config": config, "dataset": dataset, "split": "val", "mode": mode,
+                "threshold": thr,
+                "partition": "watershed_prob" if reference else "binary_boundary",
+                "reference": reference, "decomposition": {}, "region": {"pq": pq}}
+
+    rows = [
+        row("none@0.70", "S2", "none", 0.70, 0.10),
+        row("skeleton_redilate@0.80", "S2", "skeleton_redilate", 0.80, 0.20),
+        row("reference: watershed_prob@tuned", "S2", "none", 0.55, 0.90, reference=True),
+        row("skeleton_redilate@0.70", "S1", "skeleton_redilate", 0.70, 0.30),
+        row("none@0.85", "S1", "none", 0.85, 0.30),
+    ]
+    selected = train_mod.select_postprocess_config(rows)
+    assert selected["S2"]["config"] == "skeleton_redilate@0.80", "reference rows never win"
+    assert selected["S1"]["config"] == "none@0.85", "a PQ tie goes to 'none'"
+
+    config = train_mod.postprocess_config_from_selection(selected, target_width_px=4)
+    assert config["partition"] == "binary_boundary"
+    assert config["per_dataset"] == {
+        "S1": {"mode": "none", "threshold": 0.85},
+        "S2": {"mode": "skeleton_redilate", "threshold": 0.80}}
+
+
+def test_postprocess_grid_holds_every_mode_threshold_tuned_and_one_reference():
+    grid = train_mod.postprocess_grid(
+        ["Steel1", "Steel2"], ("none", "skeleton_redilate"),
+        (0.70, 0.75, 0.80, 0.85, 0.90), target_width_px=4,
+        tuned_thresholds={"Steel1": 0.55, "Steel2": 0.6})
+    assert len(grid) == 2 * (5 + 1) + 1
+    assert len({c["name"] for c in grid}) == len(grid)
+    reference = [c for c in grid if c["reference"]]
+    assert len(reference) == 1 and reference[0]["partition"] == "watershed_prob"
+    assert all(c["partition"] == "binary_boundary" for c in grid if not c["reference"])
+    tuned = next(c for c in grid if c["name"] == "skeleton_redilate@tuned")
+    assert tuned["per_dataset"]["Steel2"] == {"mode": "skeleton_redilate", "threshold": 0.6}
+    with pytest.raises(train_mod.TrainError):
+        train_mod.postprocess_grid(["A"], ("thin_harder",), (0.5,), 4)
+    with pytest.raises(train_mod.TrainError):
+        train_mod.postprocess_grid(["A"], ("none",), (1.5,), 4,
+                                   include_watershed_reference=False)
+
+
+def test_postprocess_sweep_report_persists_roles_selection_and_reference(tmp_path):
+    masks, logits = _postprocess_tiles()
+    val_tiles = train_mod.predict_tiles(_ConstantLogits(logits), _postprocess_ds(masks, "val"),
+                                        torch.device("cpu"), batch_size=2)
+    test_tiles = train_mod.predict_tiles(_ConstantLogits(logits), _postprocess_ds(masks, "test"),
+                                         torch.device("cpu"), batch_size=2)
+    tuned = {"A": 0.5}
+    val_rows = train_mod.sweep_postprocess(
+        val_tiles, train_mod.postprocess_grid(["A"], ("none", "skeleton_redilate"),
+                                              (0.5,), 2, tuned_thresholds=tuned),
+        dilations=(1,), distances=(1, 2))
+    selected = train_mod.select_postprocess_config(val_rows)
+    test_configs = ([train_mod.postprocess_config_from_selection(selected, 2)]
+                    + train_mod.postprocess_grid(["A"], ("none",), (), 2,
+                                                 tuned_thresholds=tuned))
+    test_rows = train_mod.sweep_postprocess(test_tiles, test_configs,
+                                            dilations=(1,), distances=(1, 2))
+    reference = {"A": {"decomposition": test_rows[1]["decomposition"],
+                       "region": test_rows[2]["region"]}}
+
+    md_path, json_path = train_mod.write_postprocess_sweep_report(
+        "fold_x", "colab", val_rows, selected, test_rows, config_hash="0" * 16,
+        epoch=3, line_width_px=4.0, target_width_px=2, marker_threshold=0.3,
+        reports_dir=tmp_path, roles={"A": "control"}, reference=reference,
+        checks=[("anchor", True, "")])
+
+    assert json_path.name == "postprocess_sweep_fold_x_colab.json"
+    payload = json.loads(json_path.read_text())
+    assert payload["selection_split"] == "val"
+    assert payload["roles"] == {"A": "control"}
+    assert {r["split"] for r in payload["val_rows"]} == {"val"}
+    assert {r["split"] for r in payload["test_rows"]} == {"test"}
+    assert len(payload["test_rows"]) == 3
+    assert payload["selected"]["A"]["config"] in {r["config"] for r in payload["val_rows"]}
+    assert payload["line_width_px"] == 4.0 and payload["target_width_px"] == 2
+    md_text = md_path.read_text()
+    for needle in ("(control)", "<- selected", "Cell 20 (recorded)", "PASS anchor"):
+        assert needle in md_text, needle
+
+
+def test_postprocess_notebook_cell_selects_on_val_before_it_touches_test():
+    """Structural, never executed: 06d's post-processing cell selects from the
+    VAL sweep only, predicts on the TEST dataset only after selecting, and
+    reimplements none of the post-processing itself."""
+    nb_path = (Path(__file__).resolve().parent.parent / "notebooks"
+               / "06d_steel_combined.ipynb")
+    if not nb_path.is_file():
+        pytest.skip(f"{nb_path} not found")
+    nb = json.loads(nb_path.read_text())
+
+    def source(cell):
+        s = cell["source"]
+        return "".join(s) if isinstance(s, list) else s
+
+    cells = [source(c) for c in nb["cells"]
+             if c["cell_type"] == "code" and "select_postprocess_config(" in source(c)]
+    assert len(cells) == 1, "exactly one cell may select a post-processing config"
+    cell = cells[0]
+    assert cell.count("select_postprocess_config(") == 1
+    assert "select_postprocess_config(pp_val_rows" in cell
+    # The prediction calls themselves, not bare names: the cell's "run Cell 20
+    # first" guard legitimately mentions region_test_ds as a string up top.
+    selection_at = cell.index("select_postprocess_config(")
+    val_predict = "predict_tiles(\n    region_model, trainer.val_ds"
+    test_predict = "predict_tiles(\n    region_model, region_test_ds"
+    assert cell.count(val_predict) == 1 and cell.count(test_predict) == 1
+    assert cell.index(val_predict) < selection_at, "VAL is predicted before selecting"
+    assert cell.index(test_predict) > selection_at, "TEST is predicted only after selecting"
+    for banned in ("skeletonize", "def postprocess_boundary", "_dilate_to_width"):
+        assert banned not in cell, f"{banned} belongs in src/, not the notebook"
