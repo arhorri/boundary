@@ -249,6 +249,21 @@ boundary_gt:
     uhcs2:
       - [75, 176, 40]
 
+  # MODE B only. A phase connected-component smaller than this (px) is merged
+  # into its surrounding phase before find_boundaries runs, so it draws no
+  # boundary loop of its own. Absent from this mapping (or 0) is OFF -- every
+  # dataset not listed here is byte-identical to before this setting existed.
+  #
+  # Steel2's ground truth is dominated by speckle-sized regions:
+  # reports/gt_noise_steel.md measured 53.2% of its regions under 100 px
+  # (Steel1: 18.5%), 92.4 regions/tile against Steel1's 12.3. 50 is a
+  # provisional value, NOT a final one -- notebooks/02_boundary_gt.ipynb's
+  # before/after cleanup cell prints the region counts, area percentiles and a
+  # 4-tile visual at whatever threshold is set here, specifically so the
+  # threshold can be judged by eye rather than assumed correct because it ran.
+  min_region_area_px:
+    Steel2: 50
+
 # Remote-session settings. Every host-specific absolute path lives HERE and
 # nowhere else: no module may contain a literal /content or /kaggle path.
 # Consumed by scripts/bootstrap_session.py, src/paths.py and

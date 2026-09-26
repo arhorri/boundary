@@ -67,6 +67,14 @@ DEFAULTS = {
     # folded into the background class only when fold_artifact_colours is on.
     "artifact_colours": {},
     "fold_artifact_colours": False,
+    # MODE B only. folder -> minimum connected-component area in pixels; a
+    # phase component smaller than this is merged into its surrounding phase
+    # (see merge_small_regions) BEFORE find_boundaries runs, so it draws no
+    # boundary loop of its own. 0 (absent from the mapping) is OFF -- a
+    # dataset that does not set this here is byte-identical to before this
+    # setting existed. Not a global default: Steel1 and every other dataset
+    # must stay untouched while Steel2's speckle is cleaned up.
+    "min_region_area_px": {},
 }
 
 #: A boundary map covering less/more than this is not a boundary map.
@@ -352,6 +360,93 @@ def snap_to_palette(rgb: np.ndarray, palette: Sequence) -> tuple:
     unsnapped = float((best > tolerance).mean())
     labels = labels.reshape(rgb.shape[:2])
     return labels, unsnapped, int(len(np.unique(labels)))
+
+
+def merge_small_regions(labels: np.ndarray, min_area_px: int) -> tuple:
+    """Merge every connected component smaller than ``min_area_px`` into its
+    surrounding phase, so it produces no boundary of its own.
+
+    Steel2's label map is dominated by speckle-sized regions -- 53% of the
+    regions ``true_regions_from_boundary`` finds in its extracted boundaries
+    are under 100 px, against 18.5% for Steel1 (``reports/gt_noise_steel.md``)
+    -- and every one of them draws a closed loop that
+    :func:`boundaries_from_labels` has no way to distinguish from a real
+    grain or phase interface. This runs BEFORE that call, on the palette-
+    snapped label map itself, not on the boundary it would produce: erasing a
+    boundary loop after the fact would still leave the interior mislabelled
+    for anything downstream that reads the label map, and would not correctly
+    handle a speckle that touches more than one neighbouring phase.
+
+    For every connected component (of ANY class, computed per class since a
+    plain ``skimage.measure.label`` call has no notion of "background" among
+    K phase labels) smaller than ``min_area_px``, every pixel of it is
+    reassigned to the MAJORITY label along its immediate border -- the phase
+    it is embedded in, not an arbitrary neighbour. Processed in ascending
+    component-id order (deterministic, not dependent on dict/set iteration):
+    if two small components are mutual neighbours, the first one processed
+    absorbs into whatever surrounds IT at that point, and the second then
+    sees the first's new (now larger) label as part of its own border tally --
+    a single deterministic pass, not a search for a globally stable
+    partition, which is not needed here.
+
+    ``min_area_px <= 0`` is off: returns ``labels`` UNCHANGED (the same array,
+    not a copy) and a stats dict with ``enabled: False``, so a dataset that
+    does not set ``boundary_gt.min_region_area_px`` is guaranteed byte-
+    identical to before this function existed -- callers must not skip this
+    function to get that guarantee; it is built in.
+
+    Returns ``(merged_labels, stats)``. ``stats`` records how many components
+    existed, how many were merged, and how many pixels were reassigned --
+    the boundary-pixel counts before/after are added by the caller, which
+    already computes ``boundaries_from_labels`` on both.
+    """
+    if min_area_px <= 0:
+        return labels, {"enabled": False, "min_area_px": int(min_area_px),
+                        "n_components_total": None, "n_components_merged": 0,
+                        "n_pixels_reassigned": 0}
+
+    from scipy import ndimage as ndi
+    from skimage.measure import label as cc_label
+
+    merged = labels.copy()
+    instance_map = np.zeros(labels.shape, dtype=np.int64)
+    offset = 0
+    for value in np.unique(labels):
+        cls_mask = labels == value
+        cc = cc_label(cls_mask, connectivity=2)
+        if cc.max() == 0:
+            continue
+        instance_map[cls_mask] = cc[cls_mask] + offset
+        offset += int(cc.max())
+
+    areas = np.bincount(instance_map.ravel())
+    small_instances = sorted(
+        i for i in range(1, len(areas)) if 0 < areas[i] < min_area_px)
+
+    n_pixels_reassigned = 0
+    n_components_merged = 0
+    for inst_id in small_instances:
+        comp_mask = instance_map == inst_id
+        border = ndi.binary_dilation(comp_mask) & ~comp_mask
+        border_values, border_counts = np.unique(merged[border], return_counts=True)
+        if border_values.size == 0:
+            # The component covers the entire tile -- nothing surrounds it.
+            # Leaving it alone is correct: there is no "surrounding phase" to
+            # merge into, and forcing one would fabricate a label. NOT counted
+            # as merged: nothing about the labels changed for it.
+            continue
+        majority = border_values[int(np.argmax(border_counts))]
+        merged[comp_mask] = majority
+        n_pixels_reassigned += int(comp_mask.sum())
+        n_components_merged += 1
+
+    return merged, {
+        "enabled": True,
+        "min_area_px": int(min_area_px),
+        "n_components_total": int(len(areas) - 1),
+        "n_components_merged": n_components_merged,
+        "n_pixels_reassigned": n_pixels_reassigned,
+    }
 
 
 def boundaries_from_labels(labels: np.ndarray) -> np.ndarray:
@@ -655,11 +750,17 @@ def extract_folder(
     palette, window = None, hsv_window
     watch = watched_colours(name, settings)
     folded_idx = []
+    min_region_area = int((settings["min_region_area_px"] or {}).get(name, 0))
     if mode == "B":
         palette = derive_palette(folder_report, settings)
         folded_idx = fold_targets(palette, name, settings)
     else:
         window = window or derive_hsv_window(folder_report, kept, settings)
+        if min_region_area:
+            raise ExtractionError(
+                f"boundary_gt.min_region_area_px is set for {name!r} but it "
+                "is a MODE A dataset; region-area merging is defined on the "
+                "phase-label map MODE B produces, not on painted colour.")
 
     processed, rejected, reconciled = [], [], []
     out_dir = Path(out_dir) / name
@@ -705,9 +806,31 @@ def extract_folder(
                                      "why": "mask carries a single label: no "
                                             "boundary exists in it"})
                     continue
+
+                region_merge = None
+                if min_region_area:
+                    raw_before_merge = boundaries_from_labels(labels)
+                    labels, region_merge = merge_small_regions(
+                        labels, min_region_area)
+                    n_levels = int(len(np.unique(labels)))
+                    if n_levels < 2:
+                        rejected.append({
+                            "pair": [img_path.name, mask_path.name],
+                            "why": "min_region_area_px merged every phase "
+                                   "into one label: no boundary would remain"})
+                        continue
                 raw = boundaries_from_labels(labels)
+                if region_merge is not None:
+                    region_merge["boundary_px_before"] = int(raw_before_merge.sum())
+                    region_merge["boundary_px_after"] = int(raw.sum())
+                    removed = region_merge["boundary_px_before"] - region_merge["boundary_px_after"]
+                    region_merge["boundary_px_removed"] = int(removed)
+                    region_merge["boundary_px_removed_fraction"] = (
+                        float(removed) / region_merge["boundary_px_before"]
+                        if region_merge["boundary_px_before"] else 0.0)
             else:
                 unsnapped = None
+                region_merge = None
                 raw = apply_hsv_window(mask, window)
 
             out, frac_before, frac_after, stages = clean_boundary(raw, settings)
@@ -731,6 +854,7 @@ def extract_folder(
                 "fraction_after": frac_after,
                 "stages": stages,
                 "unsnapped": unsnapped,
+                "region_merge": region_merge,
             })
         except ExtractionError:
             raise
@@ -757,6 +881,7 @@ def extract_folder(
             [p["stages"]["after_close"] for p in processed]),
         "artifacts": _summarise_artifacts(watch, processed, folded_idx, palette),
         "folded_colours": [list(palette[i]) for i in folded_idx] if palette else [],
+        "region_merge": _summarise_region_merge(processed, min_region_area),
         "excluded": excluded,
         "rejected": rejected,
         "reconciled": reconciled,
@@ -783,6 +908,36 @@ def _summarise_artifacts(watch, processed, folded_idx, palette) -> list:
                 [r["share_of_boundary"] for r in present]),
         })
     return out
+
+
+def _summarise_region_merge(processed: list, min_region_area: int) -> dict:
+    """Folder-level roll-up of ``merge_small_regions``: how much of the
+    speckle this run actually removed, printable straight into
+    ``reports/gt_extraction.md`` without a caller re-deriving it per file.
+
+    ``min_region_area == 0`` (the default -- off) returns
+    ``{"enabled": False}`` regardless of what ``processed`` holds, so a
+    dataset that never set ``min_region_area_px`` reports itself untouched
+    even before any per-file record is inspected.
+    """
+    if not min_region_area:
+        return {"enabled": False, "min_area_px": 0}
+    merges = [rec["region_merge"] for rec in processed if rec.get("region_merge")]
+    if not merges:
+        return {"enabled": True, "min_area_px": int(min_region_area),
+                "n_files": 0, "n_components_merged_total": 0,
+                "n_pixels_reassigned_total": 0,
+                "boundary_px_removed_fraction": None}
+    removed_fracs = [m["boundary_px_removed_fraction"] for m in merges]
+    return {
+        "enabled": True,
+        "min_area_px": int(min_region_area),
+        "n_files": len(merges),
+        "n_components_total": sum(m["n_components_total"] for m in merges),
+        "n_components_merged_total": sum(m["n_components_merged"] for m in merges),
+        "n_pixels_reassigned_total": sum(m["n_pixels_reassigned"] for m in merges),
+        "boundary_px_removed_fraction": audit_mod._minmedmax(removed_fracs),
+    }
 
 
 def extract_all(
@@ -983,6 +1138,27 @@ def render_markdown(report: dict) -> str:
                 f"- HSV lower {[round(v, 1) for v in w['lower']]}, "
                 f"upper {[round(v, 1) for v in w['upper']]}"
                 + (" (hue wraps)" if w.get("wraps_hue") else ""),
+            ]
+        rm = d.get("region_merge") or {}
+        if rm.get("enabled"):
+            frac = rm.get("boundary_px_removed_fraction") or {}
+            lines += [
+                "", "### Small-region cleanup (`boundary_gt.min_region_area_px`)", "",
+                f"- threshold: {rm['min_area_px']} px -- every phase component "
+                "smaller than this was merged into its surrounding phase (the "
+                "majority label along its border) before boundary extraction, "
+                "so it draws no boundary loop of its own",
+                f"- {rm.get('n_components_merged_total', 0)} of "
+                f"{rm.get('n_components_total', 0)} components merged across "
+                f"{rm.get('n_files', 0)} files "
+                f"({rm.get('n_pixels_reassigned_total', 0)} px reassigned)",
+                f"- boundary pixels removed by the merge (min/median/max of the "
+                f"per-file fraction): {_fmt(frac.get('min'))}/"
+                f"{_fmt(frac.get('median'))}/{_fmt(frac.get('max'))}",
+                "- the region-count/area-percentile before/after and the "
+                "4-tile visual live in notebooks/02_boundary_gt.ipynb, not "
+                "here: they need the extracted PNGs on disk, which this "
+                "report only describes.",
             ]
         if d.get("artifacts"):
             lines += [
