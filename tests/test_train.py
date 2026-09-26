@@ -1656,3 +1656,136 @@ def test_region_metrics_report_records_config_hash_and_epoch(tmp_path):
     md_text = md_path.read_text()
     assert "067fecc2e06a7d0a" in md_text
     assert "epoch 12" in md_text
+
+
+# --------------------------------------------------------------------------
+# fold_steel_combined's region-level diagnostic: no single held-out dataset,
+# and no logic duplicated out of this module into the notebook that calls it
+# --------------------------------------------------------------------------
+def test_region_diagnostic_functions_have_no_held_out_dataset_parameter():
+    """decompose_error / evaluate_region_metrics / write_region_metrics_report
+    never took a ``held_out`` argument in the first place -- every one of
+    them already returns or accepts a dict keyed by DATASET, with no built-in
+    notion of "the" held-out entry. 06b_step6c.ipynb's cell only ever reads
+    ``decomposition[trainer.held_out]`` back out of that dict; the "held out"
+    framing lives entirely in the caller, never in these three functions.
+
+    This is what makes them usable, unmodified, for a fold with no single
+    held-out dataset (fold_steel_combined: both Steel1 and Steel2 are
+    training-side) -- a caller that instead reads every key the dict already
+    has needs no new parameter and no new code path in src/train.py.
+    """
+    import inspect
+
+    for fn in (train_mod.decompose_error, train_mod.evaluate_region_metrics,
+              train_mod.write_region_metrics_report):
+        params = set(inspect.signature(fn).parameters)
+        assert "held_out" not in params, (
+            f"{fn.__name__} grew a held_out parameter; fold_steel_combined's "
+            "notebook cell assumes none of these three functions ever "
+            "special-case a single held-out dataset")
+
+
+def test_region_diagnostic_runs_on_a_pool_with_no_single_held_out_dataset(tmp_path):
+    """The actual behaviour fold_steel_combined's notebook cell relies on:
+    decompose_error and evaluate_region_metrics scored against a val_ds whose
+    datasets are BOTH training-side (as Steel1+Steel2 both are in this fold)
+    return a complete, independent entry for every dataset -- not just one
+    keyed by some externally-supplied "held out" name, and not a crash.
+    """
+    size = 24
+    band = np.zeros((size, size), dtype=np.float32)
+    band[8:10, :] = 1.0
+    exact = torch.where(torch.from_numpy(band) > 0,
+                        torch.tensor(10.0), torch.tensor(-10.0))
+
+    # Two datasets, neither one privileged as "held out" -- exactly
+    # fold_steel_combined's shape: Steel1 and Steel2 are both training-side.
+    val_ds = _FakeValDataset([band, band], datasets=["Steel1", "Steel2"])
+    model = _ConstantLogits([exact[None], exact[None]])
+    thresholds = {"Steel1": 0.5, "Steel2": 0.5}
+
+    decomposition = train_mod.decompose_error(
+        model, val_ds, thresholds, device=torch.device("cpu"),
+        dilations=(1,), distances=(1,), batch_size=2)
+    assert set(decomposition) == {"Steel1", "Steel2"}
+    for name in ("Steel1", "Steel2"):
+        assert decomposition[name]["label"] == "GOOD"
+        assert decomposition[name]["pixel_dice"] == pytest.approx(1.0)
+
+    region_results = train_mod.evaluate_region_metrics(
+        model, val_ds, thresholds, device=torch.device("cpu"),
+        marker_threshold=0.3, batch_size=2)
+    assert set(region_results) == {"Steel1", "Steel2"}
+    for name in ("Steel1", "Steel2"):
+        assert region_results[name]["tiles"] == 1
+
+    # No dataset here is "held out" -- neither name is more entitled to a
+    # verdict than the other, and the report writer must not require one.
+    md_path, json_path = train_mod.write_region_metrics_report(
+        "fold_steel_combined", "colab", region_results, marker_threshold=0.3,
+        config_hash="0" * 16, epoch=0, reports_dir=tmp_path,
+        decomposition=decomposition)
+    payload = json.loads(json_path.read_text())
+    assert set(payload["decomposition"]) == {"Steel1", "Steel2"}
+    for name in ("Steel1", "Steel2"):
+        assert payload["decomposition"][name]["label"] == "GOOD"
+
+
+def test_06d_notebook_calls_train_module_region_functions_directly():
+    """Guards against the failure mode this task explicitly asked not to
+    introduce: pasting a second implementation of the decomposition or
+    region-metrics arithmetic into the notebook instead of importing it.
+
+    Parses notebooks/06d_steel_combined.ipynb's own JSON (never executes it,
+    per this project's execution model) and asserts its region-diagnostic
+    cell calls train_mod.decompose_error, train_mod.evaluate_region_metrics
+    and train_mod.write_region_metrics_report -- the exact same functions
+    06b_step6c.ipynb's cell 12 calls -- and defines none of that arithmetic
+    itself.
+    """
+    nb_path = (Path(__file__).resolve().parent.parent / "notebooks"
+              / "06d_steel_combined.ipynb")
+    if not nb_path.is_file():
+        pytest.skip(f"{nb_path} not found")
+    nb = json.loads(nb_path.read_text())
+
+    def source(cell):
+        s = cell["source"]
+        return "".join(s) if isinstance(s, list) else s
+
+    region_cells = [source(c) for c in nb["cells"]
+                   if c["cell_type"] == "code"
+                   and "decompose_error" in source(c)]
+    assert region_cells, (
+        "no code cell in 06d_steel_combined.ipynb calls decompose_error; "
+        "the region-level diagnostic is missing")
+    cell = region_cells[0]
+
+    for call in ("train_mod.decompose_error(", "train_mod.evaluate_region_metrics(",
+                "train_mod.write_region_metrics_report("):
+        assert call in cell, f"region-diagnostic cell does not call {call}"
+
+    # No reimplementation: the cell must not define the functions it is
+    # supposed to be calling from src/train.py.
+    for banned in ("def decompose_error", "def evaluate_region_metrics",
+                  "def write_region_metrics_report", "def decomposition_counts",
+                  "def summarise_decomposition", "def watershed_regions",
+                  "def region_metrics_single"):
+        assert banned not in cell, (
+            f"{banned} is duplicated into the notebook instead of imported "
+            "from src.train")
+
+    # This fold has no single held-out dataset: the cell must report every
+    # dataset the decomposition returns, not filter down to one key named by
+    # a held_out variable the way 06b_step6c.ipynb's cell does. A comment MAY
+    # mention trainer.held_out to explain why (this notebook's does); what is
+    # banned is actually indexing the decomposition with it.
+    for anti_pattern in ("decomposition.get(trainer.held_out",
+                         "decomposition[trainer.held_out"):
+        assert anti_pattern not in cell, (
+            f"region-diagnostic cell reads {anti_pattern}...] -- this fold's "
+            "held_out is the descriptive label 'mixed(Steel1+Steel2)', which "
+            "names no real dataset; it must iterate every dataset the "
+            "decomposition returns instead")
+    assert "sorted(decomposition)" in cell or "for name in decomposition" in cell
