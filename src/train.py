@@ -57,6 +57,7 @@ except ImportError as exc:  # pragma: no cover - hosts ship both
         "module is meant to run on a host, never on a local machine."
     ) from exc
 
+from src import postprocess as postprocess_mod
 from src.paths import REPO_ROOT
 
 
@@ -2383,13 +2384,63 @@ def summarise_decomposition(slot: dict, radii: Sequence,
     }
 
 
+def _radii_and_distances(dilations: Sequence, distances: Sequence,
+                         caller: str) -> tuple:
+    """Normalise and validate the dilation radii / proximity distances.
+
+    Shared by :func:`decompose_error`, :func:`reference_decomposition` and
+    :func:`sweep_postprocess`, so all three bucket their counts identically
+    -- a sweep that normalised them differently would produce a table that
+    looks comparable to decompose_error's and is not.
+    """
+    # Keep k=0 internally as the ordinary pixel-Dice anchor.  Proximity is
+    # deliberately only reported at the caller's requested distances: its
+    # public table is the 1, 2, 3, 5 px sweep, not an extra exact-overlap row.
+    radii = tuple(sorted({0} | {int(k) for k in dilations}))
+    distances = tuple(sorted({int(d) for d in distances}))
+    if any(k < 0 for k in radii) or any(d < 0 for d in distances):
+        raise TrainError("dilation radii and proximity distances must be non-negative")
+    if not distances:
+        raise TrainError(f"pass at least one proximity distance to {caller}")
+    return radii, distances
+
+
+def _check_postprocess(postprocess_mode: str, target_width_px,
+                       partition: Optional[str] = None) -> None:
+    """Refuse a post-processing request that cannot mean what it asks for,
+    BEFORE any forward pass is spent on it.
+    """
+    if postprocess_mode not in postprocess_mod.MODES:
+        raise TrainError(f"postprocess_mode must be one of "
+                         f"{postprocess_mod.MODES}, got {postprocess_mode!r}")
+    if postprocess_mode != "none" and target_width_px is None:
+        raise TrainError(
+            f"postprocess_mode={postprocess_mode!r} needs target_width_px -- "
+            "the width the ground truth was generated at "
+            "(reports/gt_extraction.json settings.line_width_px).")
+    if partition is None:
+        return
+    if partition not in POSTPROCESS_PARTITIONS:
+        raise TrainError(f"partition must be one of {POSTPROCESS_PARTITIONS}, "
+                         f"got {partition!r}")
+    if partition == "watershed_prob" and postprocess_mode != "none":
+        raise TrainError(
+            f"postprocess_mode={postprocess_mode!r} cannot change a partition "
+            "made by watershed on the RAW probability map: the thresholded, "
+            "post-processed boundary never enters it. Pass "
+            "partition='binary_boundary' to score the regions the "
+            "post-processed boundary itself implies.")
+
+
 @torch.no_grad()
 def decompose_error(model: "nn.Module", val_ds, thresholds: dict, device,
                     amp_enabled: bool = False, dilations: Sequence = (1, 2, 3),
                     distances: Sequence = (1, 2, 3, 5),
                     batch_size: int = 32, num_workers: int = 0,
                     dataset_embedding: Optional["torch.Tensor"] = None,
-                    reference_tolerance: float = 2.0) -> dict:
+                    reference_tolerance: float = 2.0,
+                    postprocess_mode: str = "none",
+                    target_width_px: Optional[int] = None) -> dict:
     """Split a low pixel Dice into PLACEMENT error and THICKNESS error.
 
     A pixel Dice of 0.146 has two very different explanations that no single
@@ -2425,18 +2476,16 @@ def decompose_error(model: "nn.Module", val_ds, thresholds: dict, device,
     boundary_gt's reference width, so every existing caller is unaffected; a
     caller scoring ground truth at a different ``line_width_px`` should pass
     :func:`placement_tolerance_px` of it instead.
+
+    ``postprocess_mode`` / ``target_width_px`` choose how the probability map
+    is binarized -- see :func:`src.postprocess.postprocess_boundary`. The
+    default ``"none"`` is exactly ``prob >= threshold``, the expression this
+    function always used, so every existing caller gets identical numbers.
     """
     from torch.utils.data import DataLoader
 
-    # Keep k=0 internally as the ordinary pixel-Dice anchor.  Proximity is
-    # deliberately only reported at the caller's requested distances: its
-    # public table is the 1, 2, 3, 5 px sweep, not an extra exact-overlap row.
-    radii = tuple(sorted({0} | {int(k) for k in dilations}))
-    distances = tuple(sorted({int(d) for d in distances}))
-    if any(k < 0 for k in radii) or any(d < 0 for d in distances):
-        raise TrainError("dilation radii and proximity distances must be non-negative")
-    if not distances:
-        raise TrainError("pass at least one proximity distance to decompose_error")
+    radii, distances = _radii_and_distances(dilations, distances, "decompose_error")
+    _check_postprocess(postprocess_mode, target_width_px)
 
     present = sorted({r["dataset"] for r in val_ds.rows})
     missing = sorted(set(present) - set(thresholds))
@@ -2464,7 +2513,8 @@ def decompose_error(model: "nn.Module", val_ds, thresholds: dict, device,
         for i in range(probs.shape[0]):
             row = val_ds.rows[row_index]
             dataset = row["dataset"]
-            pred = probs[i, 0] >= float(thresholds[dataset])
+            pred = postprocess_mod.postprocess_boundary(
+                probs[i, 0], thresholds[dataset], postprocess_mode, target_width_px)
             true = masks[i, 0] > 0.5
             slot = slots.setdefault(dataset, _decomposition_slot(radii, distances))
             _accumulate_decomposition(
@@ -2537,12 +2587,8 @@ def reference_decomposition(dilations: Sequence = (1, 2, 3),
     """
     import cv2
 
-    radii = tuple(sorted({0} | {int(k) for k in dilations}))
-    distances = tuple(sorted({int(d) for d in distances}))
-    if any(k < 0 for k in radii) or any(d < 0 for d in distances):
-        raise TrainError("dilation radii and proximity distances must be non-negative")
-    if not distances:
-        raise TrainError("pass at least one proximity distance to reference_decomposition")
+    radii, distances = _radii_and_distances(dilations, distances,
+                                            "reference_decomposition")
 
     width = max(1, int(round(float(line_width_px))))
     tolerance = placement_tolerance_px(line_width_px)
@@ -2808,12 +2854,57 @@ def region_metrics_single(pred_regions: "np.ndarray",
     }
 
 
+#: How a prediction becomes a region partition for the region metrics.
+#: ``watershed_prob`` -- marker-controlled watershed on the RAW probability
+#: map (the step 6c default; the thresholded boundary never enters it, so no
+#: threshold or post-processing can move it). ``binary_boundary`` -- the
+#: regions the thresholded, post-processed BOUNDARY itself implies, converted
+#: by :func:`true_regions_from_boundary`, the exact conversion the ground
+#: truth goes through -- the partition a stage consuming the binary boundary
+#: would actually get.
+POSTPROCESS_PARTITIONS = ("watershed_prob", "binary_boundary")
+
+
+def _region_metrics_for_tile(prob, binary, true_regions, partition: str,
+                             marker_threshold: float) -> dict:
+    """One tile's region metrics, shared by :func:`evaluate_region_metrics`
+    and :func:`sweep_postprocess` so the two cannot score a tile differently.
+
+    ``binary`` is the thresholded (and possibly post-processed) boundary;
+    ``pred_fraction`` is always measured on it. Under ``watershed_prob`` it
+    is otherwise unused, which is why post-processing cannot move that
+    partition.
+    """
+    if partition == "watershed_prob":
+        pred_regions = watershed_regions(prob, marker_threshold)
+    else:
+        pred_regions = true_regions_from_boundary(binary)
+    metrics = region_metrics_single(pred_regions, true_regions)
+    metrics["pred_fraction"] = float(binary.mean())
+    return metrics
+
+
+def _mean_region_rows(per_dataset: dict) -> dict:
+    """Per-dataset MEAN of every numeric per-tile region metric."""
+    out = {}
+    for dataset, rows in sorted(per_dataset.items()):
+        numeric_keys = [k for k in rows[0] if isinstance(rows[0][k], (int, float))]
+        out[dataset] = {
+            "tiles": len(rows),
+            **{k: float(np.mean([r[k] for r in rows])) for k in numeric_keys},
+        }
+    return out
+
+
 @torch.no_grad()
 def evaluate_region_metrics(model: "nn.Module", val_ds, thresholds: dict, device,
                             marker_threshold: float = 0.3,
                             amp_enabled: bool = False,
                             batch_size: int = 32, num_workers: int = 0,
-                            dataset_embedding: Optional["torch.Tensor"] = None) -> dict:
+                            dataset_embedding: Optional["torch.Tensor"] = None,
+                            postprocess_mode: str = "none",
+                            target_width_px: Optional[int] = None,
+                            partition: str = "watershed_prob") -> dict:
     """Region-level quality per dataset, against an already-trained checkpoint.
 
     Complements :func:`decompose_error`'s pixel/skeleton view: a model can
@@ -2835,12 +2926,21 @@ def evaluate_region_metrics(model: "nn.Module", val_ds, thresholds: dict, device
     the function step 6c's arm A calls against the EXISTING best.pt, with no
     retraining, per its "score the current model on its real objective
     first" instruction.
+
+    ``partition`` -- see :data:`POSTPROCESS_PARTITIONS`. The default
+    ``watershed_prob`` is this function's historical behaviour, untouched:
+    with it, only ``pred_fraction`` depends on the threshold, and a
+    ``postprocess_mode`` other than ``"none"`` is REFUSED rather than
+    silently ignored. ``binary_boundary`` scores the regions the thresholded
+    boundary (post-processed per ``postprocess_mode``/``target_width_px``, see
+    :func:`src.postprocess.postprocess_boundary`) itself implies.
     """
     from torch.utils.data import DataLoader
 
     if not 0.0 < marker_threshold < 1.0:
         raise TrainError(
             f"watershed_marker_threshold must be in (0, 1), got {marker_threshold}")
+    _check_postprocess(postprocess_mode, target_width_px, partition)
     present = sorted({r["dataset"] for r in val_ds.rows})
     missing = sorted(set(present) - set(thresholds))
     if missing:
@@ -2869,11 +2969,11 @@ def evaluate_region_metrics(model: "nn.Module", val_ds, thresholds: dict, device
             dataset = row["dataset"]
             prob = probs[i, 0]
             true = masks[i, 0] > 0.5
-            metrics = region_metrics_single(
-                watershed_regions(prob, marker_threshold),
-                true_regions_from_boundary(true))
-            metrics["pred_fraction"] = float(
-                (prob >= float(thresholds[dataset])).mean())
+            binary = postprocess_mod.postprocess_boundary(
+                prob, thresholds[dataset], postprocess_mode, target_width_px)
+            metrics = _region_metrics_for_tile(
+                prob, binary, true_regions_from_boundary(true), partition,
+                marker_threshold)
             per_dataset.setdefault(dataset, []).append(metrics)
             row_index += 1
 
@@ -2882,14 +2982,7 @@ def evaluate_region_metrics(model: "nn.Module", val_ds, thresholds: dict, device
             f"evaluate_region_metrics scored {row_index} tiles but val_ds "
             f"has {len(val_ds)}.")
 
-    out = {}
-    for dataset, rows in sorted(per_dataset.items()):
-        numeric_keys = [k for k in rows[0] if isinstance(rows[0][k], (int, float))]
-        out[dataset] = {
-            "tiles": len(rows),
-            **{k: float(np.mean([r[k] for r in rows])) for k in numeric_keys},
-        }
-    return out
+    return _mean_region_rows(per_dataset)
 
 
 def region_metrics_report_paths(run_name: str, platform: str,
@@ -3133,6 +3226,400 @@ def write_gt_noise_report(profiles: dict, reports_dir: Optional[Path] = None) ->
     md_path.write_text("\n".join(lines) + "\n")
     payload = {"generated_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
               "profiles": profiles}
+    json_path.write_text(json.dumps(payload, indent=2, sort_keys=True, default=str))
+    return md_path, json_path
+
+
+# --------------------------------------------------------------------------
+# post-processing sweep -- does normalising the PREDICTED boundary's width
+# change the region partition it implies? Diagnostic only: an already-trained
+# checkpoint, one forward pass per split, many binarizations of the cached
+# probabilities. Selection happens on VAL and nowhere else.
+# --------------------------------------------------------------------------
+@torch.no_grad()
+def predict_tiles(model: "nn.Module", ds, device, amp_enabled: bool = False,
+                  batch_size: int = 32, num_workers: int = 0,
+                  dataset_embedding: Optional["torch.Tensor"] = None) -> list:
+    """ONE forward pass over ``ds``; every tile's probability map, cached.
+
+    Returns ``[{"dataset", "tile_id", "split", "prob", "true"}, ...]`` in row
+    order. A sweep over N binarizations then costs one forward pass instead
+    of N, and -- more to the point -- every configuration is scored on the
+    very same probabilities, so a difference between two rows of a sweep can
+    only come from the binarization, never from a second, numerically
+    different pass over the data.
+
+    The model dispatch is the one :func:`evaluate_region_metrics` uses, line
+    for line, so a FiLM model is conditioned exactly as it is there.
+    """
+    from torch.utils.data import DataLoader
+
+    model.eval()
+    loader = DataLoader(ds, batch_size=batch_size, shuffle=False,
+                        num_workers=num_workers)
+    out, row_index = [], 0
+    for batch in loader:
+        images = batch["image"].to(device, non_blocking=True)
+        masks = batch["mask"].numpy()
+        with autocast(device.type, amp_enabled):
+            if dataset_embedding is not None:
+                logits = model(images, dataset_embedding=dataset_embedding)
+            elif hasattr(model, "film_vocabulary"):
+                logits = model(images, dataset_names=list(batch["dataset"]))
+            else:
+                logits = model(images)
+        probs = torch.sigmoid(logits.float()).cpu().numpy()
+        for i in range(probs.shape[0]):
+            row = ds.rows[row_index]
+            out.append({
+                "dataset": row["dataset"],
+                "tile_id": row.get("tile_id"),
+                "split": row.get("split"),
+                "prob": probs[i, 0].copy(),
+                "true": masks[i, 0] > 0.5,
+            })
+            row_index += 1
+    if row_index != len(ds):
+        raise TrainError(f"predict_tiles scored {row_index} tiles but the "
+                         f"dataset has {len(ds)}.")
+    return out
+
+
+def postprocess_grid(datasets: Sequence, modes: Sequence, thresholds: Sequence,
+                     target_width_px, tuned_thresholds: Optional[dict] = None,
+                     include_watershed_reference: bool = True) -> list:
+    """Every (mode, threshold) configuration of a post-processing sweep.
+
+    Each configuration applies the same mode and threshold to every dataset
+    in ``datasets`` -- a dataset's metrics depend only on its own tiles and
+    its own threshold, so this is N independent evaluations sharing a name,
+    not a coupling between datasets. ``tuned_thresholds`` (the best epoch's
+    own per-dataset sweep, :func:`best_epoch_thresholds`) adds one more
+    point per mode, ``<mode>@tuned`` -- the exact operating point Cell 20
+    scored, so the grid always contains the configuration being compared
+    against. All of these score regions with the ``binary_boundary``
+    partition. ``include_watershed_reference`` adds one ``reference`` row,
+    ``watershed_prob`` at the tuned thresholds -- Cell 20's own partition,
+    for context; it is never eligible for selection.
+    """
+    datasets = list(datasets)
+    bad_modes = [m for m in modes if m not in postprocess_mod.MODES]
+    if bad_modes:
+        raise TrainError(f"unknown postprocess modes {bad_modes}; known: "
+                         f"{postprocess_mod.MODES}")
+    bad_thr = [t for t in thresholds if not 0.0 < float(t) < 1.0]
+    if bad_thr:
+        raise TrainError(f"thresholds must be in (0, 1), got {bad_thr}")
+    if tuned_thresholds is not None:
+        missing = sorted(set(datasets) - set(tuned_thresholds))
+        if missing:
+            raise TrainError(f"tuned_thresholds has no entry for {missing}")
+    if include_watershed_reference and tuned_thresholds is None:
+        raise TrainError("the watershed reference row needs tuned_thresholds")
+
+    configs = []
+    for mode in modes:
+        points = [(f"{float(t):.2f}", {d: float(t) for d in datasets})
+                  for t in thresholds]
+        if tuned_thresholds is not None:
+            points.append(("tuned", {d: float(tuned_thresholds[d]) for d in datasets}))
+        for label, per_threshold in points:
+            configs.append({
+                "name": f"{mode}@{label}",
+                "partition": "binary_boundary",
+                "target_width_px": target_width_px,
+                "reference": False,
+                "per_dataset": {d: {"mode": mode, "threshold": per_threshold[d]}
+                                for d in datasets},
+            })
+    if include_watershed_reference:
+        configs.append({
+            "name": "reference: watershed_prob@tuned",
+            "partition": "watershed_prob",
+            "target_width_px": target_width_px,
+            "reference": True,
+            "per_dataset": {d: {"mode": "none", "threshold": float(tuned_thresholds[d])}
+                            for d in datasets},
+        })
+    return configs
+
+
+def sweep_postprocess(tiles: list, configs: list, marker_threshold: float = 0.3,
+                      dilations: Sequence = (1, 2, 3),
+                      distances: Sequence = (1, 2, 3, 5),
+                      reference_tolerance: float = 2.0) -> list:
+    """Score every configuration on already-predicted tiles.
+
+    ``tiles`` comes from :func:`predict_tiles`; ``configs`` from
+    :func:`postprocess_grid` / :func:`postprocess_config_from_selection`.
+    Returns one row per (configuration, dataset), each carrying the full
+    :func:`summarise_decomposition` entry under ``decomposition`` and the
+    per-dataset MEAN region metrics under ``region`` -- computed by the same
+    :func:`decomposition_counts`, :func:`_region_metrics_for_tile` and
+    :func:`_mean_region_rows` that :func:`decompose_error` and
+    :func:`evaluate_region_metrics` use, so ``none`` at a dataset's tuned
+    threshold reproduces decompose_error exactly, and the watershed reference
+    reproduces evaluate_region_metrics exactly, on the same tiles.
+
+    Every row records the ``split`` its tiles came from, which is what lets
+    :func:`select_postprocess_config` refuse anything that is not VAL.
+    """
+    radii, distances = _radii_and_distances(dilations, distances, "sweep_postprocess")
+    if not 0.0 < marker_threshold < 1.0:
+        raise TrainError(
+            f"watershed_marker_threshold must be in (0, 1), got {marker_threshold}")
+    if not tiles:
+        raise TrainError("sweep_postprocess was given no tiles.")
+    if not configs:
+        raise TrainError("sweep_postprocess was given no configurations.")
+
+    present = sorted({t["dataset"] for t in tiles})
+    for cfg in configs:
+        missing = sorted(set(present) - set(cfg["per_dataset"]))
+        if missing:
+            raise TrainError(f"configuration {cfg['name']!r} has no mode/threshold "
+                             f"for {missing}")
+        for dataset in present:
+            spec = cfg["per_dataset"][dataset]
+            _check_postprocess(spec["mode"], cfg.get("target_width_px"),
+                               cfg["partition"])
+            if not 0.0 < float(spec["threshold"]) < 1.0:
+                raise TrainError(f"configuration {cfg['name']!r}: threshold for "
+                                 f"{dataset} must be in (0, 1), got {spec['threshold']}")
+
+    splits = {}
+    for t in tiles:
+        splits.setdefault(t["dataset"], set()).add(str(t["split"]))
+    # The ground truth's own partition does not depend on the configuration:
+    # computed once per tile, not once per tile per configuration.
+    true_regions = [true_regions_from_boundary(t["true"]) for t in tiles]
+
+    rows = []
+    for cfg in configs:
+        width = cfg.get("target_width_px")
+        slots, region_rows = {}, {}
+        for tile, tile_true_regions in zip(tiles, true_regions):
+            dataset = tile["dataset"]
+            spec = cfg["per_dataset"][dataset]
+            binary = postprocess_mod.postprocess_boundary(
+                tile["prob"], spec["threshold"], spec["mode"], width)
+            slot = slots.setdefault(dataset, _decomposition_slot(radii, distances))
+            _accumulate_decomposition(
+                slot, decomposition_counts(binary, tile["true"], radii, distances))
+            region_rows.setdefault(dataset, []).append(_region_metrics_for_tile(
+                tile["prob"], binary, tile_true_regions, cfg["partition"],
+                marker_threshold))
+        region = _mean_region_rows(region_rows)
+        for dataset in sorted(slots):
+            spec = cfg["per_dataset"][dataset]
+            rows.append({
+                "config": cfg["name"],
+                "dataset": dataset,
+                "split": ",".join(sorted(splits[dataset])),
+                "mode": spec["mode"],
+                "threshold": float(spec["threshold"]),
+                "target_width_px": width,
+                "partition": cfg["partition"],
+                "reference": bool(cfg.get("reference", False)),
+                "decomposition": summarise_decomposition(
+                    slots[dataset], radii, distances,
+                    reference_tolerance=reference_tolerance),
+                "region": region[dataset],
+            })
+    return rows
+
+
+def select_postprocess_config(rows: list, metric: str = "pq") -> dict:
+    """``{dataset: row}`` -- the best non-reference configuration per dataset,
+    by ``metric`` (a region metric, higher is better), on VAL rows ONLY.
+
+    Refuses rows from any split other than ``val``: choosing a
+    post-processing configuration by looking at the test split would make
+    the test number a tuned number, not a held-out one. The check is on the
+    rows themselves (each carries the split its tiles came from), not on a
+    promise by the caller.
+
+    Ties break towards ``none`` over ``skeleton_redilate`` (do not adopt a
+    post-processing step that does not strictly win), then towards the lower
+    threshold -- deterministic, never dependent on row order.
+    """
+    if not rows:
+        raise TrainError("select_postprocess_config was given no rows.")
+    splits = sorted({r["split"] for r in rows})
+    if splits != ["val"]:
+        raise TrainError(
+            f"a post-processing configuration may only be selected on the VAL "
+            f"split; these rows come from {splits}.")
+    candidates = [r for r in rows if not r["reference"]]
+    if not candidates:
+        raise TrainError("every row is a reference row; nothing to select from.")
+    for r in candidates:
+        if metric not in r["region"]:
+            raise TrainError(f"row {r['config']!r}/{r['dataset']} has no region "
+                             f"metric {metric!r}")
+    mode_rank = {m: i for i, m in enumerate(postprocess_mod.MODES)}
+    by_dataset = {}
+    for r in candidates:
+        by_dataset.setdefault(r["dataset"], []).append(r)
+    return {dataset: min(group, key=lambda r: (-float(r["region"][metric]),
+                                               mode_rank[r["mode"]],
+                                               float(r["threshold"])))
+            for dataset, group in sorted(by_dataset.items())}
+
+
+def postprocess_config_from_selection(selected: dict, target_width_px,
+                                      name: str = "selected (val-best)") -> dict:
+    """One configuration that applies each dataset's VAL-selected mode and
+    threshold -- the only thing :func:`select_postprocess_config`'s output is
+    allowed to become before it is scored on TEST.
+    """
+    if not selected:
+        raise TrainError("nothing was selected.")
+    partitions = sorted({r["partition"] for r in selected.values()})
+    if partitions != ["binary_boundary"]:
+        raise TrainError(f"a selected configuration must use the binary_boundary "
+                         f"partition, got {partitions}")
+    return {
+        "name": name,
+        "partition": "binary_boundary",
+        "target_width_px": target_width_px,
+        "reference": False,
+        "per_dataset": {d: {"mode": r["mode"], "threshold": float(r["threshold"])}
+                        for d, r in selected.items()},
+    }
+
+
+#: The flat columns a post-processing sweep row is reported by.
+POSTPROCESS_COLUMNS = ("pixel_dice", "skeleton_dice", "width_ratio", "real",
+                       "found", "label", "pq", "sq", "rq",
+                       "over_segmentation_factor")
+
+
+def flatten_postprocess_row(row: dict) -> dict:
+    """A sweep row as one flat record -- the columns the report tabulates."""
+    d, r = row["decomposition"], row["region"]
+    return {
+        "config": row["config"], "dataset": row["dataset"], "split": row["split"],
+        "mode": row["mode"], "threshold": row["threshold"],
+        "partition": row["partition"], "reference": row["reference"],
+        "tiles": r.get("tiles"),
+        "pixel_dice": d["pixel_dice"], "skeleton_dice": d["skeleton_dice"],
+        "width_ratio": d["width_ratio"], "real": d["real"], "found": d["found"],
+        "label": d["label"], "tolerance_px": d.get("tolerance_px"),
+        "pq": r["pq"], "sq": r["sq"], "rq": r["rq"],
+        "over_segmentation_factor": r["over_segmentation_factor"],
+        "n_true_regions": r.get("n_true_regions"),
+        "n_pred_regions": r.get("n_pred_regions"),
+        "pred_fraction": r.get("pred_fraction"),
+    }
+
+
+def postprocess_sweep_report_paths(run_name: str, platform: str,
+                                   reports_dir: Optional[Path] = None) -> tuple:
+    """``reports/postprocess_sweep_<run>_<platform>.{md,json}``."""
+    reports_dir = Path(reports_dir) if reports_dir else Path(REPO_ROOT) / "reports"
+    if not platform:
+        raise TrainError("no platform to key the report by; resolve_paths() supplies it.")
+    stem = f"postprocess_sweep_{run_name}_{platform}"
+    return reports_dir / f"{stem}.md", reports_dir / f"{stem}.json"
+
+
+def write_postprocess_sweep_report(run_name: str, platform: str, val_rows: list,
+                                   selected: dict, test_rows: list,
+                                   config_hash: str, epoch: int,
+                                   line_width_px: float, target_width_px,
+                                   marker_threshold: float,
+                                   reports_dir: Optional[Path] = None,
+                                   roles: Optional[dict] = None,
+                                   reference: Optional[dict] = None,
+                                   checks: Optional[list] = None) -> tuple:
+    """Writes ``reports/postprocess_sweep_<run>_<platform>.{md,json}``.
+
+    ``roles`` labels each dataset (e.g. ``{"Steel2": "hypothesis",
+    "Steel1": "control"}``) so a control is never read as a result.
+    ``reference`` is the number being compared against -- ``{dataset:
+    {"decomposition": ..., "region": ...}}`` as Cell 20 recorded it -- kept
+    verbatim so the comparison survives the session. ``checks`` is the list
+    of ``(name, ok, detail)`` the notebook asserted before writing.
+    """
+    roles = roles or {}
+    md_path, json_path = postprocess_sweep_report_paths(run_name, platform, reports_dir)
+    val_flat = [flatten_postprocess_row(r) for r in val_rows]
+    test_flat = [flatten_postprocess_row(r) for r in test_rows]
+    selected_flat = {d: flatten_postprocess_row(r) for d, r in selected.items()}
+
+    def role(dataset):
+        return f" ({roles[dataset]})" if dataset in roles else ""
+
+    def fmt(v):
+        if isinstance(v, bool) or v is None:
+            return str(v)
+        if isinstance(v, (int, float)):
+            return f"{v:.4f}"
+        return str(v)
+
+    header = ("| config | " + " | ".join(POSTPROCESS_COLUMNS) + " |",
+              "| --- | " + " | ".join("---" for _ in POSTPROCESS_COLUMNS) + " |")
+    lines = [
+        f"# Post-processing sweep -- {run_name} ({platform})",
+        "",
+        f"Checkpoint: epoch {epoch}, config hash `{config_hash}`. Ground truth "
+        f"line_width_px={line_width_px}; skeleton_redilate target width "
+        f"{target_width_px} px; watershed marker threshold {marker_threshold}.",
+        "",
+        "Regions for every configuration are the ones its thresholded, "
+        "post-processed BOUNDARY implies (`binary_boundary`: the same "
+        "conversion the ground truth goes through). Cell 20's region metrics "
+        "use a watershed on the RAW probability map, which no threshold or "
+        "post-processing can move; that partition appears only as the "
+        "`reference` row. Selection is by PQ on VAL only; TEST is scored once, "
+        "on configurations fixed before it was looked at.",
+    ]
+    for dataset in sorted({r["dataset"] for r in val_flat}):
+        lines += ["", f"## VAL -- {dataset}{role(dataset)}", "", *header]
+        for r in sorted((r for r in val_flat if r["dataset"] == dataset),
+                        key=lambda r: -float(r["pq"])):
+            mark = " **<- selected**" if (dataset in selected_flat and
+                                          r["config"] == selected_flat[dataset]["config"]) else ""
+            lines.append(f"| {r['config']}{mark} | "
+                         + " | ".join(fmt(r[c]) for c in POSTPROCESS_COLUMNS) + " |")
+    lines += ["", "## Selected on VAL", ""]
+    for dataset, r in selected_flat.items():
+        lines.append(f"- **{dataset}**{role(dataset)}: `{r['config']}` "
+                     f"(mode {r['mode']}, threshold {r['threshold']:.2f}, "
+                     f"val PQ {r['pq']:.4f})")
+    for dataset in sorted({r["dataset"] for r in test_flat}):
+        lines += ["", f"## TEST -- {dataset}{role(dataset)}", "", *header]
+        if reference and dataset in reference:
+            ref = flatten_postprocess_row({
+                "config": "Cell 20 (recorded)", "dataset": dataset, "split": "test",
+                "mode": "none", "threshold": float("nan"),
+                "partition": "watershed_prob", "reference": True,
+                "decomposition": reference[dataset]["decomposition"],
+                "region": reference[dataset]["region"]})
+            lines.append("| Cell 20 (recorded) | "
+                         + " | ".join(fmt(ref[c]) for c in POSTPROCESS_COLUMNS) + " |")
+        for r in (r for r in test_flat if r["dataset"] == dataset):
+            lines.append(f"| {r['config']} | "
+                         + " | ".join(fmt(r[c]) for c in POSTPROCESS_COLUMNS) + " |")
+    if checks:
+        lines += ["", "## Checks", ""]
+        lines += [f"- {'PASS' if ok else 'FAIL'} {name}" + (f" -- {detail}" if detail else "")
+                  for name, ok, detail in checks]
+
+    md_path.parent.mkdir(parents=True, exist_ok=True)
+    md_path.write_text("\n".join(lines) + "\n")
+    payload = {
+        "run_name": run_name, "platform": platform,
+        "config_hash": config_hash, "epoch": int(epoch),
+        "line_width_px": float(line_width_px), "target_width_px": target_width_px,
+        "watershed_marker_threshold": marker_threshold,
+        "roles": roles, "selection_metric": "pq", "selection_split": "val",
+        "val_rows": val_flat, "selected": selected_flat, "test_rows": test_flat,
+        "reference": reference,
+        "checks": [{"name": n, "ok": bool(ok), "detail": d} for n, ok, d in (checks or [])],
+        "val_rows_full": val_rows, "test_rows_full": test_rows,
+    }
     json_path.write_text(json.dumps(payload, indent=2, sort_keys=True, default=str))
     return md_path, json_path
 
