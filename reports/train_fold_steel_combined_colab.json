@@ -81,7 +81,7 @@
  },
  "platform": "colab",
  "held_out": "mixed(Steel1+Steel2)",
- "generated_utc": "2026-09-25T08:51:55Z",
+ "generated_utc": "2026-09-26T07:41:46Z",
  "summary": {
   "fold": "fold_steel_combined",
   "run_name": "fold_steel_combined",
@@ -97,8 +97,8 @@
   },
   "held_out": "mixed(Steel1+Steel2)",
   "platform": "colab",
-  "device": "cpu",
-  "gpu": null,
+  "device": "cuda",
+  "gpu": "Tesla T4",
   "config_hash": "067fecc2e06a7d0a",
   "seed": {
    "seed": 0,
@@ -106,7 +106,7 @@
    "cudnn_benchmark": true,
    "note": "statistically reproducible; cudnn.benchmark picks algorithms by timing, so bitwise equality across runs is not claimed"
   },
-  "amp": false,
+  "amp": true,
   "num_workers": 4,
   "batch_size": 64,
   "epochs": 40,
@@ -153,12 +153,12 @@
   "cache": {
    "train": {
     "source": "warm",
-    "seconds": 3.98,
+    "seconds": 6.66,
     "images": 965
    },
    "val": {
     "source": "warm",
-    "seconds": 1.75,
+    "seconds": 4.5,
     "images": 221
    }
   },

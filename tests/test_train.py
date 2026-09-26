@@ -1789,3 +1789,111 @@ def test_06d_notebook_calls_train_module_region_functions_directly():
             "names no real dataset; it must iterate every dataset the "
             "decomposition returns instead")
     assert "sorted(decomposition)" in cell or "for name in decomposition" in cell
+
+
+# --------------------------------------------------------------------------
+# region_size_profile / write_gt_noise_report -- ground-truth region-size
+# diagnostic, independent of any checkpoint (Steel2 GT noise check)
+# --------------------------------------------------------------------------
+def _write_boundary_png(path, mask):
+    from PIL import Image
+
+    Image.fromarray((np.asarray(mask, dtype=bool) * 255).astype(np.uint8)).save(path)
+
+
+def test_region_size_profile_counts_regions_and_areas(tmp_path):
+    """Two tiles, hand-built so the SIZE CLASSES are unambiguous even though
+    expand_labels' exact tie-breaking on the boundary pixels themselves is
+    not: a 40x40 tile split by one line into two ~760-820 px regions, and a
+    20x20 tile split by a plus-shaped boundary into four ~80-120 px regions.
+    The two classes are separated by a wide enough margin (well above and
+    well below 200 px) that ``region_size_profile`` must recover exactly
+    which tile's regions are "small" from the PNGs alone, without needing to
+    know precisely how expand_labels resolves a tied pixel.
+    """
+    two_region = np.zeros((40, 40), dtype=bool)
+    two_region[20, :] = True
+    path_a = tmp_path / "a.png"
+    _write_boundary_png(path_a, two_region)
+
+    four_region = np.zeros((20, 20), dtype=bool)
+    four_region[10, :] = True
+    four_region[:, 10] = True
+    path_b = tmp_path / "b.png"
+    _write_boundary_png(path_b, four_region)
+
+    profile = train_mod.region_size_profile([path_a, path_b], min_thresholds=(50, 200))
+
+    assert profile["n_tiles"] == 2
+    assert profile["regions_per_tile"]["min"] == 2   # tile a
+    assert profile["regions_per_tile"]["max"] == 4   # tile b
+    assert profile["n_regions_total"] == 6            # 2 + 4
+
+    # Tile a's two regions are each several hundred px (40x40 = 1600 total
+    # split roughly in half); tile b's four quadrants are each roughly
+    # 80-120 px (20x20 = 400 total split roughly in quarters). Exactly the
+    # 4 small ones -- never tile a's -- fall under 200 px, and none of the 6
+    # is anywhere near as small as 50 px.
+    assert profile["area_px"]["below_count"]["200"] == 4
+    assert profile["area_px"]["below_count"]["50"] == 0
+
+
+def test_region_size_profile_missing_path_raises(tmp_path):
+    with pytest.raises(train_mod.TrainError):
+        train_mod.region_size_profile([tmp_path / "does-not-exist.png"])
+
+
+def test_region_size_profile_empty_input_raises():
+    with pytest.raises(train_mod.TrainError):
+        train_mod.region_size_profile([])
+
+
+def test_region_size_profile_uses_the_same_conversion_as_region_metrics(tmp_path):
+    """The count region_size_profile reports for one tile must be the exact
+    number evaluate_region_metrics' n_true_regions would report for the same
+    mask -- both go through true_regions_from_boundary, never two
+    independent implementations that could quietly disagree.
+    """
+    mask = np.zeros((16, 16), dtype=bool)
+    mask[8, :] = True
+    path = tmp_path / "tile.png"
+    _write_boundary_png(path, mask)
+
+    profile = train_mod.region_size_profile([path])
+    direct = train_mod.true_regions_from_boundary(mask)
+    assert profile["regions_per_tile"]["max"] == len(np.unique(direct))
+    assert profile["per_tile"][0]["n_regions"] == len(np.unique(direct))
+
+
+def test_write_gt_noise_report_persists_both_datasets(tmp_path):
+    steel1 = {"n_tiles": 907, "regions_per_tile": {"mean": 6.0, "median": 6.0,
+                                                    "min": 2, "max": 20},
+             "n_regions_total": 5442,
+             "area_px": {"percentiles": {str(p): float(1000 - p) for p in
+                                        (5, 10, 25, 50, 75, 90, 95, 99)},
+                        "below_count": {"10": 0, "25": 0, "50": 2, "100": 10},
+                        "below_fraction": {"10": 0.0, "25": 0.0,
+                                          "50": 0.0004, "100": 0.002}},
+             "per_tile": []}
+    steel2 = {"n_tiles": 504, "regions_per_tile": {"mean": 112.0, "median": 108.0,
+                                                    "min": 40, "max": 260},
+             "n_regions_total": 56448,
+             "area_px": {"percentiles": {str(p): float(100 - p) for p in
+                                        (5, 10, 25, 50, 75, 90, 95, 99)},
+                        "below_count": {"10": 20000, "25": 40000,
+                                       "50": 50000, "100": 56000},
+                        "below_fraction": {"10": 0.35, "25": 0.71,
+                                          "50": 0.89, "100": 0.99}},
+             "per_tile": []}
+
+    md_path, json_path = train_mod.write_gt_noise_report(
+        {"Steel1": steel1, "Steel2": steel2}, reports_dir=tmp_path)
+
+    assert md_path.is_file() and json_path.is_file()
+    payload = json.loads(json_path.read_text())
+    assert set(payload["profiles"]) == {"Steel1", "Steel2"}
+    assert payload["profiles"]["Steel2"]["regions_per_tile"]["mean"] == 112.0
+
+    md_text = md_path.read_text()
+    assert "Steel1" in md_text and "Steel2" in md_text
+    assert "region-size profile" in md_text.lower()
