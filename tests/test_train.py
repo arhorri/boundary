@@ -1576,6 +1576,30 @@ def test_true_regions_from_boundary_with_no_boundary_is_one_region():
     assert len(np.unique(regions)) == 1
 
 
+def test_true_regions_from_boundary_does_not_leak_through_a_diagonal_only_boundary():
+    """The connectivity audit's finding, made concrete: a boundary drawn as a
+    single-pixel diagonal staircase is 8-connected to ITSELF but does not
+    stop an 8-connected background labelling, because two background pixels
+    straddling it are themselves 8-connected diagonally around it -- the
+    classic digital-topology leak. Both GT boundaries (a) and predicted
+    thresholded boundaries (b) go through this SAME function
+    (true_regions_from_boundary), so they were never inconsistent with each
+    other, but a diagonal boundary DID leak for both before the fix
+    (connectivity=1, 4-connected, for the background) -- immune to this leak
+    for a diagonal boundary of any length or orientation.
+    """
+    size = 10
+    true = np.zeros((size, size), dtype=bool)
+    for i in range(size):
+        true[i, i] = True
+    regions = train_mod.true_regions_from_boundary(true)
+    upper = regions[2, 5]   # row 2, col 5 -- strictly above the diagonal
+    lower = regions[5, 2]   # row 5, col 2 -- strictly below the diagonal
+    assert upper != lower, (
+        "a diagonal-only boundary leaked: the two sides share one region label")
+    assert len(np.unique(regions)) == 2
+
+
 # --------------------------------------------------------------------------
 # step 6c: write_region_metrics_report persists the full decomposition
 # --------------------------------------------------------------------------
@@ -2565,4 +2589,336 @@ def test_fn_attribution_notebook_cell_selects_markers_on_val_before_test():
     assert cell.count(val_predict) == 1 and cell.count(test_predict) == 1
     assert cell.index(val_predict) < at < cell.index(test_predict)
     for banned in ("def classify", "np.bincount", "skeletonize"):
+        assert banned not in cell, f"{banned} belongs in src/, not the notebook"
+
+
+# --------------------------------------------------------------------------
+# gap_closing_grid -- the two new shapes swept together with threshold,
+# reusing select_postprocess_config unmodified (Cell 23's gap-closing sweep)
+# --------------------------------------------------------------------------
+def test_gap_closing_grid_holds_every_shape_threshold_tuned_and_reference():
+    grid = train_mod.gap_closing_grid(
+        ["Steel1", "Steel2"], closing_radii=(1, 2, 3), bridge_pxs=(2, 4, 6),
+        thresholds=(0.7, 0.8), target_width_px=4,
+        tuned_thresholds={"Steel1": 0.55, "Steel2": 0.6})
+    non_ref = [c for c in grid if not c["reference"]]
+    # 3 radii x (2 thresholds + 1 tuned) + 3 bridges x (2 thresholds + 1 tuned)
+    assert len(non_ref) == 3 * 3 + 3 * 3
+    assert len({c["name"] for c in grid}) == len(grid)
+    assert all(c["partition"] == "binary_boundary" for c in non_ref)
+    close_cfgs = [c for c in non_ref if c["per_dataset"]["Steel1"]["mode"] == "morph_close"]
+    bridge_cfgs = [c for c in non_ref if c["per_dataset"]["Steel1"]["mode"] == "skeleton_bridge"]
+    assert len(close_cfgs) == 9 and len(bridge_cfgs) == 9
+    assert {c["per_dataset"]["Steel1"]["closing_radius"] for c in close_cfgs} == {1.0, 2.0, 3.0}
+    assert {c["per_dataset"]["Steel2"]["bridge_px"] for c in bridge_cfgs} == {2.0, 4.0, 6.0}
+    reference = [c for c in grid if c["reference"]]
+    assert len(reference) == 1 and reference[0]["partition"] == "watershed_prob"
+    with pytest.raises(train_mod.TrainError):
+        train_mod.gap_closing_grid(["A"], (0,), (2,), (0.7,), 4,
+                                   tuned_thresholds={"A": 0.5})
+    with pytest.raises(train_mod.TrainError):
+        train_mod.gap_closing_grid(["A"], (1,), (0,), (0.7,), 4,
+                                   tuned_thresholds={"A": 0.5})
+
+
+def test_gap_closing_grid_configs_are_scored_by_the_existing_sweep_and_selector():
+    """The grid must be shaped exactly like postprocess_grid's -- sweep_
+    postprocess and select_postprocess_config need no gap-closing-specific
+    code at all.
+    """
+    masks, logits = _postprocess_tiles()
+    tiles = train_mod.predict_tiles(_ConstantLogits(logits), _postprocess_ds(masks, "val"),
+                                    torch.device("cpu"), batch_size=2)
+    grid = train_mod.gap_closing_grid(["A"], closing_radii=(1, 2), bridge_pxs=(2,),
+                                      thresholds=(0.5,), target_width_px=2,
+                                      tuned_thresholds={"A": 0.5})
+    rows = train_mod.sweep_postprocess(tiles, grid, dilations=(1,), distances=(1, 2))
+    assert {r["split"] for r in rows} == {"val"}
+    selected = train_mod.select_postprocess_config(rows)
+    assert selected["A"]["mode"] in ("morph_close", "skeleton_bridge", "none")
+    row = next(r for r in rows if r["config"] == selected["A"]["config"])
+    if row["mode"] == "morph_close":
+        assert row["closing_radius"] is not None and row["bridge_px"] is None
+    elif row["mode"] == "skeleton_bridge":
+        assert row["bridge_px"] is not None and row["closing_radius"] is None
+
+
+# --------------------------------------------------------------------------
+# panoptic_quality_excluding_tiny -- the TINY-ceiling secondary diagnostic
+# --------------------------------------------------------------------------
+def test_panoptic_quality_excluding_tiny_removes_a_small_region_from_both_sides():
+    """Truth: a big region (label 1, 900 px) and a tiny one (label 2, 9 px).
+    Prediction: perfectly matches the big region, and separately predicts a
+    region exactly over the tiny true one (label 3). Excluding true regions
+    < 50 px must drop label 2 from the true side AND blank the prediction
+    that only covered it, so pred label 3 is NOT counted as a false positive
+    for detecting something now treated as not there.
+    """
+    true = np.ones((32, 32), dtype=np.int64)
+    true[2:5, 2:5] = 2                     # 9 px, tiny
+    pred = np.ones((32, 32), dtype=np.int64)
+    pred[2:5, 2:5] = 3
+
+    plain = train_mod.panoptic_quality(true, pred)
+    assert plain["pq_fn"] == 0 and plain["pq_fp"] == 0   # both matched at IoU 1.0
+
+    filtered = train_mod.panoptic_quality_excluding_tiny(true, pred, min_area_px=50)
+    assert filtered["n_true_excluded"] == 1
+    assert filtered["pq_fn"] == 0, "the tiny true region must not count as a miss"
+    assert filtered["pq_fp"] == 0, "the prediction over it must not count as a false positive"
+    assert filtered["pq_tp"] == 1
+    assert filtered["pq"] == pytest.approx(1.0)
+
+
+def test_panoptic_quality_excluding_tiny_keeps_a_region_at_or_above_the_floor():
+    true = np.ones((32, 32), dtype=np.int64)
+    true[2:12, 2:12] = 2   # 100 px, at the floor
+    pred = true.copy()
+    filtered = train_mod.panoptic_quality_excluding_tiny(true, pred, min_area_px=100)
+    assert filtered["n_true_excluded"] == 0
+    assert filtered["pq_tp"] == 2
+
+
+def test_panoptic_quality_excluding_tiny_zero_floor_matches_plain_pq():
+    rng = np.random.default_rng(0)
+    true = rng.integers(0, 4, size=(20, 20))
+    pred = rng.integers(0, 4, size=(20, 20))
+    plain = train_mod.panoptic_quality(true, pred)
+    filtered = train_mod.panoptic_quality_excluding_tiny(true, pred, min_area_px=0)
+    assert filtered["n_true_excluded"] == 0
+    for key in ("pq", "sq", "rq", "pq_tp", "pq_fp", "pq_fn"):
+        assert filtered[key] == plain[key]
+    with pytest.raises(train_mod.TrainError):
+        train_mod.panoptic_quality_excluding_tiny(true, pred, min_area_px=-1)
+
+
+# --------------------------------------------------------------------------
+# GT fingerprint -- the checkpoint guard against ground truth regenerated
+# since a checkpoint was trained, kept SEPARATE from config_hash
+# --------------------------------------------------------------------------
+def _write_gt_extraction(reports_dir, settings=None, generated="2026-01-01T00:00:00Z"):
+    reports_dir.mkdir(parents=True, exist_ok=True)
+    payload = {"generated_utc": generated,
+              "settings": settings or {"line_width_px": 4}}
+    (reports_dir / "gt_extraction.json").write_text(json.dumps(payload))
+    return payload
+
+
+def test_gt_fingerprint_is_none_without_a_report(tmp_path):
+    assert train_mod.gt_fingerprint(tmp_path) is None
+
+
+def test_gt_fingerprint_reads_the_recorded_settings_not_a_guess(tmp_path):
+    _write_gt_extraction(tmp_path, settings={"line_width_px": 4, "min_region_area_px": {"Steel2": 50}})
+    fp = train_mod.gt_fingerprint(tmp_path)
+    assert fp["boundary_gt_settings"] == {"line_width_px": 4,
+                                          "min_region_area_px": {"Steel2": 50}}
+    assert fp["gt_extraction_generated_utc"] == "2026-01-01T00:00:00Z"
+    assert len(fp["gt_extraction_sha256"]) == 16
+
+
+def test_gt_fingerprint_changes_when_the_report_bytes_change(tmp_path):
+    _write_gt_extraction(tmp_path, settings={"line_width_px": 2})
+    before = train_mod.gt_fingerprint(tmp_path)
+    _write_gt_extraction(tmp_path, settings={"line_width_px": 4})
+    after = train_mod.gt_fingerprint(tmp_path)
+    assert before != after
+    assert before["gt_extraction_sha256"] != after["gt_extraction_sha256"]
+
+
+def test_verify_gt_fingerprint_warns_without_raising_when_either_side_is_missing():
+    fp = {"gt_extraction_sha256": "abc123", "boundary_gt_settings": {"line_width_px": 4}}
+    msg = train_mod.verify_gt_fingerprint({}, None, "ckpt.pt")
+    assert "no ground-truth fingerprint available" in msg
+    msg = train_mod.verify_gt_fingerprint({}, fp, "ckpt.pt")
+    assert "predates this guard" in msg
+
+
+def test_verify_gt_fingerprint_confirms_a_match_and_raises_on_a_mismatch():
+    fp = {"gt_extraction_sha256": "abc123", "boundary_gt_settings": {"line_width_px": 4}}
+    other = {"gt_extraction_sha256": "def456", "boundary_gt_settings": {"line_width_px": 2}}
+    msg = train_mod.verify_gt_fingerprint({"gt_fingerprint": fp}, fp, "ckpt.pt")
+    assert "verified" in msg and "abc123" in msg
+    with pytest.raises(train_mod.TrainError, match="different ground truth"):
+        train_mod.verify_gt_fingerprint({"gt_fingerprint": other}, fp, "ckpt.pt")
+
+
+def test_save_records_gt_fingerprint_and_maybe_resume_verifies_it(tmp_path):
+    """End to end, through the real Trainer: save() records self.gt_fingerprint
+    (None here -- resolved carries no reports_dir), and maybe_resume() reports
+    a status without raising, since neither side has one to compare.
+    """
+    trainer = _minimal_trainer(tmp_path)
+    assert trainer.gt_fingerprint is None, (
+        "a resolved dict with no reports_dir must not fall back to this "
+        "repo's real reports/gt_extraction.json")
+    trainer.best = {"metric": 0.5, "epoch": 0, "key": "A", "threshold": 0.5,
+                    "criterion": "x"}
+    trainer.history = [{"epoch": 0}]
+    trainer.save(0, is_best=False)
+
+    saved = train_mod.load_checkpoint(trainer.last_path)
+    assert "gt_fingerprint" in saved and saved["gt_fingerprint"] is None
+
+    fresh = _minimal_trainer(tmp_path)
+    status = fresh.maybe_resume()
+    assert status["resumed"]
+    assert "no ground-truth fingerprint available" in status["gt_fingerprint_status"]
+
+
+def test_maybe_resume_refuses_a_checkpoint_trained_on_different_ground_truth(tmp_path):
+    reports_dir = tmp_path / "reports"
+    _write_gt_extraction(reports_dir, settings={"line_width_px": 2})
+
+    resolved = {"platform": "local", "persistent_dir": tmp_path, "reports_dir": reports_dir}
+    settings = dict(train_mod.DEFAULTS)
+    old = train_mod.Trainer(fold="dev", resolved=resolved, settings=settings,
+                            model_settings={"freeze_encoder_epochs": 0},
+                            loss_settings={}, dataset_settings={})
+    old.model = _FakeEncoderModel()
+    old.optimizer = train_mod.build_optimizer(old.model, old.settings)
+    old.scheduler = train_mod.WarmupCosine(total_steps=10, warmup_steps=1)
+    old.scaler = train_mod.make_scaler(old.amp_enabled)
+    old.best = {"metric": 0.5, "epoch": 0, "key": "A", "threshold": 0.5, "criterion": "x"}
+    old.history = [{"epoch": 0}]
+    old.save(0, is_best=False)
+    assert old.gt_fingerprint is not None
+
+    # Ground truth regenerated since -- a different reports/gt_extraction.json.
+    _write_gt_extraction(reports_dir, settings={"line_width_px": 4})
+    new = train_mod.Trainer(fold="dev", resolved=resolved, settings=settings,
+                            model_settings={"freeze_encoder_epochs": 0},
+                            loss_settings={}, dataset_settings={})
+    new.model = _FakeEncoderModel()
+    new.optimizer = train_mod.build_optimizer(new.model, new.settings)
+    new.scheduler = train_mod.WarmupCosine(total_steps=10, warmup_steps=1)
+    new.scaler = train_mod.make_scaler(new.amp_enabled)
+    assert new.gt_fingerprint != old.gt_fingerprint
+    with pytest.raises(train_mod.TrainError, match="different ground truth"):
+        new.maybe_resume()
+
+
+def test_load_checkpoint_model_skips_gt_check_by_default_but_honours_it_when_asked(tmp_path):
+    from src import model as model_mod
+
+    settings = _model_settings_without_pretrained_download()
+    path = tmp_path / "ckpt.pt"
+    model = model_mod.build_model(settings=settings)
+    fp = {"gt_extraction_sha256": "abc123", "boundary_gt_settings": {}}
+    train_mod.atomic_save(
+        {"fold": "dev", "config_hash": "h", "model": model.state_dict(),
+         "gt_fingerprint": fp}, path)
+
+    # Default: no expected_gt_fingerprint passed -> not checked, no raise
+    # even against a mismatching value.
+    train_mod.load_checkpoint_model(path, settings, fold="dev",
+                                    expected_gt_fingerprint=None)
+
+    with pytest.raises(train_mod.TrainError, match="different ground truth"):
+        train_mod.load_checkpoint_model(
+            path, settings, fold="dev",
+            expected_gt_fingerprint={"gt_extraction_sha256": "zzz999",
+                                    "boundary_gt_settings": {}})
+
+    # Matches -> loads without raising.
+    train_mod.load_checkpoint_model(path, settings, fold="dev",
+                                    expected_gt_fingerprint=fp)
+
+
+def test_gap_closing_report_persists_val_test_marker_fn_and_tiny_pq(tmp_path):
+    masks, logits = _postprocess_tiles()
+    val_tiles = train_mod.predict_tiles(_ConstantLogits(logits), _postprocess_ds(masks, "val"),
+                                        torch.device("cpu"), batch_size=2)
+    test_tiles = train_mod.predict_tiles(_ConstantLogits(logits), _postprocess_ds(masks, "test"),
+                                         torch.device("cpu"), batch_size=2)
+    tuned = {"A": 0.5}
+
+    gap_grid = train_mod.gap_closing_grid(["A"], closing_radii=(1, 2), bridge_pxs=(2,),
+                                          thresholds=(0.5,), target_width_px=2,
+                                          tuned_thresholds=tuned)
+    gap_val_rows = train_mod.sweep_postprocess(val_tiles, gap_grid, dilations=(1,),
+                                               distances=(1, 2))
+    gap_selected = train_mod.select_postprocess_config(gap_val_rows)
+    gap_test_configs = ([train_mod.postprocess_config_from_selection(gap_selected, 2)]
+                        + train_mod.postprocess_grid(["A"], ("none",), (), 2,
+                                                     tuned_thresholds=tuned))
+    gap_test_rows = train_mod.sweep_postprocess(test_tiles, gap_test_configs,
+                                                dilations=(1,), distances=(1, 2))
+
+    marker_grid = train_mod.marker_threshold_grid(["A"], (0.25, 0.3), tuned)
+    marker_val_rows = train_mod.sweep_postprocess(val_tiles, marker_grid, dilations=(1,),
+                                                  distances=(1, 2))
+    marker_selected = train_mod.select_marker_threshold(marker_val_rows, default=0.3)
+    marker_test_rows = train_mod.sweep_postprocess(
+        test_tiles, [train_mod.marker_config_from_selection(marker_selected)],
+        dilations=(1,), distances=(1, 2))
+
+    none_cfg = train_mod.postprocess_grid(["A"], ("none",), (), 2, tuned_thresholds=tuned,
+                                          include_watershed_reference=False)[0]
+    selected_cfg = train_mod.postprocess_config_from_selection(gap_selected, 2)
+    fn_before = train_mod.attribute_false_negatives(test_tiles, none_cfg, {"A": 50})
+    fn_after = train_mod.attribute_false_negatives(test_tiles, selected_cfg, {"A": 50})
+
+    true_regions = [train_mod.true_regions_from_boundary(t["true"]) for t in test_tiles]
+    tiny_pq = {"A": {
+        "before": train_mod.panoptic_quality_excluding_tiny(true_regions[0], true_regions[0], 50),
+        "after": train_mod.panoptic_quality_excluding_tiny(true_regions[0], true_regions[0], 50),
+    }}
+
+    md_path, json_path = train_mod.write_gap_closing_report(
+        "fold_x", "colab", gap_val_rows, gap_selected, gap_test_rows,
+        marker_val_rows, marker_selected, marker_test_rows, fn_before, fn_after,
+        tiny_pq, config_hash="0" * 16, epoch=5, default_marker=0.3,
+        markers=(0.25, 0.3), tiny_area_px={"A": 50}, reports_dir=tmp_path,
+        roles={"A": "hypothesis"}, checks=[("anchor", True, "")])
+
+    assert json_path.name == "gap_closing_fold_x_colab.json"
+    payload = json.loads(json_path.read_text())
+    assert payload["gap_closing"]["selection_split"] == "val"
+    assert payload["marker"]["selection_split"] == "val"
+    assert set(payload["fn_attribution"]) == {"before_none_at_tuned", "after_selected"}
+    assert payload["tiny_pq"]["floor_px"] == {"A": 50}
+    assert payload["gap_closing"]["selected"]["A"]["config"] in {
+        r["config"] for r in payload["gap_closing"]["val_rows"]}
+    md_text = md_path.read_text()
+    for needle in ("(hypothesis)", "<- selected", "watershed@val-best", "PASS anchor",
+                  "Secondary diagnostic"):
+        assert needle in md_text, needle
+
+
+def test_gap_closing_notebook_cell_verifies_gt_and_selects_on_val_before_test():
+    """Structural, never executed: 06d's gap-closing cell verifies the GT
+    fingerprint against the loaded checkpoint, builds its grid with
+    gap_closing_grid (no duplicated morphology), selects gap-closing AND
+    marker configurations on VAL before predicting TEST, and reimplements
+    none of the post-processing itself.
+    """
+    nb_path = (Path(__file__).resolve().parent.parent / "notebooks"
+              / "06d_steel_combined.ipynb")
+    if not nb_path.is_file():
+        pytest.skip(f"{nb_path} not found")
+    nb = json.loads(nb_path.read_text())
+
+    def source(cell):
+        s = cell["source"]
+        return "".join(s) if isinstance(s, list) else s
+
+    cells = [source(c) for c in nb["cells"]
+            if c["cell_type"] == "code" and "gap_closing_grid(" in source(c)]
+    assert len(cells) == 1
+    cell = cells[0]
+
+    assert "verify_gt_fingerprint(" in cell and "gt_fingerprint(REPORTS)" in cell
+    assert "gap_closing_grid(" in cell and "marker_threshold_grid(" in cell
+
+    marker_at = cell.index("select_marker_threshold(")
+    gap_at = cell.index("select_postprocess_config(")
+    val_predict = "predict_tiles(\n    region_model, trainer.val_ds"
+    test_predict = "predict_tiles(\n    region_model, region_test_ds"
+    assert cell.count(val_predict) == 1 and cell.count(test_predict) == 1
+    assert cell.index(val_predict) < marker_at < cell.index(test_predict)
+    assert cell.index(val_predict) < gap_at < cell.index(test_predict)
+
+    for banned in ("def classify", "def postprocess_boundary", "skeletonize",
+                  "binary_closing", "draw_line", "np.bincount"):
         assert banned not in cell, f"{banned} belongs in src/, not the notebook"

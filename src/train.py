@@ -867,6 +867,67 @@ def config_hash(model_settings: dict, loss_settings: dict,
     return hashlib.sha256(blob.encode()).hexdigest()[:16], payload
 
 
+def gt_fingerprint(reports_dir: Optional[Path] = None) -> Optional[dict]:
+    """A fingerprint of the ground truth ON DISK -- ``boundary_gt``'s settings
+    plus a hash of ``reports/gt_extraction.json``, as RECORDED in that report,
+    not whatever ``configs/default.yaml`` says now (which can have moved on --
+    the same caution :func:`placement_tolerance_px` documents for the same
+    reason, and the drift is exactly the failure this guards against: nothing
+    about ``config_hash`` changes when the ground truth is regenerated, since
+    ``boundary_gt`` is not one of the sections it hashes).
+
+    Returns ``None`` if ``reports/gt_extraction.json`` does not exist --
+    callers decide what that means; a fresh checkout before step 2 has run
+    legitimately has no ground truth to fingerprint yet.
+    """
+    reports_dir = Path(reports_dir or (REPO_ROOT / "reports"))
+    path = reports_dir / "gt_extraction.json"
+    if not path.is_file():
+        return None
+    blob = path.read_bytes()
+    report = json.loads(blob)
+    return {
+        "gt_extraction_sha256": hashlib.sha256(blob).hexdigest()[:16],
+        "gt_extraction_generated_utc": report.get("generated_utc"),
+        "boundary_gt_settings": report.get("settings"),
+    }
+
+
+def verify_gt_fingerprint(state: dict, expected: Optional[dict], path) -> str:
+    """Compare a checkpoint's recorded ``gt_fingerprint`` against ``expected``
+    (:func:`gt_fingerprint`, resolved for the ground truth on disk NOW).
+
+    Returns a one-line status message rather than printing it -- a
+    ``Trainer`` method and a notebook cell each decide how loud to be with it.
+    Raises :class:`TrainError` on an outright mismatch. Does NOT raise, only
+    warns via the returned message, when either side has no fingerprint to
+    compare: a checkpoint saved before this guard existed carries none, and
+    refusing every checkpoint already in this repo the day this guard landed
+    would be exactly the kind of change ``config_hash`` was deliberately
+    NOT given (see :func:`gt_fingerprint`) -- old checkpoints load, loudly.
+    """
+    saved = state.get("gt_fingerprint")
+    if expected is None:
+        return (f"! no ground-truth fingerprint available to verify {path} "
+                "against (reports/gt_extraction.json is missing or unreadable "
+                "on this host) -- proceeding without verifying it.")
+    if saved is None:
+        return (f"! {path} carries no gt_fingerprint (it predates this guard) "
+                "-- proceeding without verifying it was trained on the ground "
+                "truth currently on disk.")
+    if saved != expected:
+        raise TrainError(
+            f"{path} was trained on ground truth different from what is on "
+            "disk now (gt_extraction.json sha256 "
+            f"{saved.get('gt_extraction_sha256')} vs current "
+            f"{expected.get('gt_extraction_sha256')}). Using it would score, "
+            "or resume, a checkpoint against ground truth it never saw. "
+            "Regenerate manifests and fold_stats for the current ground "
+            "truth, or restore the ground truth this checkpoint was trained "
+            "on, before proceeding.")
+    return f"gt_fingerprint verified: {expected.get('gt_extraction_sha256')}"
+
+
 def atomic_save(state: dict, path: Path) -> Path:
     """Write, flush, fsync, THEN rename. A killed session cannot half-write it.
 
@@ -1078,6 +1139,18 @@ class Trainer:
         self.hash, self.hashed_config = config_hash(
             self.model_settings, self.loss_settings, hashed_train,
             self.dataset_settings)
+
+        # A SEPARATE fingerprint from config_hash, deliberately: config_hash
+        # never changes when the ground truth is regenerated (boundary_gt is
+        # not one of the sections it hashes), and it must not start doing so
+        # now -- every checkpoint already on disk would fail the hash check
+        # for a reason that has nothing to do with model/loss/train/dataset
+        # settings. None when reports/gt_extraction.json is unreadable here
+        # (a fresh checkout before step 2 has run); maybe_resume() and
+        # load_checkpoint_model() degrade to a loud warning rather than a
+        # refusal in that case too.
+        self.gt_fingerprint = (gt_fingerprint(Path(self.resolved["reports_dir"]))
+                              if "reports_dir" in self.resolved else None)
 
         checkpoint_dir = (Path(self.resolved["persistent_dir"])
                           / self.settings["checkpoint_subdir"] / self.run_name)
@@ -1378,6 +1451,8 @@ class Trainer:
                 f"run is fold {self.fold!r}. Resuming would train under the "
                 f"wrong pos_weight and validate on the wrong held-out dataset. "
                 f"Move or delete that checkpoint, or run the fold it belongs to.")
+        gt_fingerprint_status = verify_gt_fingerprint(state, self.gt_fingerprint, path)
+        print(gt_fingerprint_status)
         hash_migrated = False
         if state.get("config_hash") != self.hash:
             diff = _diff_config(state.get("hashed_config") or {},
@@ -1464,6 +1539,7 @@ class Trainer:
             "saved_amp": state.get("amp"),
             "saved_utc": state.get("saved_utc"),
             "hash_migrated": hash_migrated,
+            "gt_fingerprint_status": gt_fingerprint_status,
         }
 
     def save(self, epoch: int, is_best: bool = False) -> dict:
@@ -1511,6 +1587,10 @@ class Trainer:
             "epoch": int(epoch),
             "config_hash": self.hash,
             "hashed_config": self.hashed_config,
+            # A separate field from config_hash on purpose -- see
+            # gt_fingerprint()'s docstring. May be None (no
+            # reports/gt_extraction.json readable at construction time).
+            "gt_fingerprint": self.gt_fingerprint,
             "model": self.model.state_dict(),
             "optimizer": self.optimizer.state_dict(),
             "scheduler": self.scheduler.state_dict(),
@@ -1941,7 +2021,8 @@ class Trainer:
 def load_checkpoint_model(path: Path, model_settings: dict, fold: str,
                           expected_hash: Optional[str] = None,
                           device=None,
-                          film_vocabulary: Optional[Sequence[str]] = None) -> tuple:
+                          film_vocabulary: Optional[Sequence[str]] = None,
+                          expected_gt_fingerprint: Optional[dict] = None) -> tuple:
     """Build a fresh model and load ``path`` into it. Verifies fold and hash.
 
     Returns ``(model, state)``. The same two guards ``Trainer.maybe_resume``
@@ -1957,6 +2038,13 @@ def load_checkpoint_model(path: Path, model_settings: dict, fold: str,
     same vocabulary the training run used (``sorted(train_datasets - excluded)``
     for its fold), or ``load_state_dict`` below will fail on a shape mismatch
     rather than something clearer.
+
+    ``expected_gt_fingerprint``, like ``expected_hash``, is opt-in: ``None``
+    (the default) skips the check entirely, silently, so every existing
+    caller is unaffected. Pass :func:`gt_fingerprint` of the reports directory
+    to verify this checkpoint was trained on the ground truth on disk now --
+    see :func:`verify_gt_fingerprint` for what a mismatch or a missing
+    fingerprint on either side does.
     """
     from src import model as model_mod
 
@@ -1972,6 +2060,8 @@ def load_checkpoint_model(path: Path, model_settings: dict, fold: str,
             f"not {expected_hash!r}. It is not the checkpoint this run just "
             "produced; load it deliberately with expected_hash=None if that "
             "is intended.")
+    if expected_gt_fingerprint is not None:
+        print(verify_gt_fingerprint(state, expected_gt_fingerprint, path))
 
     model = model_mod.build_model(settings=model_settings,
                                   film_vocabulary=film_vocabulary)
@@ -2406,18 +2496,26 @@ def _radii_and_distances(dilations: Sequence, distances: Sequence,
 
 
 def _check_postprocess(postprocess_mode: str, target_width_px,
-                       partition: Optional[str] = None) -> None:
+                       partition: Optional[str] = None,
+                       closing_radius: Optional[float] = None,
+                       bridge_px: Optional[float] = None) -> None:
     """Refuse a post-processing request that cannot mean what it asks for,
-    BEFORE any forward pass is spent on it.
+    BEFORE any forward pass is spent on it -- each mode's OWN required
+    parameter, not a single ``target_width_px`` check that would give
+    ``morph_close`` the wrong error message.
     """
     if postprocess_mode not in postprocess_mod.MODES:
         raise TrainError(f"postprocess_mode must be one of "
                          f"{postprocess_mod.MODES}, got {postprocess_mode!r}")
-    if postprocess_mode != "none" and target_width_px is None:
+    if postprocess_mode in ("skeleton_redilate", "skeleton_bridge") and target_width_px is None:
         raise TrainError(
             f"postprocess_mode={postprocess_mode!r} needs target_width_px -- "
             "the width the ground truth was generated at "
             "(reports/gt_extraction.json settings.line_width_px).")
+    if postprocess_mode == "morph_close" and closing_radius is None:
+        raise TrainError("postprocess_mode='morph_close' needs closing_radius (px).")
+    if postprocess_mode == "skeleton_bridge" and bridge_px is None:
+        raise TrainError("postprocess_mode='skeleton_bridge' needs bridge_px (px).")
     if partition is None:
         return
     if partition not in POSTPROCESS_PARTITIONS:
@@ -2440,7 +2538,9 @@ def decompose_error(model: "nn.Module", val_ds, thresholds: dict, device,
                     dataset_embedding: Optional["torch.Tensor"] = None,
                     reference_tolerance: float = 2.0,
                     postprocess_mode: str = "none",
-                    target_width_px: Optional[int] = None) -> dict:
+                    target_width_px: Optional[int] = None,
+                    closing_radius: Optional[float] = None,
+                    bridge_px: Optional[float] = None) -> dict:
     """Split a low pixel Dice into PLACEMENT error and THICKNESS error.
 
     A pixel Dice of 0.146 has two very different explanations that no single
@@ -2477,15 +2577,17 @@ def decompose_error(model: "nn.Module", val_ds, thresholds: dict, device,
     caller scoring ground truth at a different ``line_width_px`` should pass
     :func:`placement_tolerance_px` of it instead.
 
-    ``postprocess_mode`` / ``target_width_px`` choose how the probability map
-    is binarized -- see :func:`src.postprocess.postprocess_boundary`. The
-    default ``"none"`` is exactly ``prob >= threshold``, the expression this
-    function always used, so every existing caller gets identical numbers.
+    ``postprocess_mode`` / ``target_width_px`` / ``closing_radius`` /
+    ``bridge_px`` choose how the probability map is binarized -- see
+    :func:`src.postprocess.postprocess_boundary`. The default ``"none"`` is
+    exactly ``prob >= threshold``, the expression this function always used,
+    so every existing caller gets identical numbers.
     """
     from torch.utils.data import DataLoader
 
     radii, distances = _radii_and_distances(dilations, distances, "decompose_error")
-    _check_postprocess(postprocess_mode, target_width_px)
+    _check_postprocess(postprocess_mode, target_width_px,
+                       closing_radius=closing_radius, bridge_px=bridge_px)
 
     present = sorted({r["dataset"] for r in val_ds.rows})
     missing = sorted(set(present) - set(thresholds))
@@ -2514,7 +2616,8 @@ def decompose_error(model: "nn.Module", val_ds, thresholds: dict, device,
             row = val_ds.rows[row_index]
             dataset = row["dataset"]
             pred = postprocess_mod.postprocess_boundary(
-                probs[i, 0], thresholds[dataset], postprocess_mode, target_width_px)
+                probs[i, 0], thresholds[dataset], postprocess_mode, target_width_px,
+                closing_radius=closing_radius, bridge_px=bridge_px)
             true = masks[i, 0] > 0.5
             slot = slots.setdefault(dataset, _decomposition_slot(radii, distances))
             _accumulate_decomposition(
@@ -2797,6 +2900,37 @@ def panoptic_quality(true_labels: "np.ndarray",
     return {"pq": pq, "sq": sq, "rq": rq, "pq_tp": tp, "pq_fp": fp, "pq_fn": fn}
 
 
+def panoptic_quality_excluding_tiny(true_labels: "np.ndarray", pred_labels: "np.ndarray",
+                                    min_area_px: int) -> dict:
+    """PQ with every true region under ``min_area_px`` treated as though it
+    were never in the ground truth -- a SECONDARY diagnostic, never a
+    selection metric: it quantifies the ceiling a real model could reach if
+    the TINY class of :func:`classify_false_negatives` were entirely a
+    labelling-resolution question rather than a detection failure, not a
+    number to optimise post-processing against.
+
+    Zeroes out BOTH ``true_labels`` and ``pred_labels`` wherever the true
+    label is tiny, then calls :func:`panoptic_quality` on the result. Zeroing
+    ``pred_labels`` too, not just ``true_labels``, matters: a predicted region
+    sitting entirely inside an excluded tiny true region must not become a
+    manufactured false positive for having "detected" something that is being
+    treated as not there. A predicted region straddling a tiny and a
+    legitimate true region keeps only the legitimate-side pixels, which is
+    the correct partial credit -- the tiny area genuinely does not count.
+    """
+    if int(min_area_px) < 0:
+        raise TrainError(f"min_area_px must be >= 0, got {min_area_px}")
+    true_labels = np.asarray(true_labels)
+    ids, areas = np.unique(true_labels, return_counts=True)
+    tiny_ids = ids[(ids != 0) & (areas < int(min_area_px))]
+    keep = ~np.isin(true_labels, tiny_ids)
+    filtered_true = np.where(keep, true_labels, 0)
+    filtered_pred = np.where(keep, np.asarray(pred_labels), 0)
+    result = panoptic_quality(filtered_true, filtered_pred)
+    result["n_true_excluded"] = int(len(tiny_ids))
+    return result
+
+
 def watershed_regions(prob: "np.ndarray", marker_threshold: float) -> "np.ndarray":
     """Marker-controlled watershed on the RAW probability map.
 
@@ -2806,6 +2940,15 @@ def watershed_regions(prob: "np.ndarray", marker_threshold: float) -> "np.ndarra
     region's border is wherever probability rises fastest -- not wherever it
     crosses a hard threshold, which is what plain connected-component
     labelling of a thresholded mask would give instead.
+
+    CONNECTIVITY, noted but NOT changed here: ``label(prob < marker_threshold)``
+    below labels the marker seeds at ``skimage.measure.label``'s own default
+    (full/8-connected in 2D), while ``skimage.segmentation.watershed`` floods
+    at ITS OWN default, ``connectivity=1`` (4-connected) -- an internal
+    mismatch, not one this function shares with :func:`true_regions_from_boundary`.
+    Left alone here because fixing it would move Cell 20's already-reported
+    watershed_prob numbers (PQ 0.106/0.338 for Steel2/Steel1) for every
+    checkpoint evaluated so far, which no part of this task asked for.
     """
     from skimage.measure import label
     from skimage.segmentation import watershed
@@ -2820,18 +2963,41 @@ def watershed_regions(prob: "np.ndarray", marker_threshold: float) -> "np.ndarra
 
 
 def true_regions_from_boundary(true_mask: "np.ndarray") -> "np.ndarray":
-    """The region partition a ground-truth BOUNDARY mask implies.
+    """The region partition a boundary mask implies -- GROUND TRUTH or a
+    PREDICTED thresholded boundary alike; this one function is the only
+    boundary-to-region conversion in the project, called on both (see
+    :func:`_pred_regions`'s ``binary_boundary`` branch), so the two can never
+    be labelled inconsistently with each other.
 
     Connected components of the non-boundary pixels, then expanded through
     the boundary's own thin band so every pixel gets a region label (the
     standard BSDS-style boundary-to-region conversion) -- there is no
     "boundary" class to compare against watershed_regions' dense labelling.
+
+    CONNECTIVITY, audited: the background is labelled at ``connectivity=1``
+    (4-connected) -- NOT ``skimage.measure.label``'s own default, which is
+    full connectivity (8-connected in 2D) when ``connectivity=None`` is left
+    unset. That default is the wrong pairing for a thin foreground boundary:
+    a boundary that is only DIAGONALLY connected at some point (a single-pixel
+    staircase, which a raw thresholded prediction can genuinely produce, even
+    though the committed ground truth cannot -- step 2's skeletonize+dilate-
+    to-width leaves it several pixels thick) does not block an 8-connected
+    background labelling at all, because the two background pixels straddling
+    that diagonal are themselves 8-connected to each other, right through the
+    gap the boundary was supposed to be. The two regions LEAK into one. Pairing
+    a thin/8-connected foreground with a 4-connected background is the
+    standard digital-topology fix and cannot leak, for a boundary of ANY
+    shape: two background pixels diagonally adjacent across a single-pixel
+    boundary are never 4-connected to each other (a 4-connected path would
+    have to detour through an orthogonal neighbour, which the boundary pixel
+    occupies). See ``test_true_regions_from_boundary_does_not_leak_through_a_
+    diagonal_only_boundary`` for the constructed case this replaces.
     """
     from skimage.measure import label
     from skimage.segmentation import expand_labels
 
     true_mask = np.asarray(true_mask, dtype=bool)
-    labeled = label(~true_mask)
+    labeled = label(~true_mask, connectivity=1)
     if not labeled.any():
         return np.ones(true_mask.shape, dtype=np.int64)
     reach = int(np.hypot(*true_mask.shape)) + 1
@@ -2909,6 +3075,8 @@ def evaluate_region_metrics(model: "nn.Module", val_ds, thresholds: dict, device
                             dataset_embedding: Optional["torch.Tensor"] = None,
                             postprocess_mode: str = "none",
                             target_width_px: Optional[int] = None,
+                            closing_radius: Optional[float] = None,
+                            bridge_px: Optional[float] = None,
                             partition: str = "watershed_prob") -> dict:
     """Region-level quality per dataset, against an already-trained checkpoint.
 
@@ -2945,7 +3113,8 @@ def evaluate_region_metrics(model: "nn.Module", val_ds, thresholds: dict, device
     if not 0.0 < marker_threshold < 1.0:
         raise TrainError(
             f"watershed_marker_threshold must be in (0, 1), got {marker_threshold}")
-    _check_postprocess(postprocess_mode, target_width_px, partition)
+    _check_postprocess(postprocess_mode, target_width_px, partition,
+                       closing_radius=closing_radius, bridge_px=bridge_px)
     present = sorted({r["dataset"] for r in val_ds.rows})
     missing = sorted(set(present) - set(thresholds))
     if missing:
@@ -2975,7 +3144,8 @@ def evaluate_region_metrics(model: "nn.Module", val_ds, thresholds: dict, device
             prob = probs[i, 0]
             true = masks[i, 0] > 0.5
             binary = postprocess_mod.postprocess_boundary(
-                prob, thresholds[dataset], postprocess_mode, target_width_px)
+                prob, thresholds[dataset], postprocess_mode, target_width_px,
+                closing_radius=closing_radius, bridge_px=bridge_px)
             metrics = _region_metrics_for_tile(
                 prob, binary, true_regions_from_boundary(true), partition,
                 marker_threshold)
@@ -3350,6 +3520,73 @@ def postprocess_grid(datasets: Sequence, modes: Sequence, thresholds: Sequence,
     return configs
 
 
+def gap_closing_grid(datasets: Sequence, closing_radii: Sequence, bridge_pxs: Sequence,
+                     thresholds: Sequence, target_width_px,
+                     tuned_thresholds: Optional[dict] = None,
+                     include_watershed_reference: bool = True) -> list:
+    """Every (gap-closing shape, threshold) configuration of a gap-closing sweep.
+
+    Two families of shape, each swept against ``thresholds`` (plus one
+    ``@tuned`` point per shape, same convention as :func:`postprocess_grid`):
+    ``morph_close`` at each of ``closing_radii`` px, and ``skeleton_bridge`` at
+    each of ``bridge_pxs`` px. Every configuration scores the
+    ``binary_boundary`` partition, and the whole grid is shaped exactly like
+    :func:`postprocess_grid`'s -- ``select_postprocess_config`` selects across
+    it unmodified, per dataset, by PQ.
+    """
+    datasets = list(datasets)
+    bad_r = [r for r in closing_radii if int(r) < 1]
+    if bad_r:
+        raise TrainError(f"closing_radius values must be >= 1, got {bad_r}")
+    bad_b = [b for b in bridge_pxs if float(b) <= 0]
+    if bad_b:
+        raise TrainError(f"bridge_px values must be > 0, got {bad_b}")
+    bad_thr = [t for t in thresholds if not 0.0 < float(t) < 1.0]
+    if bad_thr:
+        raise TrainError(f"thresholds must be in (0, 1), got {bad_thr}")
+    if tuned_thresholds is not None:
+        missing = sorted(set(datasets) - set(tuned_thresholds))
+        if missing:
+            raise TrainError(f"tuned_thresholds has no entry for {missing}")
+    if include_watershed_reference and tuned_thresholds is None:
+        raise TrainError("the watershed reference row needs tuned_thresholds")
+
+    def points():
+        pts = [(f"{float(t):.2f}", {d: float(t) for d in datasets}) for t in thresholds]
+        if tuned_thresholds is not None:
+            pts.append(("tuned", {d: float(tuned_thresholds[d]) for d in datasets}))
+        return pts
+
+    configs = []
+    for radius in closing_radii:
+        for label, per_threshold in points():
+            configs.append({
+                "name": f"morph_close_r{int(radius)}@{label}",
+                "partition": "binary_boundary", "target_width_px": target_width_px,
+                "reference": False,
+                "per_dataset": {d: {"mode": "morph_close", "threshold": per_threshold[d],
+                                    "closing_radius": float(radius)} for d in datasets},
+            })
+    for bridge in bridge_pxs:
+        for label, per_threshold in points():
+            configs.append({
+                "name": f"skeleton_bridge_{float(bridge):g}px@{label}",
+                "partition": "binary_boundary", "target_width_px": target_width_px,
+                "reference": False,
+                "per_dataset": {d: {"mode": "skeleton_bridge", "threshold": per_threshold[d],
+                                    "bridge_px": float(bridge)} for d in datasets},
+            })
+    if include_watershed_reference:
+        configs.append({
+            "name": "reference: watershed_prob@tuned",
+            "partition": "watershed_prob", "target_width_px": target_width_px,
+            "reference": True,
+            "per_dataset": {d: {"mode": "none", "threshold": float(tuned_thresholds[d])}
+                            for d in datasets},
+        })
+    return configs
+
+
 def sweep_postprocess(tiles: list, configs: list, marker_threshold: float = 0.3,
                       dilations: Sequence = (1, 2, 3),
                       distances: Sequence = (1, 2, 3, 5),
@@ -3388,7 +3625,8 @@ def sweep_postprocess(tiles: list, configs: list, marker_threshold: float = 0.3,
         for dataset in present:
             spec = cfg["per_dataset"][dataset]
             _check_postprocess(spec["mode"], cfg.get("target_width_px"),
-                               cfg["partition"])
+                               cfg["partition"], closing_radius=spec.get("closing_radius"),
+                               bridge_px=spec.get("bridge_px"))
             if not 0.0 < float(spec["threshold"]) < 1.0:
                 raise TrainError(f"configuration {cfg['name']!r}: threshold for "
                                  f"{dataset} must be in (0, 1), got {spec['threshold']}")
@@ -3411,7 +3649,8 @@ def sweep_postprocess(tiles: list, configs: list, marker_threshold: float = 0.3,
             dataset = tile["dataset"]
             spec = cfg["per_dataset"][dataset]
             binary = postprocess_mod.postprocess_boundary(
-                tile["prob"], spec["threshold"], spec["mode"], width)
+                tile["prob"], spec["threshold"], spec["mode"], width,
+                closing_radius=spec.get("closing_radius"), bridge_px=spec.get("bridge_px"))
             slot = slots.setdefault(dataset, _decomposition_slot(radii, distances))
             _accumulate_decomposition(
                 slot, decomposition_counts(binary, tile["true"], radii, distances))
@@ -3428,6 +3667,8 @@ def sweep_postprocess(tiles: list, configs: list, marker_threshold: float = 0.3,
                 "mode": spec["mode"],
                 "threshold": float(spec["threshold"]),
                 "target_width_px": width,
+                "closing_radius": spec.get("closing_radius"),
+                "bridge_px": spec.get("bridge_px"),
                 "partition": cfg["partition"],
                 "marker_threshold": float(spec.get("marker_threshold", marker_threshold)),
                 "reference": bool(cfg.get("reference", False)),
@@ -3504,6 +3745,12 @@ POSTPROCESS_COLUMNS = ("pixel_dice", "skeleton_dice", "width_ratio", "real",
                        "found", "label", "pq", "sq", "rq",
                        "over_segmentation_factor")
 
+#: postprocess_sweep/fn_attribution's columns plus the two gap-closing-only
+#: parameters, for reports/gap_closing_*.md -- closing_radius/bridge_px are
+#: None on every row that is not that mode, which flatten_postprocess_row
+#: always carries so one function serves every report.
+GAP_CLOSING_COLUMNS = POSTPROCESS_COLUMNS + ("closing_radius", "bridge_px")
+
 
 def flatten_postprocess_row(row: dict) -> dict:
     """A sweep row as one flat record -- the columns the report tabulates."""
@@ -3512,6 +3759,8 @@ def flatten_postprocess_row(row: dict) -> dict:
         "config": row["config"], "dataset": row["dataset"], "split": row["split"],
         "mode": row["mode"], "threshold": row["threshold"],
         "partition": row["partition"], "reference": row["reference"],
+        "closing_radius": row.get("closing_radius"),
+        "bridge_px": row.get("bridge_px"),
         "tiles": r.get("tiles"),
         "pixel_dice": d["pixel_dice"], "skeleton_dice": d["skeleton_dice"],
         "width_ratio": d["width_ratio"], "real": d["real"], "found": d["found"],
@@ -3745,7 +3994,8 @@ def tile_regions(tile: dict, spec: dict, partition: str, target_width_px=None,
     """``(pred_regions, true_regions, pred_boundary)`` for one predicted tile
     under one dataset spec -- exactly what :func:`sweep_postprocess` scores."""
     binary = postprocess_mod.postprocess_boundary(
-        tile["prob"], spec["threshold"], spec["mode"], target_width_px)
+        tile["prob"], spec["threshold"], spec["mode"], target_width_px,
+        closing_radius=spec.get("closing_radius"), bridge_px=spec.get("bridge_px"))
     marker = float(spec.get("marker_threshold", marker_threshold))
     return (_pred_regions(tile["prob"], binary, partition, marker),
             true_regions_from_boundary(tile["true"]), binary)
@@ -3781,7 +4031,9 @@ def attribute_false_negatives(tiles: list, config: dict, tiny_area_px: dict,
     for index, tile in enumerate(tiles):
         dataset = tile["dataset"]
         spec = config["per_dataset"][dataset]
-        _check_postprocess(spec["mode"], width, config["partition"])
+        _check_postprocess(spec["mode"], width, config["partition"],
+                           closing_radius=spec.get("closing_radius"),
+                           bridge_px=spec.get("bridge_px"))
         pred, true_regions, binary = tile_regions(tile, spec, config["partition"],
                                                   width, marker_threshold)
         out = classify_false_negatives(true_regions, pred, tile["true"], binary,
@@ -3980,6 +4232,151 @@ def write_fn_attribution_report(run_name: str, platform: str, attribution: dict,
                           "test_rows": [flatten_postprocess_row(r) | {"marker_threshold": r["marker_threshold"]}
                                         for r in marker_test_rows]},
                "checks": [{"name": n, "ok": bool(ok), "detail": d} for n, ok, d in (checks or [])]}
+    json_path.write_text(json.dumps(payload, indent=2, sort_keys=True, default=str))
+    return md_path, json_path
+
+
+def gap_closing_report_paths(run_name: str, platform: str,
+                             reports_dir: Optional[Path] = None) -> tuple:
+    """``reports/gap_closing_<run>_<platform>.{md,json}``."""
+    reports_dir = Path(reports_dir) if reports_dir else Path(REPO_ROOT) / "reports"
+    if not platform:
+        raise TrainError("no platform to key the report by; resolve_paths() supplies it.")
+    stem = f"gap_closing_{run_name}_{platform}"
+    return reports_dir / f"{stem}.md", reports_dir / f"{stem}.json"
+
+
+def write_gap_closing_report(run_name: str, platform: str, gap_val_rows: list,
+                             gap_selected: dict, gap_test_rows: list,
+                             marker_val_rows: list, marker_selected: dict,
+                             marker_test_rows: list, fn_before: dict, fn_after: dict,
+                             tiny_pq: dict, config_hash: str, epoch: int,
+                             default_marker: float, markers: Sequence,
+                             tiny_area_px: dict, reports_dir: Optional[Path] = None,
+                             roles: Optional[dict] = None,
+                             checks: Optional[list] = None) -> tuple:
+    """Writes ``reports/gap_closing_<run>_<platform>.{md,json}``.
+
+    ``gap_*`` is the ``morph_close``/``skeleton_bridge`` sweep
+    (:func:`gap_closing_grid` + :func:`sweep_postprocess` +
+    :func:`select_postprocess_config`, VAL-only selection). ``marker_*`` is
+    the EXTENDED watershed marker sweep (:func:`marker_threshold_grid` +
+    :func:`select_marker_threshold`), reported alongside because both are
+    gap-closing strategies at heart -- one seals the boundary, the other
+    seeds the flood differently. ``fn_before``/``fn_after`` are
+    :func:`attribute_false_negatives` summaries for ``none@tuned`` and the
+    VAL-selected gap-closing configuration respectively, so the MERGED count
+    before/after is a straight table lookup, not something a reader has to
+    diff by eye. ``tiny_pq`` is ``{dataset: {"before": pq_dict, "after":
+    pq_dict}}`` from :func:`panoptic_quality_excluding_tiny` -- a SECONDARY
+    diagnostic, reported but never a selection criterion.
+    """
+    roles = roles or {}
+    md_path, json_path = gap_closing_report_paths(run_name, platform, reports_dir)
+
+    def role(d):
+        return f" ({roles[d]})" if d in roles else ""
+
+    lines = [f"# Gap closing -- {run_name} ({platform})", "",
+             f"Checkpoint: epoch {epoch}, config hash `{config_hash}`. Two shapes "
+             "swept together with threshold, on VAL, selected by PQ per dataset: "
+             "`morph_close` (binary closing at a radius) and `skeleton_bridge` "
+             "(bridge skeleton endpoints within a distance, then redilate). Scored "
+             "on the `binary_boundary` partition -- the same conversion the ground "
+             "truth goes through -- so this is comparable to Cell 21's "
+             "post-processing sweep, not to Cell 20's watershed numbers directly."]
+
+    lines += ["", "## VAL sweep (best 5 rows per dataset by PQ)", ""]
+    val_flat = [flatten_postprocess_row(r) for r in gap_val_rows]
+    for dataset in sorted({r["dataset"] for r in gap_val_rows}):
+        rows = sorted((r for r in val_flat if r["dataset"] == dataset),
+                     key=lambda r: -r["pq"])[:5]
+        lines += [f"### {dataset}{role(dataset)}", "",
+                  "| config | mode | threshold | closing_radius | bridge_px | pq | sq | rq | "
+                  "over-seg |",
+                  "| --- | --- | --- | --- | --- | --- | --- | --- | --- |"]
+        for r in rows:
+            mark = (" **<- selected**" if dataset in gap_selected
+                    and r["config"] == gap_selected[dataset]["config"] else "")
+            lines.append(
+                f"| {r['config']}{mark} | {r['mode']} | {r['threshold']:.2f} | "
+                f"{r['closing_radius'] if r['closing_radius'] is not None else '--'} | "
+                f"{r['bridge_px'] if r['bridge_px'] is not None else '--'} | "
+                f"{r['pq']:.4f} | {r['sq']:.4f} | {r['rq']:.4f} | "
+                f"{r['over_segmentation_factor']:.3f} |")
+
+    lines += ["", "## TEST -- selected gap-closing config vs none@tuned vs "
+              "watershed@val-best marker", "",
+              "| dataset | config | pq | sq | rq | over-seg | label |",
+              "| --- | --- | --- | --- | --- | --- | --- |"]
+    for r in gap_test_rows:
+        d, ds = r["decomposition"], r["region"]
+        lines.append(f"| {r['dataset']}{role(r['dataset'])} | {r['config']} | "
+                     f"{ds['pq']:.4f} | {ds['sq']:.4f} | {ds['rq']:.4f} | "
+                     f"{ds['over_segmentation_factor']:.3f} | {d['label']} |")
+
+    lines += ["", f"## Watershed marker (default {default_marker}; extended sweep "
+              f"{list(markers)} on VAL)", "",
+              "| split | config | dataset | marker | pq | sq | rq | over-seg |",
+              "| --- | --- | --- | --- | --- | --- | --- | --- |"]
+    for split, rows in (("val", marker_val_rows), ("test", marker_test_rows)):
+        for r in rows:
+            mark = (" **<- selected**" if split == "val" and r["dataset"] in marker_selected
+                    and r["config"] == marker_selected[r["dataset"]]["config"] else "")
+            g = r["region"]
+            lines.append(f"| {split} | {r['config']}{mark} | {r['dataset']}{role(r['dataset'])} | "
+                         f"{r['marker_threshold']:.2f} | {g['pq']:.4f} | {g['sq']:.4f} | "
+                         f"{g['rq']:.4f} | {g['over_segmentation_factor']:.3f} |")
+
+    lines += ["", "## FN class breakdown and MERGED count, before vs after "
+              "(TEST, none@tuned vs the VAL-selected gap-closing config)", "",
+              "| dataset | config | FN/tile | TINY | MERGED | SPLIT | OTHER |",
+              "| --- | --- | --- | --- | --- | --- | --- |"]
+    for label, attribution in (("before (none@tuned)", fn_before), ("after (selected)", fn_after)):
+        for d, s in attribution.items():
+            fr = s["fractions"]
+            lines.append(f"| {d}{role(d)} | {label} | {s['fn_per_tile']:.1f} | "
+                         + " | ".join(f"{s['counts'][c]} ({fr[c]:.0%})" for c in FN_CLASSES) + " |")
+
+    lines += ["", f"## Secondary diagnostic -- PQ excluding GT regions under "
+              "the dataset's TINY floor (never a selection metric)", "",
+              "| dataset | floor px | pq before | pq after | true regions excluded |",
+              "| --- | --- | --- | --- | --- |"]
+    for d, tp in tiny_pq.items():
+        lines.append(f"| {d}{role(d)} | {tiny_area_px.get(d, '?')} | "
+                     f"{tp['before']['pq']:.4f} | {tp['after']['pq']:.4f} | "
+                     f"{tp['after'].get('n_true_excluded', '?')} |")
+
+    if checks:
+        lines += ["", "## Checks", ""]
+        lines += [f"- {'PASS' if ok else 'FAIL'} {n}" + (f" -- {d}" if d else "")
+                  for n, ok, d in checks]
+    md_path.parent.mkdir(parents=True, exist_ok=True)
+    md_path.write_text("\n".join(lines) + "\n")
+
+    payload = {
+        "run_name": run_name, "platform": platform,
+        "config_hash": config_hash, "epoch": int(epoch), "roles": roles,
+        "gap_closing": {
+            "selection_split": "val", "selection_metric": "pq",
+            "val_rows": [flatten_postprocess_row(r) for r in gap_val_rows],
+            "selected": {d: flatten_postprocess_row(r) for d, r in gap_selected.items()},
+            "test_rows": [flatten_postprocess_row(r) for r in gap_test_rows],
+        },
+        "marker": {
+            "default": float(default_marker), "swept": [float(m) for m in markers],
+            "selection_split": "val",
+            "val_rows": [flatten_postprocess_row(r) | {"marker_threshold": r["marker_threshold"]}
+                         for r in marker_val_rows],
+            "selected": {d: flatten_postprocess_row(r) | {"marker_threshold": r["marker_threshold"]}
+                         for d, r in marker_selected.items()},
+            "test_rows": [flatten_postprocess_row(r) | {"marker_threshold": r["marker_threshold"]}
+                          for r in marker_test_rows],
+        },
+        "fn_attribution": {"before_none_at_tuned": fn_before, "after_selected": fn_after},
+        "tiny_pq": {"floor_px": tiny_area_px, "results": tiny_pq},
+        "checks": [{"name": n, "ok": bool(ok), "detail": d} for n, ok, d in (checks or [])],
+    }
     json_path.write_text(json.dumps(payload, indent=2, sort_keys=True, default=str))
     return md_path, json_path
 
