@@ -2374,3 +2374,195 @@ def test_postprocess_notebook_cell_selects_on_val_before_it_touches_test():
     assert cell.index(test_predict) > selection_at, "TEST is predicted only after selecting"
     for banned in ("skeletonize", "def postprocess_boundary", "_dilate_to_width"):
         assert banned not in cell, f"{banned} belongs in src/, not the notebook"
+
+
+# --------------------------------------------------------------------------
+# false-negative attribution and the watershed marker sweep behind
+# notebooks/06d_steel_combined.ipynb's Cell 22. Every name carries
+# "fn_attribution" so that cell can run exactly these with -k fn_attribution.
+# --------------------------------------------------------------------------
+def _fn_attribution_lines(size=40, cols=(), gap_rows=None, gap_col=None):
+    """A binary boundary map of full-height 1 px vertical lines at ``cols``;
+    ``gap_rows`` (a range) removed from the line at ``gap_col``."""
+    b = np.zeros((size, size), dtype=bool)
+    for c in cols:
+        b[:, c] = True
+    if gap_rows is not None:
+        b[gap_rows, gap_col] = False
+    return b
+
+
+def _fn_attribution_classify(true_b, pred_b, tiny=50):
+    true_regions = train_mod.true_regions_from_boundary(true_b)
+    pred_regions = train_mod.true_regions_from_boundary(pred_b)
+    out = train_mod.classify_false_negatives(true_regions, pred_regions, true_b,
+                                             pred_b, tiny_area_px=tiny)
+    # The attribution's unmatched set IS panoptic_quality's pq_fn.
+    assert out["n_fn"] == train_mod.panoptic_quality(true_regions, pred_regions)["pq_fn"]
+    return out
+
+
+def test_fn_attribution_one_gap_is_merged_with_a_measured_gap():
+    """Truth: lines at cols 10 and 26 -> regions L (~10 wide), M (~15), R.
+    Prediction: the same lines, but col 10 has a 4-row gap, so L and M flood
+    into one predicted region. L (IoU ~0.4) is the false negative; M (IoU
+    ~0.6) is matched. L is MERGED; its interface with M is the 40 px of col
+    10, and exactly rows 19-20 lie > 1 px from the predicted line (a radius-1
+    Euclidean disk is a cross, so rows 18 and 21 are covered by 17 and 22).
+    """
+    true_b = _fn_attribution_lines(cols=(10, 26))
+    pred_b = _fn_attribution_lines(cols=(10, 26), gap_rows=slice(18, 22), gap_col=10)
+    out = _fn_attribution_classify(true_b, pred_b)
+    assert out["n_fn"] == 1
+    assert out["counts"]["MERGED"] == 1
+    rec = out["fn"][0]
+    assert rec["class"] == "MERGED" and rec["natural"] == "MERGED"
+    assert rec["interface_px"] == 40
+    assert rec["gap_px"] == 2
+
+
+def test_fn_attribution_clean_split_is_split():
+    """One true region (no boundary); the prediction cuts it into three
+    ~equal parts -- none holds > 50% of it, none reaches IoU 0.5."""
+    true_b = _fn_attribution_lines(cols=())
+    pred_b = _fn_attribution_lines(cols=(13, 26))
+    out = _fn_attribution_classify(true_b, pred_b)
+    assert out["n_fn"] == 1
+    assert out["fn"][0]["class"] == "SPLIT"
+    assert out["fn"][0]["dominant_share"] <= 0.5
+    assert out["fn"][0]["gap_px"] is None
+
+
+def test_fn_attribution_tiny_region_is_tiny_and_remembers_it_was_merged():
+    """A closed 6x6 loop encloses a < 50 px true region; the prediction draws
+    nothing, so the region sits inside the one predicted region that also
+    holds the surrounding true region -- naturally MERGED, classed TINY."""
+    true_b = np.zeros((40, 40), dtype=bool)
+    true_b[18:24, 18] = true_b[18:24, 23] = True
+    true_b[18, 18:24] = true_b[23, 18:24] = True
+    pred_b = np.zeros((40, 40), dtype=bool)
+    out = _fn_attribution_classify(true_b, pred_b)
+    assert out["n_fn"] == 1
+    rec = out["fn"][0]
+    assert rec["area_px"] < 50
+    assert rec["class"] == "TINY" and rec["natural"] == "MERGED"
+    assert out["counts"] == {"TINY": 1, "MERGED": 0, "SPLIT": 0, "OTHER": 0}
+
+
+def test_fn_attribution_perfect_prediction_has_no_false_negatives():
+    true_b = _fn_attribution_lines(cols=(10, 26))
+    out = _fn_attribution_classify(true_b, true_b.copy())
+    assert out["n_fn"] == 0 and out["n_matched"] == out["n_true"] == 3
+
+
+def test_fn_attribution_aggregate_matches_the_sweep_pq_fn():
+    """Pooled over tiles, the attribution's FN count per tile equals the
+    sweep's mean pq_fn for the same configuration -- the check the notebook
+    makes on real data."""
+    masks, logits = _postprocess_tiles()
+    tiles = train_mod.predict_tiles(_ConstantLogits(logits), _postprocess_ds(masks, "val"),
+                                    torch.device("cpu"), batch_size=2)
+    configs = train_mod.postprocess_grid(["A"], ("none",), (), 2,
+                                         tuned_thresholds={"A": 0.5})
+    rows = train_mod.sweep_postprocess(tiles, configs, dilations=(1,), distances=(1, 2))
+    for cfg in configs:
+        summary = train_mod.attribute_false_negatives(tiles, cfg, {"A": 50})["A"]
+        row = next(r for r in rows if r["config"] == cfg["name"])
+        assert summary["fn_per_tile"] == pytest.approx(row["region"]["pq_fn"])
+        assert summary["tiles"] == 2 and len(summary["per_tile"]) == 2
+        assert sum(summary["counts"].values()) == summary["n_fn"]
+        assert summary["per_tile"][0]["row_index"] == 0
+
+
+def test_fn_attribution_marker_override_equals_the_call_argument():
+    """A per-dataset marker_threshold equal to the call's marker gives the
+    same region metrics -- the override path is not a second definition."""
+    masks, logits = _postprocess_tiles()
+    tiles = train_mod.predict_tiles(_ConstantLogits(logits), _postprocess_ds(masks, "val"),
+                                    torch.device("cpu"), batch_size=2)
+    grid = train_mod.marker_threshold_grid(["A"], (0.3,), {"A": 0.5})
+    ref = train_mod.postprocess_grid(["A"], (), (), 2, tuned_thresholds={"A": 0.5})
+    rows = train_mod.sweep_postprocess(tiles, grid + ref, marker_threshold=0.3,
+                                       dilations=(1,), distances=(1, 2))
+    assert rows[0]["region"] == rows[1]["region"]
+    assert rows[0]["marker_threshold"] == rows[1]["marker_threshold"] == 0.3
+
+
+def test_fn_attribution_marker_selection_is_val_only_and_ties_to_default():
+    def row(marker, pq, split="val", dataset="A"):
+        return {"config": f"watershed_prob@marker{marker:.2f}", "dataset": dataset,
+                "split": split, "mode": "none", "threshold": 0.8,
+                "partition": "watershed_prob", "marker_threshold": marker,
+                "reference": False, "decomposition": {}, "region": {"pq": pq}}
+
+    with pytest.raises(train_mod.TrainError):
+        train_mod.select_marker_threshold([row(0.3, 0.1, split="test")], default=0.3)
+    with pytest.raises(train_mod.TrainError):
+        train_mod.select_marker_threshold([row(0.3, 0.1), row(0.4, 0.2, split="test")],
+                                          default=0.3)
+    chosen = train_mod.select_marker_threshold(
+        [row(0.2, 0.30), row(0.3, 0.30), row(0.4, 0.25),
+         row(0.35, 0.5, dataset="B"), row(0.3, 0.4, dataset="B")], default=0.3)
+    assert chosen["A"]["marker_threshold"] == 0.3, "a tie keeps the current marker"
+    assert chosen["B"]["marker_threshold"] == 0.35, "a strict win moves it"
+    cfg = train_mod.marker_config_from_selection(chosen)
+    assert cfg["partition"] == "watershed_prob"
+    assert cfg["per_dataset"]["B"] == {"mode": "none", "threshold": 0.8,
+                                       "marker_threshold": 0.35}
+    with pytest.raises(train_mod.TrainError):
+        train_mod.marker_threshold_grid(["A"], (0.0,), {"A": 0.5})
+
+
+def test_fn_attribution_report_persists_classes_markers_and_checks(tmp_path):
+    masks, logits = _postprocess_tiles()
+    tiles = train_mod.predict_tiles(_ConstantLogits(logits), _postprocess_ds(masks, "val"),
+                                    torch.device("cpu"), batch_size=2)
+    cfg = train_mod.postprocess_grid(["A"], ("none",), (), 2,
+                                     tuned_thresholds={"A": 0.5},
+                                     include_watershed_reference=False)[0]
+    attribution = {"val": {cfg["name"]: train_mod.attribute_false_negatives(
+        tiles, cfg, {"A": 50})}}
+    grid = train_mod.marker_threshold_grid(["A"], (0.25, 0.3), {"A": 0.5})
+    val_rows = train_mod.sweep_postprocess(tiles, grid, dilations=(1,), distances=(1, 2))
+    selected = train_mod.select_marker_threshold(val_rows, default=0.3)
+    md_path, json_path = train_mod.write_fn_attribution_report(
+        "fold_x", "colab", attribution, val_rows, selected, [], config_hash="0" * 16,
+        epoch=3, default_marker=0.3, markers=(0.25, 0.3), reports_dir=tmp_path,
+        roles={"A": "control"}, checks=[("anchor", True, "")])
+    assert json_path.name == "fn_attribution_fold_x_colab.json"
+    payload = json.loads(json_path.read_text())
+    assert payload["fn_classes"] == list(train_mod.FN_CLASSES)
+    assert payload["marker"]["selection_split"] == "val"
+    assert set(payload["attribution"]["val"][cfg["name"]]["A"]["counts"]) == set(train_mod.FN_CLASSES)
+    md_text = md_path.read_text()
+    for needle in ("(control)", "<- selected", "PASS anchor", "TINY", "MERGED"):
+        assert needle in md_text, needle
+
+
+def test_fn_attribution_notebook_cell_selects_markers_on_val_before_test():
+    """Structural, never executed: 06d's attribution cell picks the marker
+    from the VAL sweep, predicts TEST only afterwards, and classifies with
+    src.train rather than inline code."""
+    nb_path = (Path(__file__).resolve().parent.parent / "notebooks"
+               / "06d_steel_combined.ipynb")
+    if not nb_path.is_file():
+        pytest.skip(f"{nb_path} not found")
+    nb = json.loads(nb_path.read_text())
+
+    def source(cell):
+        s = cell["source"]
+        return "".join(s) if isinstance(s, list) else s
+
+    cells = [source(c) for c in nb["cells"]
+             if c["cell_type"] == "code" and "select_marker_threshold(" in source(c)]
+    assert len(cells) == 1
+    cell = cells[0]
+    assert cell.count("select_marker_threshold(") == 1
+    assert "select_marker_threshold(fn_marker_val_rows" in cell
+    at = cell.index("select_marker_threshold(")
+    val_predict = "predict_tiles(\n    region_model, trainer.val_ds"
+    test_predict = "predict_tiles(\n    region_model, region_test_ds"
+    assert cell.count(val_predict) == 1 and cell.count(test_predict) == 1
+    assert cell.index(val_predict) < at < cell.index(test_predict)
+    for banned in ("def classify", "np.bincount", "skeletonize"):
+        assert banned not in cell, f"{banned} belongs in src/, not the notebook"

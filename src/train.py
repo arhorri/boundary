@@ -2865,6 +2865,14 @@ def region_metrics_single(pred_regions: "np.ndarray",
 POSTPROCESS_PARTITIONS = ("watershed_prob", "binary_boundary")
 
 
+def _pred_regions(prob, binary, partition: str, marker_threshold: float):
+    """The predicted region partition under ``partition`` -- one definition,
+    shared by the region metrics and the false-negative attribution."""
+    if partition == "watershed_prob":
+        return watershed_regions(prob, marker_threshold)
+    return true_regions_from_boundary(binary)
+
+
 def _region_metrics_for_tile(prob, binary, true_regions, partition: str,
                              marker_threshold: float) -> dict:
     """One tile's region metrics, shared by :func:`evaluate_region_metrics`
@@ -2875,11 +2883,8 @@ def _region_metrics_for_tile(prob, binary, true_regions, partition: str,
     is otherwise unused, which is why post-processing cannot move that
     partition.
     """
-    if partition == "watershed_prob":
-        pred_regions = watershed_regions(prob, marker_threshold)
-    else:
-        pred_regions = true_regions_from_boundary(binary)
-    metrics = region_metrics_single(pred_regions, true_regions)
+    metrics = region_metrics_single(
+        _pred_regions(prob, binary, partition, marker_threshold), true_regions)
     metrics["pred_fraction"] = float(binary.mean())
     return metrics
 
@@ -3272,6 +3277,7 @@ def predict_tiles(model: "nn.Module", ds, device, amp_enabled: bool = False,
         for i in range(probs.shape[0]):
             row = ds.rows[row_index]
             out.append({
+                "row_index": row_index,
                 "dataset": row["dataset"],
                 "tile_id": row.get("tile_id"),
                 "split": row.get("split"),
@@ -3386,6 +3392,9 @@ def sweep_postprocess(tiles: list, configs: list, marker_threshold: float = 0.3,
             if not 0.0 < float(spec["threshold"]) < 1.0:
                 raise TrainError(f"configuration {cfg['name']!r}: threshold for "
                                  f"{dataset} must be in (0, 1), got {spec['threshold']}")
+            if not 0.0 < float(spec.get("marker_threshold", marker_threshold)) < 1.0:
+                raise TrainError(f"configuration {cfg['name']!r}: marker_threshold "
+                                 f"for {dataset} must be in (0, 1)")
 
     splits = {}
     for t in tiles:
@@ -3408,7 +3417,7 @@ def sweep_postprocess(tiles: list, configs: list, marker_threshold: float = 0.3,
                 slot, decomposition_counts(binary, tile["true"], radii, distances))
             region_rows.setdefault(dataset, []).append(_region_metrics_for_tile(
                 tile["prob"], binary, tile_true_regions, cfg["partition"],
-                marker_threshold))
+                float(spec.get("marker_threshold", marker_threshold))))
         region = _mean_region_rows(region_rows)
         for dataset in sorted(slots):
             spec = cfg["per_dataset"][dataset]
@@ -3420,6 +3429,7 @@ def sweep_postprocess(tiles: list, configs: list, marker_threshold: float = 0.3,
                 "threshold": float(spec["threshold"]),
                 "target_width_px": width,
                 "partition": cfg["partition"],
+                "marker_threshold": float(spec.get("marker_threshold", marker_threshold)),
                 "reference": bool(cfg.get("reference", False)),
                 "decomposition": summarise_decomposition(
                     slots[dataset], radii, distances,
@@ -3620,6 +3630,356 @@ def write_postprocess_sweep_report(run_name: str, platform: str, val_rows: list,
         "checks": [{"name": n, "ok": bool(ok), "detail": d} for n, ok, d in (checks or [])],
         "val_rows_full": val_rows, "test_rows_full": test_rows,
     }
+    json_path.write_text(json.dumps(payload, indent=2, sort_keys=True, default=str))
+    return md_path, json_path
+
+
+# --------------------------------------------------------------------------
+# false-negative attribution -- WHY is a true region unmatched? Merged into a
+# neighbour through a gapped boundary, split into pieces, too small to be a
+# fair target, or something else. Diagnostic only; an already-trained
+# checkpoint, the same tiles and partitions the region metrics score.
+# --------------------------------------------------------------------------
+#: Classes of an unmatched true region, in the order they are tested.
+FN_CLASSES = ("TINY", "MERGED", "SPLIT", "OTHER")
+
+
+def classify_false_negatives(true_regions: "np.ndarray", pred_regions: "np.ndarray",
+                             true_boundary: "np.ndarray", pred_boundary: "np.ndarray",
+                             tiny_area_px: int, gap_tolerance_px: int = 1,
+                             iou_threshold: float = 0.5) -> dict:
+    """Classify every UNMATCHED true region of one tile.
+
+    Unmatched means exactly what :func:`panoptic_quality` means: no predicted
+    region has IoU > ``iou_threshold`` with it (label 0 ignored on both
+    sides), so this tile's false-negative count equals its ``pq_fn``.
+
+    Each unmatched true region gets ONE class, tested in this order:
+
+    - ``TINY``: area < ``tiny_area_px``. Tested first on purpose -- a region
+      below the ground truth's own resolution floor is a labelling question
+      whatever the prediction did to it. ``natural`` still records what it
+      would have been otherwise, so a tiny region that was also merged is
+      counted, not hidden.
+    - ``MERGED``: > 50% of its area lies in ONE predicted region, and that
+      predicted region also holds > 50% of at least one OTHER true region --
+      two true regions absorbed into one prediction, i.e. a boundary between
+      them is missing or gapped.
+    - ``SPLIT``: no predicted region holds > 50% of it (so it is shared out
+      among several).
+    - ``OTHER``: anything else, e.g. > 50% inside one predicted region that
+      absorbs no other true region but is too misshapen to reach IoU 0.5.
+
+    For every ``MERGED`` region the gap is measured on the BOUNDARIES, not on
+    the partition (a merged partition is merged along the whole interface by
+    definition): ``interface_px`` counts true-boundary pixels touching both it
+    and its merge partners (3x3 neighbourhoods in the true partition);
+    ``gap_px`` counts those not within ``gap_tolerance_px`` of the predicted
+    boundary. A small ``gap_px`` against a long interface is a gapped
+    boundary; ``gap_px`` close to ``interface_px`` means the boundary is
+    absent altogether. Keep ``gap_tolerance_px`` small: a generous tolerance
+    bridges exactly the short gaps this is looking for.
+    """
+    import cv2
+
+    t = np.asarray(true_regions)
+    p = np.asarray(pred_regions)
+    if t.shape != p.shape:
+        raise TrainError(f"true {t.shape} and predicted {p.shape} partitions differ in shape")
+    if int(tiny_area_px) < 0 or int(gap_tolerance_px) < 0:
+        raise TrainError("tiny_area_px and gap_tolerance_px must be non-negative")
+
+    t_ids, t_inv = np.unique(t.ravel(), return_inverse=True)
+    p_ids, p_inv = np.unique(p.ravel(), return_inverse=True)
+    cont = np.bincount(t_inv * len(p_ids) + p_inv,
+                       minlength=len(t_ids) * len(p_ids)).reshape(len(t_ids), len(p_ids))
+    keep_t = t_ids != 0
+    cont_p = cont.copy()
+    cont_p[:, p_ids == 0] = 0                     # label 0 is never a match
+    area_t = cont.sum(axis=1).astype(float)
+    area_p = cont.sum(axis=0).astype(float)
+    union = area_t[:, None] + area_p[None, :] - cont_p
+    iou = np.divide(cont_p, union, out=np.zeros_like(union), where=union > 0)
+    share = np.divide(cont_p, area_t[:, None], out=np.zeros(cont.shape, float),
+                      where=area_t[:, None] > 0)
+    best_iou = iou.max(axis=1)
+    dominant = share.argmax(axis=1)
+    dominant_share = share.max(axis=1)
+
+    covered = None
+    records, counts = [], {c: 0 for c in FN_CLASSES}
+    for i in np.where(keep_t & (best_iou <= iou_threshold))[0]:
+        j = dominant[i]
+        partners = [k for k in np.where(share[:, j] > 0.5)[0] if k != i and keep_t[k]]
+        if dominant_share[i] > 0.5 and partners:
+            natural = "MERGED"
+        elif dominant_share[i] <= 0.5:
+            natural = "SPLIT"
+        else:
+            natural = "OTHER"
+        cls = "TINY" if area_t[i] < int(tiny_area_px) else natural
+        rec = {"true_id": int(t_ids[i]), "class": cls, "natural": natural,
+               "area_px": int(area_t[i]), "best_iou": float(best_iou[i]),
+               "dominant_share": float(dominant_share[i]),
+               "gap_px": None, "interface_px": None}
+        if cls == "MERGED":
+            if covered is None:
+                pb = np.asarray(pred_boundary, dtype=np.uint8)
+                covered = (cv2.dilate(pb, euclidean_disk(int(gap_tolerance_px))).astype(bool)
+                           if gap_tolerance_px > 0 else pb.astype(bool))
+            box = np.ones((3, 3), np.uint8)
+            near_i = cv2.dilate((t == t_ids[i]).astype(np.uint8), box).astype(bool)
+            near_k = cv2.dilate(np.isin(t, t_ids[partners]).astype(np.uint8), box).astype(bool)
+            interface = np.asarray(true_boundary, dtype=bool) & near_i & near_k
+            rec["interface_px"] = int(interface.sum())
+            rec["gap_px"] = int((interface & ~covered).sum())
+        counts[cls] += 1
+        records.append(rec)
+    return {"n_true": int(keep_t.sum()),
+            "n_matched": int((keep_t & (best_iou > iou_threshold)).sum()),
+            "n_fn": len(records), "counts": counts, "fn": records}
+
+
+def tile_regions(tile: dict, spec: dict, partition: str, target_width_px=None,
+                 marker_threshold: float = 0.3) -> tuple:
+    """``(pred_regions, true_regions, pred_boundary)`` for one predicted tile
+    under one dataset spec -- exactly what :func:`sweep_postprocess` scores."""
+    binary = postprocess_mod.postprocess_boundary(
+        tile["prob"], spec["threshold"], spec["mode"], target_width_px)
+    marker = float(spec.get("marker_threshold", marker_threshold))
+    return (_pred_regions(tile["prob"], binary, partition, marker),
+            true_regions_from_boundary(tile["true"]), binary)
+
+
+def _percentiles(values, points=(5, 25, 50, 75, 95)) -> Optional[dict]:
+    if not len(values):
+        return None
+    arr = np.asarray(values, dtype=float)
+    return {f"p{p}": float(np.percentile(arr, p)) for p in points}
+
+
+def attribute_false_negatives(tiles: list, config: dict, tiny_area_px: dict,
+                              marker_threshold: float = 0.3,
+                              gap_tolerance_px: int = 1) -> dict:
+    """Per-dataset false-negative attribution for ONE configuration.
+
+    ``config`` is a :func:`postprocess_grid`-style configuration (its
+    partition, and per dataset a mode, threshold and optional
+    marker_threshold). ``tiny_area_px`` is ``{dataset: px}``. Returns
+    ``{dataset: summary}`` with class counts and fractions of all false
+    negatives, FN area percentiles, MERGED gap/interface statistics, the
+    pooled FN count (which must equal the sweep's ``pq_fn`` mean x tiles for
+    the same configuration and tiles -- the notebook checks it), and a
+    per-tile list (tile index, counts, the MERGED true-region ids) from which
+    a gallery can pick tiles.
+    """
+    missing = sorted({t["dataset"] for t in tiles} - set(tiny_area_px))
+    if missing:
+        raise TrainError(f"tiny_area_px has no entry for {missing}")
+    width = config.get("target_width_px")
+    acc = {}
+    for index, tile in enumerate(tiles):
+        dataset = tile["dataset"]
+        spec = config["per_dataset"][dataset]
+        _check_postprocess(spec["mode"], width, config["partition"])
+        pred, true_regions, binary = tile_regions(tile, spec, config["partition"],
+                                                  width, marker_threshold)
+        out = classify_false_negatives(true_regions, pred, tile["true"], binary,
+                                       tiny_area_px[dataset], gap_tolerance_px)
+        a = acc.setdefault(dataset, {"tiles": 0, "n_true": 0, "n_fn": 0,
+                                     "counts": {c: 0 for c in FN_CLASSES},
+                                     "natural_of_tiny": {c: 0 for c in FN_CLASSES},
+                                     "fn_area": [], "gap": [], "interface": [],
+                                     "per_tile": []})
+        a["tiles"] += 1
+        a["n_true"] += out["n_true"]
+        a["n_fn"] += out["n_fn"]
+        for rec in out["fn"]:
+            a["counts"][rec["class"]] += 1
+            a["fn_area"].append(rec["area_px"])
+            if rec["class"] == "TINY":
+                a["natural_of_tiny"][rec["natural"]] += 1
+            if rec["class"] == "MERGED":
+                a["gap"].append(rec["gap_px"])
+                a["interface"].append(rec["interface_px"])
+        a["per_tile"].append({
+            "index": index, "row_index": tile.get("row_index"),
+            "tile_id": tile.get("tile_id"), "n_fn": out["n_fn"],
+            "counts": out["counts"],
+            "merged_ids": [r["true_id"] for r in out["fn"] if r["class"] == "MERGED"]})
+
+    summary = {}
+    for dataset, a in sorted(acc.items()):
+        n_fn = a["n_fn"]
+        gap_total, iface_total = sum(a["gap"]), sum(a["interface"])
+        summary[dataset] = {
+            "config": config["name"], "partition": config["partition"],
+            "split": ",".join(sorted({str(t["split"]) for t in tiles
+                                      if t["dataset"] == dataset})),
+            "tiles": a["tiles"], "n_true": a["n_true"], "n_fn": n_fn,
+            "fn_per_tile": n_fn / a["tiles"],
+            "counts": a["counts"],
+            "fractions": {c: (a["counts"][c] / n_fn if n_fn else 0.0) for c in FN_CLASSES},
+            "tiny_area_px": int(tiny_area_px[dataset]),
+            "natural_of_tiny": a["natural_of_tiny"],
+            "fn_area_px": _percentiles(a["fn_area"]),
+            "merged_gap_px": _percentiles(a["gap"]),
+            "merged_interface_px": _percentiles(a["interface"]),
+            "merged_gap_fraction_pooled": (gap_total / iface_total) if iface_total else None,
+            "merged_with_gap_under_interface": sum(
+                1 for g, f in zip(a["gap"], a["interface"]) if f and g < f),
+            "gap_tolerance_px": int(gap_tolerance_px),
+            "per_tile": a["per_tile"],
+        }
+    return summary
+
+
+def marker_threshold_grid(datasets: Sequence, markers: Sequence,
+                          tuned_thresholds: dict) -> list:
+    """Watershed-partition configurations, one per ``watershed_marker_threshold``.
+
+    The watershed's own knob: markers are the connected components of
+    ``prob < marker``, so a higher marker seeds more interiors (including thin
+    regions whose probability never falls very low) and a lower one fewer.
+    The threshold per dataset is its tuned one, which under this partition
+    only moves ``pred_fraction``.
+    """
+    bad = [m for m in markers if not 0.0 < float(m) < 1.0]
+    if bad:
+        raise TrainError(f"marker thresholds must be in (0, 1), got {bad}")
+    missing = sorted(set(datasets) - set(tuned_thresholds))
+    if missing:
+        raise TrainError(f"tuned_thresholds has no entry for {missing}")
+    return [{"name": f"watershed_prob@marker{float(m):.2f}",
+             "partition": "watershed_prob", "target_width_px": None,
+             "reference": False,
+             "per_dataset": {d: {"mode": "none",
+                                 "threshold": float(tuned_thresholds[d]),
+                                 "marker_threshold": float(m)} for d in datasets}}
+            for m in markers]
+
+
+def select_marker_threshold(rows: list, default: float, metric: str = "pq") -> dict:
+    """``{dataset: row}`` -- the best watershed marker per dataset by
+    ``metric``, from VAL rows only. Ties go to the marker closest to
+    ``default`` (the current setting): change it only if something strictly
+    wins."""
+    if not rows:
+        raise TrainError("select_marker_threshold was given no rows.")
+    splits = sorted({r["split"] for r in rows})
+    if splits != ["val"]:
+        raise TrainError(f"a marker threshold may only be selected on the VAL "
+                         f"split; these rows come from {splits}.")
+    rows = [r for r in rows if r["partition"] == "watershed_prob"]
+    if not rows:
+        raise TrainError("no watershed_prob rows to select a marker from.")
+    by_dataset = {}
+    for r in rows:
+        by_dataset.setdefault(r["dataset"], []).append(r)
+    return {d: min(g, key=lambda r: (-float(r["region"][metric]),
+                                     abs(float(r["marker_threshold"]) - float(default)),
+                                     float(r["marker_threshold"])))
+            for d, g in sorted(by_dataset.items())}
+
+
+def marker_config_from_selection(selected: dict,
+                                 name: str = "watershed_prob@val-best marker") -> dict:
+    """The per-dataset VAL-selected marker thresholds as one configuration."""
+    if not selected:
+        raise TrainError("nothing was selected.")
+    return {"name": name, "partition": "watershed_prob", "target_width_px": None,
+            "reference": False,
+            "per_dataset": {d: {"mode": "none", "threshold": float(r["threshold"]),
+                                "marker_threshold": float(r["marker_threshold"])}
+                            for d, r in selected.items()}}
+
+
+def fn_attribution_report_paths(run_name: str, platform: str,
+                                reports_dir: Optional[Path] = None) -> tuple:
+    """``reports/fn_attribution_<run>_<platform>.{md,json}``."""
+    reports_dir = Path(reports_dir) if reports_dir else Path(REPO_ROOT) / "reports"
+    if not platform:
+        raise TrainError("no platform to key the report by; resolve_paths() supplies it.")
+    stem = f"fn_attribution_{run_name}_{platform}"
+    return reports_dir / f"{stem}.md", reports_dir / f"{stem}.json"
+
+
+def write_fn_attribution_report(run_name: str, platform: str, attribution: dict,
+                                marker_val_rows: list, marker_selected: dict,
+                                marker_test_rows: list, config_hash: str, epoch: int,
+                                default_marker: float, markers: Sequence,
+                                reports_dir: Optional[Path] = None,
+                                roles: Optional[dict] = None,
+                                checks: Optional[list] = None) -> tuple:
+    """Writes ``reports/fn_attribution_<run>_<platform>.{md,json}``.
+
+    ``attribution`` is ``{split: {config_name: attribute_false_negatives(...)}}``.
+    Per-tile lists are kept in the JSON only.
+    """
+    roles = roles or {}
+    md_path, json_path = fn_attribution_report_paths(run_name, platform, reports_dir)
+
+    def role(d):
+        return f" ({roles[d]})" if d in roles else ""
+
+    def pct(p, key="p50"):
+        return "--" if not p else f"{p[key]:.0f}"
+
+    lines = [f"# False-negative attribution -- {run_name} ({platform})", "",
+             f"Checkpoint: epoch {epoch}, config hash `{config_hash}`. An unmatched "
+             "true region (best IoU <= 0.5, exactly PQ's pq_fn) is TINY (area below "
+             "the dataset's threshold, tested first), MERGED (>50% inside one "
+             "predicted region that also holds >50% of another true region), "
+             "SPLIT (no predicted region holds >50%) or OTHER. MERGED gap = "
+             "true-boundary pixels between the merged regions not within the gap "
+             "tolerance of the predicted boundary."]
+    for split, by_config in attribution.items():
+        for config_name, by_dataset in by_config.items():
+            lines += ["", f"## {split.upper()} -- {config_name}", "",
+                      "| dataset | tiles | FN/tile | TINY | MERGED | SPLIT | OTHER | "
+                      "FN area p50 | MERGED gap p50 / interface p50 | pooled gap frac |",
+                      "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |"]
+            for d, s in by_dataset.items():
+                fr = s["fractions"]
+                gap = s["merged_gap_fraction_pooled"]
+                lines.append(
+                    f"| {d}{role(d)} | {s['tiles']} | {s['fn_per_tile']:.1f} | "
+                    + " | ".join(f"{s['counts'][c]} ({fr[c]:.0%})" for c in FN_CLASSES)
+                    + f" | {pct(s['fn_area_px'])} | {pct(s['merged_gap_px'])} / "
+                      f"{pct(s['merged_interface_px'])} | "
+                    + ("--" if gap is None else f"{gap:.2f}") + " |")
+    lines += ["", f"## Watershed marker threshold (default {default_marker}; swept "
+              f"{list(markers)} on VAL)", "",
+              "| split | config | dataset | marker | PQ | SQ | RQ | over-seg |",
+              "| --- | --- | --- | --- | --- | --- | --- | --- |"]
+    for split, rows in (("val", marker_val_rows), ("test", marker_test_rows)):
+        for r in rows:
+            mark = (" **<- selected**" if split == "val" and r["dataset"] in marker_selected
+                    and r["config"] == marker_selected[r["dataset"]]["config"] else "")
+            g = r["region"]
+            lines.append(f"| {split} | {r['config']}{mark} | {r['dataset']}{role(r['dataset'])} | "
+                         f"{r['marker_threshold']:.2f} | {g['pq']:.4f} | {g['sq']:.4f} | "
+                         f"{g['rq']:.4f} | {g['over_segmentation_factor']:.3f} |")
+    if checks:
+        lines += ["", "## Checks", ""]
+        lines += [f"- {'PASS' if ok else 'FAIL'} {n}" + (f" -- {d}" if d else "")
+                  for n, ok, d in checks]
+    md_path.parent.mkdir(parents=True, exist_ok=True)
+    md_path.write_text("\n".join(lines) + "\n")
+
+    payload = {"run_name": run_name, "platform": platform,
+               "config_hash": config_hash, "epoch": int(epoch),
+               "fn_classes": list(FN_CLASSES), "roles": roles,
+               "attribution": attribution,
+               "marker": {"default": float(default_marker), "swept": [float(m) for m in markers],
+                          "selection_split": "val",
+                          "val_rows": [flatten_postprocess_row(r) | {"marker_threshold": r["marker_threshold"]}
+                                       for r in marker_val_rows],
+                          "selected": {d: flatten_postprocess_row(r) | {"marker_threshold": r["marker_threshold"]}
+                                       for d, r in marker_selected.items()},
+                          "test_rows": [flatten_postprocess_row(r) | {"marker_threshold": r["marker_threshold"]}
+                                        for r in marker_test_rows]},
+               "checks": [{"name": n, "ok": bool(ok), "detail": d} for n, ok, d in (checks or [])]}
     json_path.write_text(json.dumps(payload, indent=2, sort_keys=True, default=str))
     return md_path, json_path
 
