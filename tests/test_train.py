@@ -2309,6 +2309,37 @@ def test_postprocess_selection_is_best_pq_ignores_reference_and_ties_to_none():
         "S2": {"mode": "skeleton_redilate", "threshold": 0.80}}
 
 
+def test_postprocess_config_from_selection_carries_gap_closing_parameters_through():
+    """A VAL selection can land on morph_close or skeleton_bridge (gap_closing_grid
+    puts both in the same pool select_postprocess_config picks from) -- their
+    OWN required parameter must survive into the TEST-side configuration, or
+    sweep_postprocess/attribute_false_negatives refuse it downstream with
+    "needs closing_radius"/"needs bridge_px" on a mode that WAS actually
+    selected on VAL, the exact failure a Colab run caught.
+    """
+    selected = {
+        "S1": {"config": "morph_close_r2@0.70", "dataset": "S1", "split": "val",
+              "mode": "morph_close", "threshold": 0.70, "closing_radius": 2.0,
+              "bridge_px": None, "partition": "binary_boundary", "reference": False,
+              "decomposition": {}, "region": {"pq": 0.5}},
+        "S2": {"config": "skeleton_bridge_4px@0.80", "dataset": "S2", "split": "val",
+              "mode": "skeleton_bridge", "threshold": 0.80, "closing_radius": None,
+              "bridge_px": 4.0, "partition": "binary_boundary", "reference": False,
+              "decomposition": {}, "region": {"pq": 0.6}},
+    }
+    config = train_mod.postprocess_config_from_selection(selected, target_width_px=4)
+    assert config["per_dataset"] == {
+        "S1": {"mode": "morph_close", "threshold": 0.70, "closing_radius": 2.0},
+        "S2": {"mode": "skeleton_bridge", "threshold": 0.80, "bridge_px": 4.0}}
+    # both parameters now present is enough for _check_postprocess to accept
+    # the configuration for every dataset without raising.
+    for dataset, spec in config["per_dataset"].items():
+        train_mod._check_postprocess(spec["mode"], config["target_width_px"],
+                                     config["partition"],
+                                     closing_radius=spec.get("closing_radius"),
+                                     bridge_px=spec.get("bridge_px"))
+
+
 def test_postprocess_grid_holds_every_mode_threshold_tuned_and_one_reference():
     grid = train_mod.postprocess_grid(
         ["Steel1", "Steel2"], ("none", "skeleton_redilate"),
