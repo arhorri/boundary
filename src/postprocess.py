@@ -33,7 +33,12 @@ now-connected blob to a single centreline that threads straight through
 where the gap was), then redilates to ``target_width_px`` -- both are
 REQUIRED. This also fattens every surviving boundary somewhat during the
 dilate step, which is why it is swept independently of ``skeleton_redilate``
-rather than combined with it.
+rather than combined with it. Finally it is OR'd back together with the
+original binarization: skeletonizing a fattened blob is not guaranteed to
+retrace the exact original centreline (thinning has known artifacts on
+diagonal patterns), so "dilation never removes a pixel" alone does not
+prove an already-intact boundary survives -- only unioning the original
+pixels back in does, and it does so provably (see ``postprocess_boundary``).
 
 ``skeleton_bridge`` instead finds the loose ENDS of the skeleton and, where
 two ends from DIFFERENT fragments are within ``bridge_px`` of each other,
@@ -208,10 +213,17 @@ def postprocess_boundary(prob, threshold, mode: str = "none",
     bridged gap back out on a thin line, see the module docstring), then
     ``skimage.morphology.skeletonize`` (collapsing the now-merged blob to a
     centreline that threads through where the gap was), then
-    ``boundary_gt._dilate_to_width(skeleton, target_width_px)``. Both
+    ``boundary_gt._dilate_to_width(skeleton, target_width_px)``, OR'd back
+    together with the original (unfattened) binarization. Both
     ``closing_radius`` and ``target_width_px`` are REQUIRED. The dilate step
     also fattens every surviving boundary somewhat; this is why it is swept
-    independently of ``skeleton_redilate`` rather than combined with it.
+    independently of ``skeleton_redilate`` rather than combined with it. The
+    final OR is a safety net, not cosmetic: it guarantees the result is a
+    SUPERSET of the original binarization, so its background is a SUBSET of
+    the original's background, so anywhere the original binarization already
+    separated two regions, the result still does too -- regardless of
+    whether skeletonizing the fattened blob retraced the exact original
+    centreline (it is not guaranteed to on diagonal patterns).
 
     ``mode="skeleton_bridge"``: the same binarization, skeletonize, bridge
     loose ends across different fragments within ``bridge_px`` with a
@@ -266,7 +278,22 @@ def postprocess_boundary(prob, threshold, mode: str = "none",
         from src import boundary_gt
 
         fattened = dilation(binary, footprint=disk(radius))
-        return boundary_gt._dilate_to_width(skeletonize(fattened), _width(mode))
+        sealed = boundary_gt._dilate_to_width(skeletonize(fattened), _width(mode))
+        # OR the original binarization back in. Skeletonizing a diagonal
+        # boundary fattened into a thick band is NOT guaranteed to retrace
+        # the exact original centreline pixel-for-pixel -- thinning
+        # algorithms have known artifacts on diagonal patterns, and a Colab
+        # run caught exactly that: at closing_radius=1 the skeleton of a
+        # fattened diagonal introduced a break that let background leak
+        # across an already-intact boundary. "dilation never removes a
+        # pixel" is true of the fattening step but says nothing about what
+        # skeletonize does afterward, so it does not by itself prove the
+        # boundary survives -- only this union does, and provably: `sealed`
+        # is now a SUPERSET of `binary`, so its background is a SUBSET of
+        # binary's background, so any two points binary already separated
+        # stay separated (a background path in the smaller set is also a
+        # path in the larger one; there is no path to gain by shrinking it).
+        return sealed | binary
 
     if bridge_px is None:
         raise PostprocessError(

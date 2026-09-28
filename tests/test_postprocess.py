@@ -153,12 +153,18 @@ def _gapped_column(size=40, col=20, width=1, gap=slice(18, 21)):
 
 @pytest.mark.parametrize("width", [1, 5])
 def test_postprocess_morph_close_seals_a_one_gap_case(width):
-    """A 10-row gap (nearest surviving rows 11 apart) needs radius >= ~6 to
-    seal (dilating each side by r merges them once 2r >= 11); radius 1 comes
-    nowhere close, even accounting for the final redilation to target_width_px
-    -- the two cases are separated by a wide margin on purpose, so this does
-    not depend on the exact pixel arithmetic of a borderline case, only on
-    the topology (still 1 region vs. correctly split into 2).
+    """Two fixtures, each with a wide margin on purpose so the assertion does
+    not hinge on borderline pixel arithmetic (a 1-row margin is exactly what
+    a real Colab run caught failing: radius 6 against an 11-row gap needs
+    2*radius >= 11, a margin of only 1, and skeletonize's thinning pruned
+    the razor-thin bridge before the final redilation could use it):
+
+    - a 4-row gap (nearest surviving rows 5 apart) against closing_radius=10
+      (2*radius=20, margin 15) MUST seal -- there is no plausible amount of
+      thinning slop that eats a 15 px margin.
+    - a 20-row gap (nearest surviving rows 21 apart) against closing_radius=1
+      (2*radius=2) must NOT seal -- 2 is nowhere near 21, by the same wide
+      margin in the other direction.
 
     This is the fixture that failed under a literal binary closing (dilate
     then erode by the SAME footprint): erosion stripped the bridge back out
@@ -169,21 +175,26 @@ def test_postprocess_morph_close_seals_a_one_gap_case(width):
     """
     from src import train as train_mod
 
-    gapped = _gapped_column(size=60, width=width, gap=slice(20, 30))   # 10-row gap
-    assert len(np.unique(train_mod.true_regions_from_boundary(gapped))) == 1, (
+    sealable = _gapped_column(size=60, width=width, gap=slice(20, 24))   # 4-row gap
+    assert len(np.unique(train_mod.true_regions_from_boundary(sealable))) == 1, (
         "the gap must actually leak before closing, or this fixture proves nothing")
-
-    prob = gapped.astype(np.float32)
-    sealed = postprocess.postprocess_boundary(prob, 0.5, "morph_close",
-                                              target_width_px=width, closing_radius=6)
+    sealed = postprocess.postprocess_boundary(sealable.astype(np.float32), 0.5,
+                                              "morph_close", target_width_px=width,
+                                              closing_radius=10)
     assert len(np.unique(train_mod.true_regions_from_boundary(sealed))) == 2, (
-        f"width={width}: radius 6 should seal a 10-row gap but did not")
+        f"width={width}: radius 10 should seal a 4-row gap (rows 5 apart, "
+        "margin 15) but did not")
 
-    too_small = postprocess.postprocess_boundary(prob, 0.5, "morph_close",
-                                                 target_width_px=width, closing_radius=1)
+    unsealable = _gapped_column(size=60, width=width, gap=slice(20, 40))  # 20-row gap
+    assert len(np.unique(train_mod.true_regions_from_boundary(unsealable))) == 1, (
+        "the gap must actually leak before closing, or this fixture proves nothing")
+    too_small = postprocess.postprocess_boundary(unsealable.astype(np.float32), 0.5,
+                                                 "morph_close", target_width_px=width,
+                                                 closing_radius=1)
     assert len(np.unique(train_mod.true_regions_from_boundary(too_small))) == 1, (
-        f"width={width}: radius 1 should NOT seal a 10-row gap, but did -- the "
-        "radius is not actually doing anything in this sweep")
+        f"width={width}: radius 1 should NOT seal a 20-row gap (rows 21 "
+        "apart), but did -- the radius is not actually doing anything in "
+        "this sweep")
 
 
 def test_postprocess_skeleton_bridge_seals_a_one_gap_case():
@@ -203,13 +214,21 @@ def test_postprocess_skeleton_bridge_seals_a_one_gap_case():
 
 
 def test_postprocess_morph_close_cannot_open_an_intact_diagonal_boundary():
-    """dilate -> skeletonize -> redilate only ADDS material during the dilate
-    step and then re-derives a clean centreline -- it never REMOVES a boundary
-    pixel outright the way an eroding operation could. A diagonal boundary
-    already proven to separate its two sides under connectivity=1 background
-    labelling (the item-1 fix) stays connected end to end through dilation
-    (dilation is extensive: A subseteq dilation(A)), so skeletonizing the
-    dilated, still-fully-connected diagonal cannot introduce a break in it.
+    """A Colab run caught this failing at closing_radius=1: skeletonizing a
+    diagonal boundary fattened by dilation is NOT guaranteed to retrace the
+    exact original centreline (thinning has known artifacts on diagonal
+    patterns), so "dilation never removes a pixel" during the fattening step
+    says nothing about whether the SKELETON of that fattened blob still
+    separates the two sides -- and empirically, at radius 1, it did not.
+
+    morph_close now OR's the skeletonize+redilate result back together with
+    the original (unfattened) binarization, which makes this provable rather
+    than assumed: the result is a superset of the original binarization, so
+    its background is a SUBSET of the original's background, so any two
+    points the original binarization already separated (proven here by the
+    connectivity=1 background-labelling fix) stay separated in the result --
+    a background path in a subset is also a path in the superset, so
+    shrinking the background cannot create a new connection.
     """
     from src import train as train_mod
 
