@@ -6,7 +6,7 @@ Marker-controlled watershed on the probability map (watershed_marker_threshold=0
 
 | dataset | tiles | ARI | VI | PQ | SQ | RQ | true regions | pred regions | over-seg factor |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| Steel1 | 96 | 0.548 | 0.769 | 0.303 | 0.739 | 0.405 | 17.0 | 13.4 | 0.98 |
+| Steel1 | 96 | 0.548 | 0.769 | 0.303 | 0.739 | 0.406 | 17.0 | 13.4 | 0.98 |
 | Steel2 | 126 | 0.313 | 2.108 | 0.099 | 0.689 | 0.142 | 127.4 | 49.5 | 0.39 |
 
 ## MISPLACED / OVER-DETECTION / THICKNESS decomposition
