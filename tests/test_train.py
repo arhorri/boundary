@@ -2792,7 +2792,7 @@ def test_verify_gt_fingerprint_confirms_a_match_and_raises_on_a_mismatch():
     other = {"gt_extraction_sha256": "def456", "boundary_gt_settings": {"line_width_px": 2}}
     msg = train_mod.verify_gt_fingerprint({"gt_fingerprint": fp}, fp, "ckpt.pt")
     assert "verified" in msg and "abc123" in msg
-    with pytest.raises(train_mod.TrainError, match="different ground truth"):
+    with pytest.raises(train_mod.TrainError, match="ground truth different from"):
         train_mod.verify_gt_fingerprint({"gt_fingerprint": other}, fp, "ckpt.pt")
 
 
@@ -2847,7 +2847,7 @@ def test_maybe_resume_refuses_a_checkpoint_trained_on_different_ground_truth(tmp
     new.scheduler = train_mod.WarmupCosine(total_steps=10, warmup_steps=1)
     new.scaler = train_mod.make_scaler(new.amp_enabled)
     assert new.gt_fingerprint != old.gt_fingerprint
-    with pytest.raises(train_mod.TrainError, match="different ground truth"):
+    with pytest.raises(train_mod.TrainError, match="ground truth different from"):
         new.maybe_resume()
 
 
@@ -2867,7 +2867,7 @@ def test_load_checkpoint_model_skips_gt_check_by_default_but_honours_it_when_ask
     train_mod.load_checkpoint_model(path, settings, fold="dev",
                                     expected_gt_fingerprint=None)
 
-    with pytest.raises(train_mod.TrainError, match="different ground truth"):
+    with pytest.raises(train_mod.TrainError, match="ground truth different from"):
         train_mod.load_checkpoint_model(
             path, settings, fold="dev",
             expected_gt_fingerprint={"gt_extraction_sha256": "zzz999",
