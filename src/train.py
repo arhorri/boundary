@@ -2507,7 +2507,8 @@ def _check_postprocess(postprocess_mode: str, target_width_px,
     if postprocess_mode not in postprocess_mod.MODES:
         raise TrainError(f"postprocess_mode must be one of "
                          f"{postprocess_mod.MODES}, got {postprocess_mode!r}")
-    if postprocess_mode in ("skeleton_redilate", "skeleton_bridge") and target_width_px is None:
+    if (postprocess_mode in ("skeleton_redilate", "morph_close", "skeleton_bridge")
+            and target_width_px is None):
         raise TrainError(
             f"postprocess_mode={postprocess_mode!r} needs target_width_px -- "
             "the width the ground truth was generated at "
@@ -3002,6 +3003,58 @@ def true_regions_from_boundary(true_mask: "np.ndarray") -> "np.ndarray":
         return np.ones(true_mask.shape, dtype=np.int64)
     reach = int(np.hypot(*true_mask.shape)) + 1
     return expand_labels(labeled, distance=reach).astype(np.int64)
+
+
+def region_connectivity_diff(true_mask: "np.ndarray") -> dict:
+    """DIAGNOSTIC ONLY -- never used by real evaluation. Measures what the
+    connectivity=1 fix (above) actually changed for ONE mask, by also
+    labelling the SAME mask at connectivity=2 (the buggy default this
+    replaced) and finding every region the fix's finer labelling produced
+    that the old, coarser one had lumped into a larger region.
+
+    A "new fragment" here is a connectivity=1 region whose pixels are a
+    STRICT SUBSET of one connectivity=2 region -- i.e. a place the diagonal
+    leak the fix closed was previously merging two or more regions into one.
+    Its ``old_region_area_px`` is that larger region's total size, so a
+    caller can see both how big the fragment is and how big a region it used
+    to be swallowed by.
+
+    Whether these fragments are noise (tiny slivers at a diagonal pinch
+    point, an argument for treating them via a min-region-area style cleanup)
+    or genuinely separate regions the old labelling was silently hiding is a
+    JUDGEMENT this function does not make -- it only measures, so that
+    judgement is made from the actual area distribution, not by assuming one.
+    """
+    from skimage.measure import label
+    from skimage.segmentation import expand_labels
+
+    mask = np.asarray(true_mask, dtype=bool)
+    reach = int(np.hypot(*mask.shape)) + 1
+
+    def regions_at(connectivity):
+        labeled = label(~mask, connectivity=connectivity)
+        if not labeled.any():
+            return np.ones(mask.shape, dtype=np.int64)
+        return expand_labels(labeled, distance=reach).astype(np.int64)
+
+    new_regions = regions_at(1)   # the fix -- what true_regions_from_boundary returns
+    old_regions = regions_at(2)   # the buggy default this replaced
+
+    new_ids, new_areas = np.unique(new_regions, return_counts=True)
+    fragments = []
+    for nid, area in zip(new_ids.tolist(), new_areas.tolist()):
+        old_here, old_counts = np.unique(old_regions[new_regions == nid], return_counts=True)
+        dominant_old = int(old_here[np.argmax(old_counts)])
+        old_area_total = int((old_regions == dominant_old).sum())
+        if old_area_total > area:
+            fragments.append({"new_region_id": int(nid), "area_px": int(area),
+                              "old_region_area_px": old_area_total})
+    return {
+        "n_new_regions": int(len(new_ids)),
+        "n_old_regions": int(len(np.unique(old_regions))),
+        "n_fragments": len(fragments),
+        "fragments": fragments,
+    }
 
 
 def region_metrics_single(pred_regions: "np.ndarray",

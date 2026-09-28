@@ -2369,9 +2369,15 @@ def test_postprocess_sweep_report_persists_roles_selection_and_reference(tmp_pat
 
 
 def test_postprocess_notebook_cell_selects_on_val_before_it_touches_test():
-    """Structural, never executed: 06d's post-processing cell selects from the
-    VAL sweep only, predicts on the TEST dataset only after selecting, and
-    reimplements none of the post-processing itself."""
+    """Structural, never executed: EVERY 06d cell that selects a post-
+    processing configuration does so from a VAL sweep, predicts on TEST only
+    afterward, and reimplements none of the post-processing itself.
+
+    More than one cell may call select_postprocess_config -- Cell 21 (the
+    skeleton_redilate sweep) and Cell 23 (the gap-closing sweep) both do, and
+    a THIRD cell added later legitimately could too -- so this checks EACH
+    one independently rather than asserting a fixed count of cells.
+    """
     nb_path = (Path(__file__).resolve().parent.parent / "notebooks"
                / "06d_steel_combined.ipynb")
     if not nb_path.is_file():
@@ -2384,20 +2390,27 @@ def test_postprocess_notebook_cell_selects_on_val_before_it_touches_test():
 
     cells = [source(c) for c in nb["cells"]
              if c["cell_type"] == "code" and "select_postprocess_config(" in source(c)]
-    assert len(cells) == 1, "exactly one cell may select a post-processing config"
-    cell = cells[0]
-    assert cell.count("select_postprocess_config(") == 1
-    assert "select_postprocess_config(pp_val_rows" in cell
-    # The prediction calls themselves, not bare names: the cell's "run Cell 20
-    # first" guard legitimately mentions region_test_ds as a string up top.
-    selection_at = cell.index("select_postprocess_config(")
+    assert cells, "no cell calls select_postprocess_config"
     val_predict = "predict_tiles(\n    region_model, trainer.val_ds"
     test_predict = "predict_tiles(\n    region_model, region_test_ds"
-    assert cell.count(val_predict) == 1 and cell.count(test_predict) == 1
-    assert cell.index(val_predict) < selection_at, "VAL is predicted before selecting"
-    assert cell.index(test_predict) > selection_at, "TEST is predicted only after selecting"
-    for banned in ("skeletonize", "def postprocess_boundary", "_dilate_to_width"):
-        assert banned not in cell, f"{banned} belongs in src/, not the notebook"
+    for cell in cells:
+        # Every call in THIS cell must be selecting from a VAL-suffixed rows
+        # variable (pp_val_rows, gc_gap_val_rows, ...), never a bare "rows".
+        for line in cell.splitlines():
+            if "select_postprocess_config(" in line:
+                assert "val_rows" in line, (
+                    f"select_postprocess_config called on something that is "
+                    f"not *_val_rows: {line.strip()!r}")
+        # The prediction calls themselves, not bare names: a cell's "run
+        # Cell N first" guard may legitimately mention region_test_ds as a
+        # string before any call happens.
+        selection_at = cell.index("select_postprocess_config(")
+        assert cell.count(val_predict) == 1 and cell.count(test_predict) == 1
+        assert cell.index(val_predict) < selection_at, "VAL is predicted before selecting"
+        assert cell.index(test_predict) > selection_at, "TEST is predicted only after selecting"
+        for banned in ("skeletonize", "def postprocess_boundary", "_dilate_to_width",
+                      "_bridge_skeleton_endpoints"):
+            assert banned not in cell, f"{banned} belongs in src/, not the notebook"
 
 
 # --------------------------------------------------------------------------
@@ -2564,9 +2577,15 @@ def test_fn_attribution_report_persists_classes_markers_and_checks(tmp_path):
 
 
 def test_fn_attribution_notebook_cell_selects_markers_on_val_before_test():
-    """Structural, never executed: 06d's attribution cell picks the marker
-    from the VAL sweep, predicts TEST only afterwards, and classifies with
-    src.train rather than inline code."""
+    """Structural, never executed: EVERY 06d cell that picks a watershed
+    marker threshold does so from the VAL sweep, predicts TEST only
+    afterwards, and classifies with src.train rather than inline code.
+
+    More than one cell may call select_marker_threshold -- Cell 22 (the
+    first, narrower marker sweep) and Cell 23 (the extended sweep) both do --
+    so this checks EACH one independently rather than asserting a fixed
+    count of cells.
+    """
     nb_path = (Path(__file__).resolve().parent.parent / "notebooks"
                / "06d_steel_combined.ipynb")
     if not nb_path.is_file():
@@ -2579,17 +2598,20 @@ def test_fn_attribution_notebook_cell_selects_markers_on_val_before_test():
 
     cells = [source(c) for c in nb["cells"]
              if c["cell_type"] == "code" and "select_marker_threshold(" in source(c)]
-    assert len(cells) == 1
-    cell = cells[0]
-    assert cell.count("select_marker_threshold(") == 1
-    assert "select_marker_threshold(fn_marker_val_rows" in cell
-    at = cell.index("select_marker_threshold(")
+    assert cells, "no cell calls select_marker_threshold"
     val_predict = "predict_tiles(\n    region_model, trainer.val_ds"
     test_predict = "predict_tiles(\n    region_model, region_test_ds"
-    assert cell.count(val_predict) == 1 and cell.count(test_predict) == 1
-    assert cell.index(val_predict) < at < cell.index(test_predict)
-    for banned in ("def classify", "np.bincount", "skeletonize"):
-        assert banned not in cell, f"{banned} belongs in src/, not the notebook"
+    for cell in cells:
+        for line in cell.splitlines():
+            if "select_marker_threshold(" in line:
+                assert "val_rows" in line, (
+                    f"select_marker_threshold called on something that is "
+                    f"not *_val_rows: {line.strip()!r}")
+        at = cell.index("select_marker_threshold(")
+        assert cell.count(val_predict) == 1 and cell.count(test_predict) == 1
+        assert cell.index(val_predict) < at < cell.index(test_predict)
+        for banned in ("def classify", "np.bincount", "skeletonize"):
+            assert banned not in cell, f"{banned} belongs in src/, not the notebook"
 
 
 # --------------------------------------------------------------------------
@@ -2922,3 +2944,38 @@ def test_gap_closing_notebook_cell_verifies_gt_and_selects_on_val_before_test():
     for banned in ("def classify", "def postprocess_boundary", "skeletonize",
                   "binary_closing", "draw_line", "np.bincount"):
         assert banned not in cell, f"{banned} belongs in src/, not the notebook"
+
+
+# --------------------------------------------------------------------------
+# region_connectivity_diff -- DIAGNOSTIC ONLY, measuring what the
+# connectivity=1 fix changed (item 4 of the connectivity-audit follow-up)
+# --------------------------------------------------------------------------
+def test_region_connectivity_diff_finds_the_diagonal_fragments_the_fix_created():
+    """The exact fixture the leak test uses: under the OLD (connectivity=2)
+    labelling the two triangular halves merge into ONE region; under the FIX
+    (connectivity=1) they are properly two. Both new regions must be reported
+    as fragments of that one old, merged region.
+    """
+    size = 10
+    true = np.zeros((size, size), dtype=bool)
+    for i in range(size):
+        true[i, i] = True
+    diff = train_mod.region_connectivity_diff(true)
+    assert diff["n_new_regions"] == 2
+    assert diff["n_old_regions"] == 1
+    assert diff["n_fragments"] == 2
+    assert sum(f["area_px"] for f in diff["fragments"]) == size * size
+    for f in diff["fragments"]:
+        assert f["old_region_area_px"] == size * size
+
+
+def test_region_connectivity_diff_reports_nothing_when_labellings_agree():
+    """A straight, axis-aligned boundary has no diagonal pinch point for the
+    fix to have touched -- both connectivities give the identical 2-region
+    split, so nothing should be reported as a fragment.
+    """
+    true = np.zeros((20, 20), dtype=bool)
+    true[10, :] = True
+    diff = train_mod.region_connectivity_diff(true)
+    assert diff["n_new_regions"] == diff["n_old_regions"] == 2
+    assert diff["n_fragments"] == 0
