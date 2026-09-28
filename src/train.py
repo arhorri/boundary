@@ -3776,6 +3776,14 @@ def postprocess_config_from_selection(selected: dict, target_width_px,
     """One configuration that applies each dataset's VAL-selected mode and
     threshold -- the only thing :func:`select_postprocess_config`'s output is
     allowed to become before it is scored on TEST.
+
+    Carries ``closing_radius``/``bridge_px`` through when the selected row
+    has them (``morph_close``/``skeleton_bridge`` respectively) -- this
+    function predates :func:`gap_closing_grid`, when the only selectable
+    modes were ``none`` and ``skeleton_redilate``, neither of which needs
+    either parameter; dropping them silently made a VAL-selected gap-closing
+    mode fail on TEST with "needs closing_radius", the mode's OWN required
+    parameter missing rather than the width every mode shares.
     """
     if not selected:
         raise TrainError("nothing was selected.")
@@ -3783,13 +3791,21 @@ def postprocess_config_from_selection(selected: dict, target_width_px,
     if partitions != ["binary_boundary"]:
         raise TrainError(f"a selected configuration must use the binary_boundary "
                          f"partition, got {partitions}")
+
+    def spec(r):
+        out = {"mode": r["mode"], "threshold": float(r["threshold"])}
+        if r.get("closing_radius") is not None:
+            out["closing_radius"] = float(r["closing_radius"])
+        if r.get("bridge_px") is not None:
+            out["bridge_px"] = float(r["bridge_px"])
+        return out
+
     return {
         "name": name,
         "partition": "binary_boundary",
         "target_width_px": target_width_px,
         "reference": False,
-        "per_dataset": {d: {"mode": r["mode"], "threshold": float(r["threshold"])}
-                        for d, r in selected.items()},
+        "per_dataset": {d: spec(r) for d, r in selected.items()},
     }
 
 
