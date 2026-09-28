@@ -137,30 +137,53 @@ def test_postprocess_load_config_rejects_unknown_keys_and_modes(tmp_path):
 # so "does this mode actually close the gap" is verified the way it matters,
 # not by inspecting pixels the region metric never looks at.
 # --------------------------------------------------------------------------
-def _gapped_column(size=40, col=20, gap=slice(18, 21)):
-    """A full-height 1 px boundary at ``col``, with rows ``gap`` removed."""
+def _gapped_column(size=40, col=20, width=1, gap=slice(18, 21)):
+    """A full-height boundary ``width`` px wide (columns ``col..col+width-1``),
+    with rows ``gap`` removed across its ENTIRE width -- a clean break, not a
+    thinning. ``width=1`` is the original failing case; ``width=5`` is closer
+    to this project's real (post-cleanup) boundary width and is what item 1's
+    task asked to add coverage for.
+    """
     true_b = np.zeros((size, size), dtype=bool)
-    true_b[:, col] = True
+    true_b[:, col:col + width] = True
     gapped = true_b.copy()
-    gapped[gap, col] = False
+    gapped[gap, col:col + width] = False
     return gapped
 
 
-def test_postprocess_morph_close_seals_a_one_gap_case():
+@pytest.mark.parametrize("width", [1, 5])
+def test_postprocess_morph_close_seals_a_one_gap_case(width):
+    """A 10-row gap (nearest surviving rows 11 apart) needs radius >= ~6 to
+    seal (dilating each side by r merges them once 2r >= 11); radius 1 comes
+    nowhere close, even accounting for the final redilation to target_width_px
+    -- the two cases are separated by a wide margin on purpose, so this does
+    not depend on the exact pixel arithmetic of a borderline case, only on
+    the topology (still 1 region vs. correctly split into 2).
+
+    This is the fixture that failed under a literal binary closing (dilate
+    then erode by the SAME footprint): erosion stripped the bridge back out
+    at every radius tried, because the pixels lateral to the bridge were
+    never dilated into existence for a thin line in the first place. The
+    dilate -> skeletonize -> redilate replacement has no erosion step to
+    undo the bridge.
+    """
     from src import train as train_mod
 
-    gapped = _gapped_column()
+    gapped = _gapped_column(size=60, width=width, gap=slice(20, 30))   # 10-row gap
     assert len(np.unique(train_mod.true_regions_from_boundary(gapped))) == 1, (
         "the gap must actually leak before closing, or this fixture proves nothing")
 
     prob = gapped.astype(np.float32)
-    sealed = postprocess.postprocess_boundary(prob, 0.5, "morph_close", closing_radius=2)
-    assert len(np.unique(train_mod.true_regions_from_boundary(sealed))) == 2
+    sealed = postprocess.postprocess_boundary(prob, 0.5, "morph_close",
+                                              target_width_px=width, closing_radius=6)
+    assert len(np.unique(train_mod.true_regions_from_boundary(sealed))) == 2, (
+        f"width={width}: radius 6 should seal a 10-row gap but did not")
 
-    # A 3-row gap needs radius >= ~2 (closing can bridge roughly 2*radius):
-    # radius 1 must NOT be enough, so the sweep's radius actually matters.
-    too_small = postprocess.postprocess_boundary(prob, 0.5, "morph_close", closing_radius=1)
-    assert len(np.unique(train_mod.true_regions_from_boundary(too_small))) == 1
+    too_small = postprocess.postprocess_boundary(prob, 0.5, "morph_close",
+                                                 target_width_px=width, closing_radius=1)
+    assert len(np.unique(train_mod.true_regions_from_boundary(too_small))) == 1, (
+        f"width={width}: radius 1 should NOT seal a 10-row gap, but did -- the "
+        "radius is not actually doing anything in this sweep")
 
 
 def test_postprocess_skeleton_bridge_seals_a_one_gap_case():
@@ -180,11 +203,13 @@ def test_postprocess_skeleton_bridge_seals_a_one_gap_case():
 
 
 def test_postprocess_morph_close_cannot_open_an_intact_diagonal_boundary():
-    """Closing is EXTENSIVE (dilate then erode never removes an original
-    foreground pixel: A subseteq closing(A)), so a diagonal boundary already
-    proven to separate its two sides under connectivity=1 background labelling
-    (the item-1 fix) cannot be made to leak by morph_close at any radius --
-    it can only add material to the boundary, never remove it.
+    """dilate -> skeletonize -> redilate only ADDS material during the dilate
+    step and then re-derives a clean centreline -- it never REMOVES a boundary
+    pixel outright the way an eroding operation could. A diagonal boundary
+    already proven to separate its two sides under connectivity=1 background
+    labelling (the item-1 fix) stays connected end to end through dilation
+    (dilation is extensive: A subseteq dilation(A)), so skeletonizing the
+    dilated, still-fully-connected diagonal cannot introduce a break in it.
     """
     from src import train as train_mod
 
@@ -194,7 +219,8 @@ def test_postprocess_morph_close_cannot_open_an_intact_diagonal_boundary():
         true_b[i, i] = True
     for radius in (1, 2, 3):
         closed = postprocess.postprocess_boundary(true_b.astype(np.float32), 0.5,
-                                                  "morph_close", closing_radius=radius)
+                                                  "morph_close", target_width_px=1,
+                                                  closing_radius=radius)
         regions = train_mod.true_regions_from_boundary(closed)
         assert regions[2, 5] != regions[5, 2], f"leaked at closing_radius={radius}"
 
@@ -227,6 +253,10 @@ def test_postprocess_morph_close_and_skeleton_bridge_need_their_own_parameter():
         postprocess.postprocess_boundary(prob, 0.5, "morph_close")
     with pytest.raises(postprocess.PostprocessError):
         postprocess.postprocess_boundary(prob, 0.5, "morph_close", closing_radius=0)
+    with pytest.raises(postprocess.PostprocessError):
+        # closing_radius given, target_width_px withheld -- morph_close's
+        # final redilate step needs it too, same as skeleton_bridge does.
+        postprocess.postprocess_boundary(prob, 0.5, "morph_close", closing_radius=2)
     with pytest.raises(postprocess.PostprocessError):
         postprocess.postprocess_boundary(prob, 0.5, "skeleton_bridge", target_width_px=4)
     with pytest.raises(postprocess.PostprocessError):

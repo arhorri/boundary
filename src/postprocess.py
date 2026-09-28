@@ -17,15 +17,29 @@ implementations that could quietly disagree.
 ``morph_close`` and ``skeleton_bridge`` target a DIFFERENT failure than width:
 a genuine short GAP in the predicted line, of the kind that lets a
 marker-controlled watershed (or the region metric read off the thresholded
-boundary directly) flood two true regions into one. ``morph_close`` seals a
-gap by dilating the boundary by ``closing_radius`` and eroding it back (a
-literal binary closing) -- simple, but it also fattens every surviving
-boundary, which is why it is swept independently of ``skeleton_redilate``
-rather than combined with it. ``skeleton_bridge`` instead finds the loose
-ENDS of the skeleton and, where two ends from DIFFERENT fragments are within
-``bridge_px`` of each other, draws a straight line between them and redilates
-to ``target_width_px`` -- closing exactly the gap and nothing else, at the
-cost of doing nothing for a gap wider than ``bridge_px``.
+boundary directly) flood two true regions into one.
+
+``morph_close`` is NOT a literal morphological closing (dilate then erode by
+the same footprint) -- that was tried and does not work on a thin, gapped
+line. Erosion after closing keeps a pixel only if its ENTIRE footprint is
+foreground, and for a 1 px line the pixels LATERAL to a bridged gap were
+never dilated into existence in the first place (there was no original
+foreground pixel there to dilate from), so erosion strips the bridge right
+back out -- confirmed by a fixture with a real gap that a literal closing
+left un-sealed at every radius tried. ``morph_close`` instead DILATES by
+``closing_radius`` (merging the two sides of a short gap into one connected
+blob, with no erosion to undo it), SKELETONIZES the result (collapsing that
+now-connected blob to a single centreline that threads straight through
+where the gap was), then redilates to ``target_width_px`` -- both are
+REQUIRED. This also fattens every surviving boundary somewhat during the
+dilate step, which is why it is swept independently of ``skeleton_redilate``
+rather than combined with it.
+
+``skeleton_bridge`` instead finds the loose ENDS of the skeleton and, where
+two ends from DIFFERENT fragments are within ``bridge_px`` of each other,
+draws a straight line between them and redilates to ``target_width_px`` --
+closing exactly the gap and nothing else, at the cost of doing nothing for a
+gap wider than ``bridge_px``.
 
 Deliberately torch-free: this is a pure numpy function, importable (and
 testable) wherever numpy and scikit-image are, and usable at inference time
@@ -45,9 +59,11 @@ import numpy as np
 
 #: ``none`` -- binarize only (today's behaviour). ``skeleton_redilate`` --
 #: binarize, skeletonize, dilate back to ``target_width_px``. ``morph_close``
-#: -- binarize, then a literal binary closing at ``closing_radius``.
-#: ``skeleton_bridge`` -- binarize, skeletonize, bridge nearby loose ends
-#: within ``bridge_px``, dilate back to ``target_width_px``.
+#: -- binarize, dilate by ``closing_radius``, skeletonize (NOT a literal
+#: closing -- see the module docstring for why that does not work on a thin
+#: gapped line), dilate back to ``target_width_px``. ``skeleton_bridge`` --
+#: binarize, skeletonize, bridge nearby loose ends within ``bridge_px``,
+#: dilate back to ``target_width_px``.
 MODES = ("none", "skeleton_redilate", "morph_close", "skeleton_bridge")
 
 # --------------------------------------------------------------------------
@@ -186,13 +202,16 @@ def postprocess_boundary(prob, threshold, mode: str = "none",
     generated at (``reports/gt_extraction.json``'s recorded
     ``settings.line_width_px``), not a guess.
 
-    ``mode="morph_close"``: the same binarization, then a literal binary
-    closing (dilate by ``closing_radius``, then erode by the same amount) --
-    ``skimage.morphology.binary_closing`` with a disk footprint.
-    ``closing_radius`` is REQUIRED. This also fattens every surviving
-    boundary by roughly ``closing_radius`` on each side; it is not combined
-    with ``skeleton_redilate`` because the two would then be indistinguishable
-    from each other in a sweep.
+    ``mode="morph_close"``: the same binarization, then dilate by
+    ``closing_radius`` (``skimage.morphology.dilation`` with a disk
+    footprint -- NOT ``binary_closing``: erosion afterward would strip a
+    bridged gap back out on a thin line, see the module docstring), then
+    ``skimage.morphology.skeletonize`` (collapsing the now-merged blob to a
+    centreline that threads through where the gap was), then
+    ``boundary_gt._dilate_to_width(skeleton, target_width_px)``. Both
+    ``closing_radius`` and ``target_width_px`` are REQUIRED. The dilate step
+    also fattens every surviving boundary somewhat; this is why it is swept
+    independently of ``skeleton_redilate`` rather than combined with it.
 
     ``mode="skeleton_bridge"``: the same binarization, skeletonize, bridge
     loose ends across different fragments within ``bridge_px`` with a
@@ -242,9 +261,12 @@ def postprocess_boundary(prob, threshold, mode: str = "none",
         if radius < 1:
             raise PostprocessError(f"closing_radius must be >= 1, got {closing_radius}")
 
-        from skimage.morphology import binary_closing, disk
+        from skimage.morphology import dilation, disk, skeletonize
 
-        return binary_closing(binary, footprint=disk(radius))
+        from src import boundary_gt
+
+        fattened = dilation(binary, footprint=disk(radius))
+        return boundary_gt._dilate_to_width(skeletonize(fattened), _width(mode))
 
     if bridge_px is None:
         raise PostprocessError(
