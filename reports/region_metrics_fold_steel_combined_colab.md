@@ -16,7 +16,7 @@ The pixel/skeleton view (:func:`decompose_error`) this region view complements -
 | dataset | verdict | pixel Dice | skeleton Dice | curve-length ratio | width ratio | tolerance px |
 | --- | --- | --- | --- | --- | --- | --- |
 | Steel1 | MISPLACED | 0.5857 | 0.1453 | 1.03 | 1.50 | 4 |
-| Steel2 | THICKNESS | 0.7762 | 0.2226 | 0.78 | 1.52 | 4 |
+| Steel2 | THICKNESS | 0.7762 | 0.2225 | 0.78 | 1.52 | 4 |
 
 Verdicts, in full:
 
