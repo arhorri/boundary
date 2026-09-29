@@ -1731,12 +1731,14 @@ def render_mode_check_forced_markdown(payload: dict) -> str:
                else " (current K=2 snap -- what extraction actually used)"),
             "",
             "4 gallery tiles (Cell 26's ranking):", "",
-            "| tile | regions (B) | regions (A) | area p50 (B) | area p50 (A) |",
-            "| --- | --- | --- | --- | --- |",
+            "| tile | regions (on-disk GT) | regions (B) | regions (A) | area p50 (B) | "
+            "area p50 (A) |",
+            "| --- | --- | --- | --- | --- | --- |",
         ]
         for t in variant["gallery"]:
             lines.append(
-                f"| `{t['source_image']}` | {t['n_regions_mode_b']} | "
+                f"| `{t['source_image']}` | {t.get('n_regions_gt_on_disk', '-')} | "
+                f"{t['n_regions_mode_b']} | "
                 f"{t['n_regions_mode_a']} | {_fmt(t['area_p50_mode_b'], '.0f')} | "
                 f"{_fmt(t['area_p50_mode_a'], '.0f')} |"
             )
@@ -1761,9 +1763,11 @@ def render_mode_check_forced_markdown(payload: dict) -> str:
     lines += [
         "## 4. Gallery figures", "",
         "See the notebook cell's output: one figure per variant, 4 rows (the same "
-        "gallery tiles) x 3 columns (raw image, MODE B boundary under that variant's "
-        "binarization, MODE A boundary under the same binarization), each panel "
-        "captioned with its region count. Not persisted as image files here -- the "
+        "gallery tiles) x 4 columns (raw image, the current boundary GT as committed on "
+        "disk, MODE B boundary under that variant's binarization, MODE A boundary under "
+        "the same binarization), each panel captioned with its region count. Under the "
+        "K=2 variant, MODE B reproduces the on-disk GT; under the best cut it shows what "
+        "MODE B alone would give if only the binarization changed. Not persisted as image files here -- the "
         "notebook is the artefact.",
         "", "## What this report does NOT do", "",
         "- does not change MC_SHARE_THIN_MIN / MC_LARGEST_CC_MIN in Cell 27",
