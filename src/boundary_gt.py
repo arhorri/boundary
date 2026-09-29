@@ -950,6 +950,102 @@ def mode_a_raw_from_line_class(labels: np.ndarray, class_index: int,
     return raw
 
 
+def mode_b_vs_a_raw(labels: np.ndarray, class_index: int,
+                    blob_thickness_px: float) -> tuple:
+    """``(current MODE B raw, proposed MODE A raw)`` from the SAME label
+    map -- the only fair way to isolate what the CONSTRUCTION choice (not
+    whatever binarization produced ``labels``) changes. Feed each half
+    through :func:`clean_boundary` for a result comparable to what
+    extraction actually writes.
+    """
+    current_raw = boundaries_from_labels(labels)
+    proposed_raw = mode_a_raw_from_line_class(labels, class_index, blob_thickness_px)
+    return current_raw, proposed_raw
+
+
+def threshold_labels(gray: np.ndarray, threshold: float) -> np.ndarray:
+    """A 2-value label map (0 light/background, 1 dark) from a plain
+    grayscale cutoff -- the alternative to :func:`snap_to_palette`'s
+    nearest-colour assignment in RGB space, for testing whether a class's
+    fragmentation is an artefact of the K=2 snap's binarization rather than
+    the annotation itself. For a pure black/white K=2 palette the two are
+    nearly equivalent at threshold=128 (nearest-colour reduces to the same
+    midpoint cut on a grayscale value, up to tiny per-channel noise in a
+    mask stored as "RGB but visually grey"); this function is what lets
+    that cut be swept away from 128 instead of being stuck at it.
+    """
+    return (np.asarray(gray, dtype=float) < float(threshold)).astype(np.int32)
+
+
+def threshold_sensitivity_profile(pairs: Sequence, thresholds: Sequence,
+                                  sample: Optional[int] = None,
+                                  thin_width_px: float = 8.0) -> dict:
+    """Sweep a plain grayscale cutoff over the SAME file sample a class was
+    profiled on, to separate "the annotation is fragmented" from "the K=2
+    snap's binarization fragments it". Every mask is read from disk ONCE
+    and reused for every threshold in the sweep, not re-read per threshold.
+
+    Returns ``{str(threshold): {...}}``. Pooled the same way
+    :func:`pooled_class_shape_profile` pools (raw measurements summed
+    across files before a percentile/share is taken, not an average of
+    per-file averages) -- plus ``per_file``, the per-file dark share,
+    skeleton length and largest-CC share that "skeleton length per tile"
+    needs and a single pooled number cannot show.
+    """
+    from src import audit as audit_mod
+
+    chosen = list(pairs)[:sample] if sample else list(pairs)
+    if not chosen:
+        raise ExtractionError("threshold_sensitivity_profile: no pairs given")
+
+    grays = []
+    for _, mask_path in chosen:
+        arr = audit_mod.read_array(mask_path)
+        grays.append(arr[..., :3].mean(axis=-1) if arr.ndim == 3 else arr.astype(float))
+
+    out = {}
+    for threshold in thresholds:
+        widths = []
+        largest_cc_px_sum, n_components_sum = 0, 0
+        total_dark_px, total_px = 0, 0
+        per_file = []
+        for gray in grays:
+            dark = gray < float(threshold)
+            total_dark_px += int(dark.sum())
+            total_px += int(dark.size)
+            prof = class_shape_profile(dark, thin_width_px=thin_width_px)
+            per_file.append({
+                "dark_share": float(dark.mean()),
+                "n_components": prof["n_components"],
+                "n_skeleton_px": prof["n_skeleton_px"],
+                "largest_cc_share": prof["largest_cc_share"],
+            })
+            if prof["n_skeleton_px"]:
+                widths.append(_skeleton_widths(dark))
+            if prof["n_components"]:
+                largest_cc_px_sum += int(round(prof["largest_cc_share"] * prof["n_pixels"]))
+                n_components_sum += prof["n_components"]
+
+        all_widths = np.concatenate(widths) if widths else np.zeros(0, dtype=float)
+        skel_lengths = [p["n_skeleton_px"] for p in per_file]
+        out[str(threshold)] = {
+            "threshold": float(threshold),
+            "n_files_sampled": len(chosen),
+            "dark_share": (total_dark_px / total_px) if total_px else None,
+            "share_thin": (float((all_widths < thin_width_px).mean())
+                          if all_widths.size else None),
+            "largest_cc_share": ((largest_cc_px_sum / total_dark_px)
+                                 if total_dark_px else None),
+            "n_components_total": int(n_components_sum),
+            "skeleton_px_per_file_mean": (float(np.mean(skel_lengths))
+                                          if skel_lengths else 0.0),
+            "skeleton_px_per_file_median": (float(np.median(skel_lengths))
+                                            if skel_lengths else 0.0),
+            "per_file": per_file,
+        }
+    return out
+
+
 # --------------------------------------------------------------------------
 # per-folder extraction
 # --------------------------------------------------------------------------
@@ -1573,4 +1669,119 @@ def write_mode_check_report(payload: dict, reports_dir: Optional[Path] = None) -
     json_path = reports_dir / "steel2_gt_mode_check.json"
     json_path.write_text(json.dumps(payload, indent=2))
     md_path.write_text(render_mode_check_markdown(payload))
+    return md_path, json_path
+
+
+# --------------------------------------------------------------------------
+# forced mode-check (reports/steel2_gt_mode_check_forced.{md,json})
+#
+# steel2_gt_mode_check.json's largest-CC-share gate did not clear (0.24 <
+# 0.5), so the MODE B vs MODE A comparison never ran. That gate value was a
+# choice, not a calibration, and the comparison it skipped is cheap next to
+# the retrain it would help rule out -- so this forces the comparison
+# anyway, plus checks whether the fragmentation behind the failed gate is
+# itself an artefact of binarizing a soft-edged line at the K=2 midpoint.
+# Diagnostic-only, same as the report above: nothing regenerated, no gate
+# changed, extract_folder untouched.
+# --------------------------------------------------------------------------
+def render_mode_check_forced_markdown(payload: dict) -> str:
+    lines = [
+        "# GT mode check (FORCED): MODE B vs MODE A despite the largest-CC gate",
+        "",
+        f"- generated: {payload['generated_utc']}",
+        f"- settings: {payload['settings']}",
+        f"- {payload['note']}",
+        "",
+        f"File-size check: {payload['file_size_check']['n_files_checked']} files read, "
+        + ("all exactly " if payload["file_size_check"]["all_same_size"] else "NOT all "
+           + "the same size -- ")
+        + f"{payload['file_size_check']['size']} -- "
+        + payload["file_size_check"]["note"],
+        "",
+        "## 1. Threshold sensitivity (same 60-file Steel2 sample)",
+        "",
+        "`dark = raw grayscale value < threshold`. `current (K=2 snap)` is "
+        "`snap_to_palette` against the real black/white palette, included for "
+        "comparison, not swept.",
+        "",
+        "| cut | dark share | share thin | largest CC share | components | "
+        "skeleton px/file (mean/median) |",
+        "| --- | --- | --- | --- | --- | --- |",
+    ]
+    for label, row in payload["threshold_sensitivity"].items():
+        lines.append(
+            f"| {label} | {_fmt(row.get('dark_share'), '.3f')} | "
+            f"{_fmt(row.get('share_thin'), '.2%')} | "
+            f"{_fmt(row.get('largest_cc_share'), '.2%')} | "
+            f"{row.get('n_components_total')} | "
+            f"{_fmt(row.get('skeleton_px_per_file_mean'), '.0f')} / "
+            f"{_fmt(row.get('skeleton_px_per_file_median'), '.0f')} |"
+        )
+    lines += [
+        "", f"Best cut by largest-CC-share among the swept thresholds: "
+        f"**{payload['best_threshold']}** "
+        f"({'moving toward white reduced fragmentation' if payload['fragmentation_drops_toward_white'] else 'fragmentation did NOT clearly drop moving toward white'}).",
+    ]
+
+    lines += ["", "## 2/3. MODE B vs proposed MODE A -- forced, both cuts", ""]
+    for variant_name, variant in payload["variants"].items():
+        lines += [
+            f"### Variant: {variant_name}"
+            + (f" (threshold {variant['threshold']})" if variant.get("threshold") is not None
+               else " (current K=2 snap -- what extraction actually used)"),
+            "",
+            "4 gallery tiles (Cell 26's ranking):", "",
+            "| tile | regions (B) | regions (A) | area p50 (B) | area p50 (A) |",
+            "| --- | --- | --- | --- | --- |",
+        ]
+        for t in variant["gallery"]:
+            lines.append(
+                f"| `{t['source_image']}` | {t['n_regions_mode_b']} | "
+                f"{t['n_regions_mode_a']} | {_fmt(t['area_p50_mode_b'], '.0f')} | "
+                f"{_fmt(t['area_p50_mode_a'], '.0f')} |"
+            )
+        full = variant["full_steel2"]
+        lines += [
+            "", f"Full Steel2 profile ({full['n_files']} files):", "",
+            "| | regions/tile | area p25 | area p50 | area p75 | share < 50 px | "
+            "share < 100 px |",
+            "| --- | --- | --- | --- | --- | --- | --- |",
+        ]
+        for label, key in (("MODE B", "mode_b"), ("MODE A", "mode_a")):
+            m = full[key]
+            pct = m["area_percentiles"]
+            lines.append(
+                f"| {label} | {m['regions_per_tile']:.1f} | "
+                f"{_fmt(pct.get('p25'), '.0f')} | {_fmt(pct.get('p50'), '.0f')} | "
+                f"{_fmt(pct.get('p75'), '.0f')} | {m['share_lt_50']:.1%} | "
+                f"{m['share_lt_100']:.1%} |"
+            )
+        lines.append("")
+
+    lines += [
+        "## 4. Gallery figures", "",
+        "See the notebook cell's output: one figure per variant, 4 rows (the same "
+        "gallery tiles) x 3 columns (raw image, MODE B boundary under that variant's "
+        "binarization, MODE A boundary under the same binarization), each panel "
+        "captioned with its region count. Not persisted as image files here -- the "
+        "notebook is the artefact.",
+        "", "## What this report does NOT do", "",
+        "- does not change MC_SHARE_THIN_MIN / MC_LARGEST_CC_MIN in Cell 27",
+        "- does not wire MODE A, or any alternate threshold, into extract_folder",
+        "- does not regenerate any boundary PNG under `GT_BOUNDARIES_ROOT`",
+        "- does not rebuild `fold_steel_combined`'s manifests or `configs/fold_stats.yaml`",
+        "- does not retrain or touch any checkpoint",
+    ]
+    return "\n".join(lines) + "\n"
+
+
+def write_mode_check_forced_report(payload: dict, reports_dir: Optional[Path] = None) -> tuple:
+    """Write reports/steel2_gt_mode_check_forced.{md,json}. See the
+    module-level comment above render_mode_check_forced_markdown."""
+    reports_dir = Path(reports_dir or (REPO_ROOT / "reports"))
+    reports_dir.mkdir(parents=True, exist_ok=True)
+    md_path = reports_dir / "steel2_gt_mode_check_forced.md"
+    json_path = reports_dir / "steel2_gt_mode_check_forced.json"
+    json_path.write_text(json.dumps(payload, indent=2))
+    md_path.write_text(render_mode_check_forced_markdown(payload))
     return md_path, json_path
