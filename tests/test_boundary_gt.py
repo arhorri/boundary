@@ -323,3 +323,88 @@ def test_pooled_class_shape_profile_pools_across_files(tmp_path):
     assert prof["pixel_share"] == pytest.approx(16 / (2 * size * size))
     assert prof["mean_inside"] == pytest.approx(5.0)
     assert prof["mean_outside"] == pytest.approx(50.0)
+
+
+# --------------------------------------------------------------------------
+# forced mode-check: threshold sensitivity + mode_b_vs_a_raw
+# --------------------------------------------------------------------------
+def test_threshold_labels_basic():
+    gray = np.array([[10, 200], [250, 5]], dtype=float)
+    labels = boundary_gt.threshold_labels(gray, 128)
+    assert labels.tolist() == [[1, 0], [0, 1]]
+
+
+def test_mode_b_vs_a_raw_matches_the_two_underlying_calls():
+    size = 20
+    labels = np.zeros((size, size), dtype=np.int32)
+    labels[:, 5] = 1
+    current, proposed = boundary_gt.mode_b_vs_a_raw(labels, class_index=1,
+                                                     blob_thickness_px=8.0)
+    assert np.array_equal(current, boundary_gt.boundaries_from_labels(labels))
+    assert np.array_equal(
+        proposed, boundary_gt.mode_a_raw_from_line_class(labels, 1, 8.0))
+
+
+def test_threshold_sensitivity_profile_shows_fragmentation_dropping_toward_white(tmp_path):
+    """One line, one 5 px "faint" gap at intensity 200 -- neither fully dark
+    nor fully white. At threshold=128 the gap is NOT dark, splitting the
+    line into 2 components; at threshold=220 the gap IS dark, reconnecting
+    it into 1 -- exactly the mechanism the task suspects is inflating
+    Steel2's component count, made concrete and checkable without
+    executing anything on real data.
+    """
+    size = 50
+    gray = np.full((size, size), 250, dtype=np.uint8)
+    gray[25, 0:20] = 10
+    gray[25, 20:25] = 200          # the "faint anti-aliased" gap
+    gray[25, 25:50] = 10
+    path = tmp_path / "m.png"
+    _write_png(path, gray)
+
+    result = boundary_gt.threshold_sensitivity_profile(
+        [(None, path)], [128, 220], thin_width_px=8.0)
+
+    assert result["128"]["n_components_total"] == 2
+    assert result["128"]["largest_cc_share"] == pytest.approx(25 / 45)
+    assert result["128"]["dark_share"] == pytest.approx(45 / (size * size))
+
+    assert result["220"]["n_components_total"] == 1
+    assert result["220"]["largest_cc_share"] == pytest.approx(1.0)
+    assert result["220"]["dark_share"] == pytest.approx(50 / (size * size))
+
+    assert result["128"]["per_file"][0]["n_components"] == 2
+    assert result["220"]["per_file"][0]["n_components"] == 1
+
+    # the mechanism this task is checking for, stated as an assertion: the
+    # fragmentation measured at the low cut must be worse than at the high one.
+    assert result["220"]["largest_cc_share"] > result["128"]["largest_cc_share"]
+
+
+def test_threshold_sensitivity_profile_no_pairs_raises():
+    with pytest.raises(boundary_gt.ExtractionError):
+        boundary_gt.threshold_sensitivity_profile([], [128])
+
+
+def test_threshold_sensitivity_profile_reads_each_file_once_per_call(tmp_path, monkeypatch):
+    """Every threshold in the sweep must reuse the SAME read, not re-read
+    the file from disk once per threshold -- the whole point of sweeping in
+    one function instead of calling a per-threshold profile in a loop.
+    """
+    from src import audit as audit_mod
+
+    size = 20
+    gray = np.full((size, size), 250, dtype=np.uint8)
+    gray[10, :] = 10
+    path = tmp_path / "m.png"
+    _write_png(path, gray)
+
+    calls = []
+    real_read = audit_mod.read_array
+
+    def counting_read(p):
+        calls.append(p)
+        return real_read(p)
+
+    monkeypatch.setattr(audit_mod, "read_array", counting_read)
+    boundary_gt.threshold_sensitivity_profile([(None, path)], [64, 128, 192, 224, 240])
+    assert calls == [path], f"expected exactly one read, got {calls}"
