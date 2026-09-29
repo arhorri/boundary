@@ -151,3 +151,175 @@ def test_load_config_accepts_a_per_dataset_min_region_area_px(tmp_path):
 
 def test_load_config_min_region_area_px_defaults_to_empty():
     assert boundary_gt.DEFAULTS["min_region_area_px"] == {}
+
+
+# --------------------------------------------------------------------------
+# mode-check diagnostic: is a MODE B class actually a painted line?
+# --------------------------------------------------------------------------
+def _thin_line_mask(size=40, col=5):
+    """A full-height, 1 px wide vertical line -- one component, width ~1.
+
+    Every pixel has a background neighbour immediately left/right, so the
+    uncorrected ``2 x distance-transform`` (no width_hint parity fix, unlike
+    measured_line_width) works out to ~2.0, not ~1.0 -- that offset is
+    exactly what this module's width measurements deliberately skip (see
+    class_shape_profile's docstring), so the raw value, not the calibrated
+    one, is what a test of it must expect.
+    """
+    m = np.zeros((size, size), dtype=bool)
+    m[:, col] = True
+    return m
+
+
+def _blob_mask(size=40, cy=20, cx=20, radius=10):
+    """A solid disk. Its skeleton collapses to a tight cluster near the
+    centre (not a ridge with tapering ends, the way a rectangle's would),
+    where distance-to-background is ~radius everywhere -- a robust,
+    unambiguous "thick" shape to test against, far from `col=5` above.
+    """
+    rr, cc = np.ogrid[:size, :size]
+    return (rr - cy) ** 2 + (cc - cx) ** 2 <= radius ** 2
+
+
+def test_class_shape_profile_tells_a_thin_line_from_a_blob():
+    line = boundary_gt.class_shape_profile(_thin_line_mask())
+    assert line["n_pixels"] == 40
+    assert line["width_p50"] == pytest.approx(2.0, abs=0.5)
+    assert line["share_thin"] == 1.0
+    assert line["n_components"] == 1
+    assert line["largest_cc_share"] == 1.0
+
+    blob = boundary_gt.class_shape_profile(_blob_mask())
+    assert blob["width_p50"] > 8.0, "a solid disk of radius 10 is not a thin line"
+    assert blob["share_thin"] == 0.0
+    assert blob["n_components"] == 1
+    assert blob["largest_cc_share"] == 1.0
+
+
+def test_class_shape_profile_empty_mask_is_all_none():
+    prof = boundary_gt.class_shape_profile(np.zeros((10, 10), dtype=bool))
+    assert prof["n_pixels"] == 0
+    assert prof["width_p50"] is None and prof["width_p95"] is None
+    assert prof["share_thin"] is None
+    assert prof["largest_cc_share"] is None
+    assert prof["mean_inside"] is None and prof["mean_outside"] is None
+
+
+def test_class_shape_profile_reads_intensity_inside_vs_outside():
+    mask = _blob_mask(size=20, cy=10, cx=10, radius=5)
+    gray = np.full((20, 20), 200.0)
+    gray[mask] = 10.0
+    prof = boundary_gt.class_shape_profile(mask, gray=gray)
+    assert prof["mean_inside"] == pytest.approx(10.0)
+    assert prof["mean_outside"] == pytest.approx(200.0)
+
+
+def test_classify_line_class_components_splits_thin_from_thick():
+    size = 40
+    labels = np.zeros((size, size), dtype=np.int32)
+    labels[:, 5] = 1                              # thin line, width ~1
+    blob = _blob_mask(size=size, cy=25, cx=25, radius=10)   # far from col 5
+    labels[blob] = 1
+
+    line_mask, blob_mask, widths = boundary_gt.classify_line_class_components(
+        labels, class_index=1, blob_thickness_px=8.0)
+
+    assert line_mask[:, 5].all()
+    assert not line_mask[blob].any(), "the blob must not land in line_mask"
+    assert blob_mask[blob].all()
+    assert not blob_mask[:, 5].any(), "the line must not land in blob_mask"
+    assert len(widths) == 2
+    assert sorted(widths.values())[0] < 8.0 < sorted(widths.values())[1]
+
+
+def test_classify_line_class_components_empty_class_returns_empty_masks():
+    labels = np.zeros((10, 10), dtype=np.int32)
+    line_mask, blob_mask, widths = boundary_gt.classify_line_class_components(
+        labels, class_index=1, blob_thickness_px=8.0)
+    assert not line_mask.any() and not blob_mask.any()
+    assert widths == {}
+
+
+def test_mode_a_raw_from_line_class_keeps_line_pixels_and_outlines_the_blob():
+    """The thin component's OWN pixels must survive unchanged (a real MODE A
+    extraction would feed them straight to clean_boundary, unskeletonized
+    here). The thick component must NOT survive as a filled blob -- only its
+    OUTLINE, exactly what boundaries_from_labels already draws for any MODE B
+    phase -- because skeletonizing a genuine filled region would fabricate a
+    boundary through its interior.
+    """
+    size = 40
+    labels = np.zeros((size, size), dtype=np.int32)
+    labels[:, 5] = 1                              # thin line
+    blob = _blob_mask(size=size, cy=25, cx=25, radius=10)   # thick, far from col 5
+    labels[blob] = 1
+
+    raw = boundary_gt.mode_a_raw_from_line_class(labels, class_index=1,
+                                                 blob_thickness_px=8.0)
+    assert raw[:, 5].all(), "the line's own pixels must pass straight through"
+    centre = _blob_mask(size=size, cy=25, cx=25, radius=6)   # well inside the disk
+    assert not raw[centre].any(), (
+        "the blob's INTERIOR must not be marked -- only its outline may be")
+    assert raw[blob].any(), "the blob must still draw SOME boundary around its outline"
+
+
+def test_mode_a_raw_from_line_class_empty_class_is_empty():
+    labels = np.zeros((10, 10), dtype=np.int32)
+    raw = boundary_gt.mode_a_raw_from_line_class(labels, class_index=1,
+                                                 blob_thickness_px=8.0)
+    assert not raw.any()
+
+
+def _write_png(path, array):
+    from PIL import Image
+
+    Image.fromarray(array.astype(np.uint8)).save(path)
+
+
+def test_label_value_histogram_pools_exact_values_across_files(tmp_path):
+    a = np.zeros((4, 4), dtype=np.uint8)
+    a[:2, :] = 10                                  # half the pixels: value 10
+    b = np.full((4, 4), 10, dtype=np.uint8)        # all pixels: value 10
+    b[0, 0] = 20
+    path_a, path_b = tmp_path / "a.png", tmp_path / "b.png"
+    _write_png(path_a, a)
+    _write_png(path_b, b)
+
+    hist = boundary_gt.label_value_histogram([(None, path_a), (None, path_b)])
+    shares = {tuple(v): s for v, s in hist}
+    # 8 (a) + 16 (b) = 24 pixels total; value 10 covers 8 + 15 = 23 of them.
+    assert shares[(10, 10, 10)] == pytest.approx(23 / 32)
+    assert shares[(0, 0, 0)] == pytest.approx(8 / 32)
+    assert shares[(20, 20, 20)] == pytest.approx(1 / 32)
+
+
+def test_pooled_class_shape_profile_pools_across_files(tmp_path):
+    """Two masks, same palette; one all-background, one with a 4x4 class-1
+    block. Pooling must weight by actual pixel count, not average the two
+    files' shares as if they carried equal weight -- the empty file
+    contributes 0 class pixels, not "half of nothing happened".
+    """
+    palette = [(0, 0, 0), (255, 255, 255)]
+    size = 10
+    empty_mask = np.zeros((size, size, 3), dtype=np.uint8)          # all class 0
+    filled_mask = np.zeros((size, size, 3), dtype=np.uint8)
+    filled_mask[2:6, 2:6] = 255                                    # 16 px of class 1
+    empty_img = np.full((size, size), 50, dtype=np.uint8)
+    filled_img = np.full((size, size), 50, dtype=np.uint8)
+    filled_img[2:6, 2:6] = 5                                       # dark under class 1
+
+    p_mask_empty, p_img_empty = tmp_path / "m0.png", tmp_path / "i0.png"
+    p_mask_full, p_img_full = tmp_path / "m1.png", tmp_path / "i1.png"
+    _write_png(p_mask_empty, empty_mask)
+    _write_png(p_img_empty, empty_img)
+    _write_png(p_mask_full, filled_mask)
+    _write_png(p_img_full, filled_img)
+
+    prof = boundary_gt.pooled_class_shape_profile(
+        [(p_img_empty, p_mask_empty), (p_img_full, p_mask_full)], palette,
+        class_index=1)
+    assert prof["n_files_sampled"] == 2
+    assert prof["n_files_with_class"] == 1
+    assert prof["pixel_share"] == pytest.approx(16 / (2 * size * size))
+    assert prof["mean_inside"] == pytest.approx(5.0)
+    assert prof["mean_outside"] == pytest.approx(50.0)

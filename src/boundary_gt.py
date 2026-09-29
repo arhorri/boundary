@@ -707,6 +707,250 @@ def measured_line_width(binary: np.ndarray, width_hint: Optional[int] = None
 
 
 # --------------------------------------------------------------------------
+# mode-check diagnostic: is a MODE B palette class actually a painted line?
+#
+# A MODE B label is assumed to be a PHASE: an area with an inside. Nothing
+# checks that assumption. If a class is instead a thin network traced over
+# the raw image (an etched grain-boundary line, say), find_boundaries still
+# runs on it without complaint -- it just draws a boundary loop on BOTH
+# edges of every line segment, trapping the line's own pixels as a spurious
+# strip "region" between them. The functions below measure whether a class
+# looks like that (this is read-only: nothing here changes what
+# extract_folder writes) and, if so, build the alternative boundary MODE A
+# would have produced had this class been the painted colour all along.
+# --------------------------------------------------------------------------
+def label_value_histogram(pairs: Sequence, sample: Optional[int] = None) -> list:
+    """Exact-value pixel share, pooled over a sample of a folder's masks.
+
+    Unlike :func:`derive_palette`'s peaks (colours merged within
+    ``palette_merge_distance`` of each other) or the audit's per-file
+    ``top_colours`` (only the most common few per file), this tallies every
+    EXACT value across full masks read fresh from disk -- the raw label
+    alphabet a folder's masks actually use, before any snapping or merging
+    decision narrows it to K classes.
+    """
+    from src import audit as audit_mod
+
+    chosen = list(pairs)[:sample] if sample else list(pairs)
+    if not chosen:
+        raise ExtractionError("label_value_histogram: no pairs given")
+    pooled: dict = {}
+    total = 0
+    for _, mask_path in chosen:
+        arr = audit_mod.read_array(mask_path)
+        arr3 = np.repeat(arr[:, :, None], 3, axis=2) if arr.ndim == 2 else arr[:, :, :3]
+        flat = arr3.reshape(-1, 3)
+        values, counts = np.unique(flat, axis=0, return_counts=True)
+        total += int(flat.shape[0])
+        for v, c in zip(values.tolist(), counts.tolist()):
+            key = tuple(v)
+            pooled[key] = pooled.get(key, 0) + int(c)
+    return sorted(([list(c), n / total] for c, n in pooled.items()), key=lambda t: -t[1])
+
+
+def _skeleton_widths(mask: np.ndarray) -> np.ndarray:
+    """2 x distance-transform at every skeleton pixel of a binary mask.
+
+    Empty when the mask has no foreground or skeletonizes to nothing. No
+    width_hint parity correction (contrast :func:`measured_line_width`):
+    this is a DISTRIBUTION to look at, not one calibrated width to trust.
+    """
+    import cv2
+    from skimage.morphology import skeletonize
+
+    mask = np.asarray(mask, dtype=bool)
+    if not mask.any():
+        return np.zeros(0, dtype=float)
+    skel = skeletonize(mask)
+    if not skel.any():
+        return np.zeros(0, dtype=float)
+    dist = cv2.distanceTransform(mask.astype(np.uint8), cv2.DIST_L2, 5)
+    return 2.0 * dist[skel]
+
+
+def class_shape_profile(class_mask: np.ndarray, gray: Optional[np.ndarray] = None,
+                        thin_width_px: float = 8.0) -> dict:
+    """Shape (and, given ``gray``, intensity) profile of ONE binary class mask.
+
+    ``share_thin`` is the fraction of SKELETON pixels narrower than
+    ``thin_width_px`` -- weighted by network length, which is what "is this
+    class a thin line network" turns on, not by raw area (a single wide
+    blob would otherwise dilute a genuinely thin network's share for no
+    good reason). ``largest_cc_share`` is the single largest 8-connected
+    component's share of the class's OWN area: near 1.0 means one connected
+    network; well below 1.0 means many separate blobs. ``mean_inside``/
+    ``mean_outside`` need ``gray`` (same shape as ``class_mask``) and are
+    ``None`` without it.
+    """
+    from skimage.measure import label as cc_label
+
+    mask = np.asarray(class_mask, dtype=bool)
+    out = {
+        "n_pixels": int(mask.sum()), "width_p50": None, "width_p95": None,
+        "share_thin": None, "n_skeleton_px": 0, "largest_cc_share": None,
+        "n_components": 0, "mean_inside": None, "mean_outside": None,
+    }
+    if not mask.any():
+        return out
+
+    widths = _skeleton_widths(mask)
+    out["n_skeleton_px"] = int(widths.size)
+    if widths.size:
+        out["width_p50"] = float(np.percentile(widths, 50))
+        out["width_p95"] = float(np.percentile(widths, 95))
+        out["share_thin"] = float((widths < thin_width_px).mean())
+
+    cc = cc_label(mask, connectivity=2)
+    if cc.max() > 0:
+        areas = np.bincount(cc.ravel())[1:]
+        out["n_components"] = int(areas.size)
+        out["largest_cc_share"] = float(areas.max() / areas.sum())
+
+    if gray is not None:
+        gray = np.asarray(gray, dtype=float)
+        out["mean_inside"] = float(gray[mask].mean())
+        if (~mask).any():
+            out["mean_outside"] = float(gray[~mask].mean())
+    return out
+
+
+def pooled_class_shape_profile(pairs: Sequence, palette: Sequence, class_index: int,
+                               sample: Optional[int] = None,
+                               thin_width_px: float = 8.0) -> dict:
+    """:func:`class_shape_profile`, pooled over a sample of (image, mask) pairs.
+
+    Every skeleton pixel's width and every class pixel's raw intensity is
+    POOLED across files before a percentile, share or mean is taken -- a
+    file with more class pixels contributes proportionally more, the same
+    way one big profile would, rather than an average of per-file averages
+    that would weight a nearly-empty file the same as a dense one. The
+    largest-component share is pooled the same way: summed component/class
+    area across files, not a mean of per-file ratios.
+    """
+    from src import audit as audit_mod
+
+    chosen = list(pairs)[:sample] if sample else list(pairs)
+    if not chosen:
+        raise ExtractionError("pooled_class_shape_profile: no pairs given")
+
+    widths, inside, outside = [], [], []
+    total_class_px, total_px = 0, 0
+    largest_cc_px_sum, n_components_sum = 0, 0
+    n_files_with_class = 0
+    for img_path, mask_path in chosen:
+        mask = audit_mod.read_array(mask_path)
+        labels, _, _ = snap_to_palette(mask, palette)
+        class_mask = labels == class_index
+        total_class_px += int(class_mask.sum())
+        total_px += int(class_mask.size)
+        if not class_mask.any():
+            continue
+        n_files_with_class += 1
+
+        w = _skeleton_widths(class_mask)
+        if w.size:
+            widths.append(w)
+
+        from skimage.measure import label as cc_label
+        cc = cc_label(class_mask, connectivity=2)
+        if cc.max() > 0:
+            areas = np.bincount(cc.ravel())[1:]
+            largest_cc_px_sum += int(areas.max())
+            n_components_sum += int(areas.size)
+
+        gray = audit_mod.read_array(img_path)
+        gray = gray[..., :3].mean(axis=-1) if gray.ndim == 3 else gray.astype(float)
+        inside.append(gray[class_mask])
+        if (~class_mask).any():
+            outside.append(gray[~class_mask])
+
+    all_widths = np.concatenate(widths) if widths else np.zeros(0, dtype=float)
+    all_inside = np.concatenate(inside) if inside else np.zeros(0, dtype=float)
+    all_outside = np.concatenate(outside) if outside else np.zeros(0, dtype=float)
+    return {
+        "n_files_sampled": len(chosen),
+        "n_files_with_class": n_files_with_class,
+        "pixel_share": (total_class_px / total_px) if total_px else None,
+        "width_p50": float(np.percentile(all_widths, 50)) if all_widths.size else None,
+        "width_p95": float(np.percentile(all_widths, 95)) if all_widths.size else None,
+        "share_thin": (float((all_widths < thin_width_px).mean())
+                      if all_widths.size else None),
+        "n_skeleton_px": int(all_widths.size),
+        "largest_cc_share": ((largest_cc_px_sum / total_class_px)
+                             if total_class_px else None),
+        "n_components_total": int(n_components_sum),
+        "mean_inside": float(all_inside.mean()) if all_inside.size else None,
+        "mean_outside": float(all_outside.mean()) if all_outside.size else None,
+    }
+
+
+def classify_line_class_components(labels: np.ndarray, class_index: int,
+                                   blob_thickness_px: float) -> tuple:
+    """Split one palette class's connected components into LINE (thin) and
+    BLOB (thick) by each component's OWN median local width
+    (:func:`measured_line_width`, which a lone pixel or short spur still
+    answers sensibly: distance-to-background 1, width ~1, correctly thin).
+
+    Returns ``(line_mask, blob_mask, widths_by_component)`` -- the last a
+    ``{component_id: width_px}`` dict for a diagnostic to inspect the split
+    it produced, not just trust it.
+    """
+    from skimage.measure import label as cc_label
+
+    class_mask = np.asarray(labels) == class_index
+    line_mask = np.zeros_like(class_mask)
+    blob_mask = np.zeros_like(class_mask)
+    widths_by_component = {}
+    if not class_mask.any():
+        return line_mask, blob_mask, widths_by_component
+
+    cc = cc_label(class_mask, connectivity=2)
+    for cid in range(1, int(cc.max()) + 1):
+        comp = cc == cid
+        width = measured_line_width(comp)
+        widths_by_component[cid] = width
+        if width is not None and width <= float(blob_thickness_px):
+            line_mask |= comp
+        else:
+            blob_mask |= comp
+    return line_mask, blob_mask, widths_by_component
+
+
+def mode_a_raw_from_line_class(labels: np.ndarray, class_index: int,
+                               blob_thickness_px: float) -> np.ndarray:
+    """The MODE-A-style raw boundary for a palette class that IS ITSELF the
+    painted boundary, not a phase -- e.g. Steel2's dark class (see
+    ``reports/steel2_gt_mode_check.md``), where MODE B's ``find_boundaries``
+    draws a loop on BOTH edges of every line segment and traps the line's
+    own pixels as a spurious thin "region" between them.
+
+    Every connected component of the class is classified LINE or BLOB by
+    :func:`classify_line_class_components` first:
+
+    - LINE (width <= ``blob_thickness_px``): its own pixels ARE the
+      boundary already -- passed straight through, unskeletonized, exactly
+      the way ``apply_hsv_window``'s colour-hit output feeds real MODE A's
+      shared :func:`clean_boundary` (which does its own despeckle, CLOSE,
+      skeletonize and redilate). Skeletonizing here first would just be
+      redone by clean_boundary a moment later.
+    - BLOB (thicker): a genuinely filled phase region -- skeletonizing it
+      would fabricate a boundary through its interior, colinear with
+      nothing painted in the raw image. Left as a phase instead: it gets
+      the SAME outline :func:`boundaries_from_labels` already gives every
+      MODE B phase, via a two-value map of ``{this blob, everything else}``.
+
+    Returns the raw (pre-cleanup) binary array; pass it through
+    :func:`clean_boundary` for a result comparable to MODE B's own ``raw``.
+    """
+    line_mask, blob_mask, _ = classify_line_class_components(
+        labels, class_index, blob_thickness_px)
+    raw = line_mask.copy()
+    if blob_mask.any():
+        raw |= boundaries_from_labels(blob_mask.astype(np.int32))
+    return raw
+
+
+# --------------------------------------------------------------------------
 # per-folder extraction
 # --------------------------------------------------------------------------
 def _save_png(path: Path, image: np.ndarray) -> None:
@@ -1207,3 +1451,126 @@ def render_markdown(report: dict) -> str:
             if d["n_rejected"] > 50:
                 lines.append(f"- ... and {d['n_rejected'] - 50} more")
     return "\n".join(lines) + "\n"
+
+
+# --------------------------------------------------------------------------
+# mode-check report (reports/steel2_gt_mode_check.{md,json})
+#
+# Diagnostic-only, read-only: the payload is assembled by the notebook cell
+# from the functions above plus train.true_regions_from_boundary (a step-6
+# function; kept out of this step-2 module so boundary_gt never depends on
+# train), and this just persists it. Nothing here writes a boundary PNG,
+# touches a manifest, or changes what extract_folder produces.
+# --------------------------------------------------------------------------
+def render_mode_check_markdown(payload: dict) -> str:
+    lines = [
+        "# GT mode check: is a MODE B palette class actually a painted line?",
+        "",
+        f"- generated: {payload['generated_utc']}",
+        f"- settings: {payload['settings']}",
+        "",
+        "MODE B assumes every palette class is a PHASE (an area with an inside) and "
+        "draws `find_boundaries` around it. Nothing checks that assumption. This "
+        "report measures, per dataset, whether the class actually looks like a thin "
+        "painted line instead -- which `find_boundaries` would still happily outline "
+        "on both edges, trapping the line's own pixels as a spurious strip \"region\".",
+    ]
+
+    for name, d in payload["datasets"].items():
+        lines += [
+            "", f"## {name}", "",
+            f"- K = {d['k']} palette classes: "
+            + ", ".join(f"`{c}`" for c in d["palette"]),
+            f"- sampled {d['n_files_sampled']} mask files fresh from disk",
+            "",
+            "Raw label alphabet (top values, exact-match pixel share, before any "
+            "palette-merge snapping):",
+            "",
+            "| value | pixel share |", "| --- | --- |",
+        ]
+        for value, share in d["label_value_histogram_top"]:
+            lines.append(f"| `{value}` | {share:.4f} |")
+
+        lines += [
+            "", "Per-palette-class shape/intensity profile:", "",
+            "| class idx | colour | pixel share | width p50 | width p95 | "
+            "share thin | components | largest CC share | mean inside | mean outside |",
+            "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+        ]
+        for idx, prof in d["class_profiles"].items():
+            colour = d["palette"][int(idx)]
+            lines.append(
+                f"| {idx} | `{colour}` | {_fmt(prof['pixel_share'])} | "
+                f"{_fmt(prof['width_p50'], '.2f')} | {_fmt(prof['width_p95'], '.2f')} | "
+                f"{_fmt(prof['share_thin'], '.2%')} | {prof['n_components_total']} | "
+                f"{_fmt(prof['largest_cc_share'], '.2%')} | "
+                f"{_fmt(prof['mean_inside'], '.1f')} | {_fmt(prof['mean_outside'], '.1f')} |"
+            )
+
+    v = payload["verdict"]
+    lines += [
+        "", "## Verdict", "",
+        f"- **{v['dataset']}** class {v['class_index']} (colour `{v['colour']}`): "
+        + ("LINE-LIKE" if v["line_like"] else "not line-like"),
+        f"- {v['reason']}",
+    ]
+
+    mc = payload.get("mode_comparison")
+    if mc:
+        lines += [
+            "", "## MODE B vs proposed MODE A -- side by side", "",
+            "Proposed MODE A: this class's own pixels ARE the boundary (thin "
+            "components passed straight through to the shared cleanup, unskeletonized "
+            "here since clean_boundary skeletonizes anyway; thick components keep "
+            "MODE B's own outline treatment -- see "
+            "`boundary_gt.mode_a_raw_from_line_class`). Nothing regenerated on disk: "
+            "this is computed in memory for comparison only.",
+            "", "### The 4 gallery tiles (most GT regions under current MODE B)", "",
+            "| tile | regions (B) | regions (A) | area p50 (B) | area p50 (A) |",
+            "| --- | --- | --- | --- | --- |",
+        ]
+        for t in mc["gallery"]:
+            lines.append(
+                f"| `{t['source_image']}` | {t['n_regions_mode_b']} | "
+                f"{t['n_regions_mode_a']} | {_fmt(t['area_p50_mode_b'], '.0f')} | "
+                f"{_fmt(t['area_p50_mode_a'], '.0f')} |"
+            )
+
+        full = mc["full_steel2"]
+        lines += [
+            "", f"### Full Steel2 profile ({full['n_files']} files)", "",
+            "| | regions/tile | area p25 | area p50 | area p75 | share < 50 px | share < 100 px |",
+            "| --- | --- | --- | --- | --- | --- | --- |",
+        ]
+        for label, key in (("MODE B (current)", "mode_b"), ("MODE A (proposed)", "mode_a")):
+            m = full[key]
+            pct = m["area_percentiles"]
+            lines.append(
+                f"| {label} | {m['regions_per_tile']:.1f} | {_fmt(pct.get('p25'), '.0f')} | "
+                f"{_fmt(pct.get('p50'), '.0f')} | {_fmt(pct.get('p75'), '.0f')} | "
+                f"{m['share_lt_50']:.1%} | {m['share_lt_100']:.1%} |"
+            )
+    else:
+        lines += ["", "No MODE B/A comparison was run (the class did not verify as "
+                      "line-like enough to warrant one)."]
+
+    lines += [
+        "", "## What this report does NOT do", "",
+        "- does not regenerate any boundary PNG under `GT_BOUNDARIES_ROOT`",
+        "- does not rebuild `fold_steel_combined`'s manifests or `configs/fold_stats.yaml`",
+        "- does not retrain or touch any checkpoint",
+        "- proposes a per-dataset MODE option; does not turn it on anywhere",
+    ]
+    return "\n".join(lines) + "\n"
+
+
+def write_mode_check_report(payload: dict, reports_dir: Optional[Path] = None) -> tuple:
+    """Write reports/steel2_gt_mode_check.{md,json}. Read-only diagnostic:
+    see the module-level comment above render_mode_check_markdown."""
+    reports_dir = Path(reports_dir or (REPO_ROOT / "reports"))
+    reports_dir.mkdir(parents=True, exist_ok=True)
+    md_path = reports_dir / "steel2_gt_mode_check.md"
+    json_path = reports_dir / "steel2_gt_mode_check.json"
+    json_path.write_text(json.dumps(payload, indent=2))
+    md_path.write_text(render_mode_check_markdown(payload))
+    return md_path, json_path
