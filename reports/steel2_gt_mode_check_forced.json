@@ -1,0 +1,212 @@
+{
+  "generated_utc": "2026-09-30T09:22:15Z",
+  "settings": {
+    "line_width_px": 4.0,
+    "blob_thickness_px": 8.0,
+    "thin_width_px": 8.0,
+    "sample_files": 60,
+    "thresholds_swept": [
+      64,
+      128,
+      192,
+      224,
+      240
+    ]
+  },
+  "note": "the largest-CC-share gate (>= 0.5) in reports/steel2_gt_mode_check.json did NOT clear (0.24) -- this report FORCES the MODE B vs MODE A comparison anyway; no gate in Cell 27 was changed.",
+  "file_size_check": {
+    "n_files_checked": 60,
+    "all_same_size": true,
+    "size": [
+      256,
+      256
+    ],
+    "note": "every sampled file is a single 256x256 image, and Steel1/Steel2 tiles are already exactly 256x256 with one tile per image and zero padding (CLAUDE.md's own hard rule) -- so 'file' and 'tile' are the SAME unit here; there is no separate crop step to account for."
+  },
+  "threshold_sensitivity": {
+    "64": {
+      "threshold": 64.0,
+      "n_files_sampled": 60,
+      "dark_share": 0.19602279663085936,
+      "share_thin": 0.9021516393442623,
+      "largest_cc_share": 0.23580131111725197,
+      "n_components_total": 11843,
+      "skeleton_px_per_file_mean": 3416.0,
+      "skeleton_px_per_file_median": 3378.0
+    },
+    "128": {
+      "threshold": 128.0,
+      "n_files_sampled": 60,
+      "dark_share": 0.19602279663085936,
+      "share_thin": 0.9021516393442623,
+      "largest_cc_share": 0.23580131111725197,
+      "n_components_total": 11843,
+      "skeleton_px_per_file_mean": 3416.0,
+      "skeleton_px_per_file_median": 3378.0
+    },
+    "192": {
+      "threshold": 192.0,
+      "n_files_sampled": 60,
+      "dark_share": 0.19602279663085936,
+      "share_thin": 0.9021516393442623,
+      "largest_cc_share": 0.23580131111725197,
+      "n_components_total": 11843,
+      "skeleton_px_per_file_mean": 3416.0,
+      "skeleton_px_per_file_median": 3378.0
+    },
+    "224": {
+      "threshold": 224.0,
+      "n_files_sampled": 60,
+      "dark_share": 0.19602279663085936,
+      "share_thin": 0.9021516393442623,
+      "largest_cc_share": 0.23580131111725197,
+      "n_components_total": 11843,
+      "skeleton_px_per_file_mean": 3416.0,
+      "skeleton_px_per_file_median": 3378.0
+    },
+    "240": {
+      "threshold": 240.0,
+      "n_files_sampled": 60,
+      "dark_share": 0.1981427510579427,
+      "share_thin": 0.9057402010850722,
+      "largest_cc_share": 0.23401259611694597,
+      "n_components_total": 17268,
+      "skeleton_px_per_file_mean": 3557.366666666667,
+      "skeleton_px_per_file_median": 3529.0
+    },
+    "current (K=2 snap)": {
+      "threshold": null,
+      "n_files_sampled": 60,
+      "dark_share": 0.19602279663085936,
+      "share_thin": 0.9021516393442623,
+      "largest_cc_share": 0.23580131111725197,
+      "n_components_total": 11843,
+      "skeleton_px_per_file_mean": 3416.0,
+      "skeleton_px_per_file_median": null
+    }
+  },
+  "best_threshold": 64,
+  "fragmentation_drops_toward_white": false,
+  "variants": {
+    "k2": {
+      "threshold": null,
+      "gallery": [
+        {
+          "source_image": "87450661_tile_2560_512.png",
+          "n_regions_gt_on_disk": 207,
+          "n_regions_mode_b": 207,
+          "n_regions_mode_a": 66,
+          "area_p50_mode_b": 82.0,
+          "area_p50_mode_a": 236.0
+        },
+        {
+          "source_image": "87450661_tile_2048_2048.png",
+          "n_regions_gt_on_disk": 205,
+          "n_regions_mode_b": 205,
+          "n_regions_mode_a": 61,
+          "area_p50_mode_b": 79.0,
+          "area_p50_mode_a": 266.0
+        },
+        {
+          "source_image": "87450741_tile_1024_1536.png",
+          "n_regions_gt_on_disk": 201,
+          "n_regions_mode_b": 201,
+          "n_regions_mode_a": 54,
+          "area_p50_mode_b": 64.0,
+          "area_p50_mode_a": 96.0
+        },
+        {
+          "source_image": "87450661_tile_1280_1792.png",
+          "n_regions_gt_on_disk": 200,
+          "n_regions_mode_b": 200,
+          "n_regions_mode_a": 64,
+          "area_p50_mode_b": 72.0,
+          "area_p50_mode_a": 136.0
+        }
+      ],
+      "full_steel2": {
+        "n_files": 504,
+        "mode_b": {
+          "regions_per_tile": 102.81547619047619,
+          "area_percentiles": {
+            "p25": 38.0,
+            "p50": 78.0,
+            "p75": 192.0
+          },
+          "share_lt_50": 0.3382157123834887,
+          "share_lt_100": 0.5788803334684189
+        },
+        "mode_a": {
+          "regions_per_tile": 28.738095238095237,
+          "area_percentiles": {
+            "p25": 64.0,
+            "p50": 146.0,
+            "p75": 395.0
+          },
+          "share_lt_50": 0.19386909693454846,
+          "share_lt_100": 0.37827948080640705
+        }
+      }
+    },
+    "best_cut": {
+      "threshold": 64,
+      "gallery": [
+        {
+          "source_image": "87450661_tile_2560_512.png",
+          "n_regions_gt_on_disk": 207,
+          "n_regions_mode_b": 207,
+          "n_regions_mode_a": 66,
+          "area_p50_mode_b": 82.0,
+          "area_p50_mode_a": 236.0
+        },
+        {
+          "source_image": "87450661_tile_2048_2048.png",
+          "n_regions_gt_on_disk": 205,
+          "n_regions_mode_b": 205,
+          "n_regions_mode_a": 61,
+          "area_p50_mode_b": 79.0,
+          "area_p50_mode_a": 266.0
+        },
+        {
+          "source_image": "87450741_tile_1024_1536.png",
+          "n_regions_gt_on_disk": 201,
+          "n_regions_mode_b": 201,
+          "n_regions_mode_a": 54,
+          "area_p50_mode_b": 64.0,
+          "area_p50_mode_a": 96.0
+        },
+        {
+          "source_image": "87450661_tile_1280_1792.png",
+          "n_regions_gt_on_disk": 200,
+          "n_regions_mode_b": 200,
+          "n_regions_mode_a": 64,
+          "area_p50_mode_b": 72.0,
+          "area_p50_mode_a": 136.0
+        }
+      ],
+      "full_steel2": {
+        "n_files": 504,
+        "mode_b": {
+          "regions_per_tile": 102.81547619047619,
+          "area_percentiles": {
+            "p25": 38.0,
+            "p50": 78.0,
+            "p75": 192.0
+          },
+          "share_lt_50": 0.3382157123834887,
+          "share_lt_100": 0.5788803334684189
+        },
+        "mode_a": {
+          "regions_per_tile": 28.738095238095237,
+          "area_percentiles": {
+            "p25": 64.0,
+            "p50": 146.0,
+            "p75": 395.0
+          },
+          "share_lt_50": 0.19386909693454846,
+          "share_lt_100": 0.37827948080640705
+        }
+      }
+    }
+  }
+}

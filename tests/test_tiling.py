@@ -369,3 +369,77 @@ def test_existing_folds_byte_identical_with_and_without_steel_combined():
     finally:
         shutil.rmtree(tmp_before, ignore_errors=True)
         shutil.rmtree(tmp_after, ignore_errors=True)
+
+
+# --------------------------------------------------------------------------
+# Steel2 line-class ground truth: its own fold name, same tile membership
+# --------------------------------------------------------------------------
+def _extraction(**line_class):
+    """Minimal gt_extraction.json shape: only what apply_gt_variant reads."""
+    return {"datasets": {
+        "Steel1": {"mode": "B", "mode_a_line_class": None},
+        "Steel2": {"mode": "B", "mode_a_line_class": line_class.get("Steel2")},
+    }}
+
+
+def test_apply_gt_variant_leaves_settings_alone_when_no_dataset_uses_the_option():
+    settings = _settings()
+    assert tiling.apply_gt_variant(settings, _extraction()) is settings
+    assert settings["steel_combined"]["name"] == "fold_steel_combined"
+
+
+def test_apply_gt_variant_renames_the_fold_without_mutating_the_original():
+    settings = _settings()
+    record = {"class_index": 1, "colour": [0, 0, 0], "blob_thickness_px": 8.0}
+    variant = tiling.apply_gt_variant(settings, _extraction(Steel2=record))
+    assert variant["steel_combined"]["name"] == "fold_steel_combined_modea"
+    assert variant["steel_combined"]["name"] == settings["steel_combined_mode_a_name"]
+    # everything else about the fold is the same -- only the name moves
+    assert {k: v for k, v in variant["steel_combined"].items() if k != "name"} == {
+        k: v for k, v in settings["steel_combined"].items() if k != "name"}
+    assert settings["steel_combined"]["name"] == "fold_steel_combined", (
+        "the caller's settings must not be edited in place")
+
+
+def test_apply_gt_variant_refuses_a_name_that_would_overwrite_the_original():
+    settings = _settings(steel_combined_mode_a_name="fold_steel_combined")
+    with pytest.raises(tiling.TilingError):
+        tiling.apply_gt_variant(settings, _extraction(Steel2={"class_index": 1}))
+
+
+def test_changing_only_the_ground_truth_changes_pos_weight_but_not_membership():
+    """The claim the regeneration rests on, made checkable: Steel2's boundary
+    fractions change when its ground truth does, which moves pos_weight, but
+    membership is decided by parent and tile COUNTS -- so the same tiles land
+    in the same splits as long as no tile crosses min_boundary_frac.
+    """
+    settings = _settings()
+    old_index = _synthetic_index()
+    new_index = copy.deepcopy(old_index)
+    for t in new_index["datasets"]["Steel2"]["tiles"]:
+        t["boundary_fraction"] = 0.04                     # 0.10 -> 0.04
+    old_fold = tiling.build_steel_combined_fold(old_index, settings)
+    new_fold = tiling.build_steel_combined_fold(new_index, settings)
+
+    assert tiling.membership_diff(tiling.fold_membership(old_fold),
+                                  tiling.fold_membership(new_fold)) == {}
+    old_pw = tiling.pos_weight([r for r in old_fold["rows"] if r["split"] == "train"])
+    new_pw = tiling.pos_weight([r for r in new_fold["rows"] if r["split"] == "train"])
+    assert new_pw > old_pw, "less boundary -> more background per boundary pixel"
+
+
+def test_membership_diff_names_the_tiles_that_moved_or_vanished():
+    old = {"train": ["a", "b"], "val": ["c"], "test": ["d"]}
+    new = {"train": ["a"], "val": ["c", "b"], "test": ["d"]}
+    diff = tiling.membership_diff(old, new)
+    assert diff == {"train": {"only_old": ["b"], "only_new": []},
+                    "val": {"only_old": [], "only_new": ["b"]}}
+    assert tiling.membership_diff(old, old) == {}
+
+
+def test_manifest_membership_reads_back_what_fold_membership_reports(tmp_path):
+    settings = _settings()
+    fold = tiling.build_steel_combined_fold(_synthetic_index(), settings)
+    tv = tiling.write_manifest(fold["rows"], tmp_path / "f.csv")
+    te = tiling.write_manifest(fold["test_rows"], tmp_path / "f_test.csv")
+    assert tiling.manifest_membership(tv, te) == tiling.fold_membership(fold)

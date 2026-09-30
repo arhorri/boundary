@@ -2779,6 +2779,64 @@ def test_gt_fingerprint_changes_when_the_report_bytes_change(tmp_path):
     assert before["gt_extraction_sha256"] != after["gt_extraction_sha256"]
 
 
+def _write_gt_extraction_with_line_class(reports_dir, threshold=None, colour=(0, 0, 0)):
+    """A gt_extraction.json whose Steel2 record does (or, threshold=None, does
+    not) carry a mode_a_line_class entry, as boundary_gt.extract_folder writes it."""
+    reports_dir.mkdir(parents=True, exist_ok=True)
+    record = (None if threshold is None else
+              {"class_index": 1, "colour": list(colour), "blob_thickness_px": threshold})
+    settings = {"line_width_px": 4}
+    if threshold is not None:
+        settings["mode_a_line_class"] = {"Steel2": threshold}
+    payload = {"generated_utc": "2026-01-01T00:00:00Z", "settings": settings,
+              "datasets": {"Steel1": {"mode_a_line_class": None},
+                           "Steel2": {"mode_a_line_class": record}}}
+    (reports_dir / "gt_extraction.json").write_text(json.dumps(payload))
+
+
+def test_gt_fingerprint_records_the_line_class_mode_and_threshold(tmp_path):
+    _write_gt_extraction_with_line_class(tmp_path, threshold=8.0)
+    fp = train_mod.gt_fingerprint(tmp_path)
+    assert fp["mode_a_line_class"] == {"Steel2": {
+        "class_index": 1, "colour": [0, 0, 0], "blob_thickness_px": 8.0}}
+
+
+def test_gt_fingerprint_omits_the_key_when_no_dataset_uses_the_line_class(tmp_path):
+    """A fingerprint saved before the option existed has no such key; an
+    always-present empty one would make every such checkpoint mismatch ground
+    truth that did not change."""
+    _write_gt_extraction_with_line_class(tmp_path, threshold=None)
+    assert "mode_a_line_class" not in train_mod.gt_fingerprint(tmp_path)
+    _write_gt_extraction(tmp_path)
+    assert "mode_a_line_class" not in train_mod.gt_fingerprint(tmp_path)
+
+
+def test_gt_fingerprint_changes_with_the_mode_and_with_its_threshold(tmp_path):
+    _write_gt_extraction_with_line_class(tmp_path, threshold=None)
+    mode_b = train_mod.gt_fingerprint(tmp_path)
+    _write_gt_extraction_with_line_class(tmp_path, threshold=8.0)
+    mode_a = train_mod.gt_fingerprint(tmp_path)
+    _write_gt_extraction_with_line_class(tmp_path, threshold=6.0)
+    mode_a_other = train_mod.gt_fingerprint(tmp_path)
+    assert mode_b != mode_a and mode_a != mode_a_other and mode_b != mode_a_other
+
+    # ...and a checkpoint trained on one is refused against ground truth on the other
+    with pytest.raises(train_mod.TrainError, match="ground truth different from"):
+        train_mod.verify_gt_fingerprint({"gt_fingerprint": mode_b}, mode_a, "ckpt.pt")
+
+
+def test_the_line_class_record_changes_the_fingerprint_even_if_only_the_class_moves(tmp_path):
+    """The palette class index / colour are DERIVED, so no setting shows them:
+    two reports with identical settings but a different resolved class must
+    not share a fingerprint."""
+    _write_gt_extraction_with_line_class(tmp_path, threshold=8.0, colour=(0, 0, 0))
+    a = train_mod.gt_fingerprint(tmp_path)
+    _write_gt_extraction_with_line_class(tmp_path, threshold=8.0, colour=(40, 40, 40))
+    b = train_mod.gt_fingerprint(tmp_path)
+    assert a["boundary_gt_settings"] == b["boundary_gt_settings"]
+    assert a["mode_a_line_class"] != b["mode_a_line_class"] and a != b
+
+
 def test_verify_gt_fingerprint_warns_without_raising_when_either_side_is_missing():
     fp = {"gt_extraction_sha256": "abc123", "boundary_gt_settings": {"line_width_px": 4}}
     msg = train_mod.verify_gt_fingerprint({}, None, "ckpt.pt")
