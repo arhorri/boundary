@@ -1,6 +1,6 @@
 # GT mode check (FORCED): MODE B vs MODE A despite the largest-CC gate
 
-- generated: 2026-09-30T09:22:15Z
+- generated: 2026-09-30T12:01:44Z
 - settings: {'line_width_px': 4.0, 'blob_thickness_px': 8.0, 'thin_width_px': 8.0, 'sample_files': 60, 'thresholds_swept': [64, 128, 192, 224, 240]}
 - the largest-CC-share gate (>= 0.5) in reports/steel2_gt_mode_check.json did NOT clear (0.24) -- this report FORCES the MODE B vs MODE A comparison anyway; no gate in Cell 27 was changed.
 
