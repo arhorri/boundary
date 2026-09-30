@@ -1,6 +1,6 @@
 # Boundary ground truth extraction
 
-- generated: 2026-09-16T07:38:12Z
+- generated: 2026-09-30T12:12:48Z
 - from audit: 2026-09-03T23:42:26Z
 - output root: `/content/drive/MyDrive/phase11-persistent/gt_boundaries`
 - line width: 4 px, speckle removal 'speckle' at 3x3, CLOSE 3x3
@@ -15,7 +15,7 @@ MODE A extracts a painted boundary colour by HSV thresholding and yields phase i
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | MetalDam | **B** | 5 | 42 | 2 | 0 | 0 | 0.1651 | 0.3576 |
 | Steel1 | **B** | 2 | 907 | 0 | 0 | 0 | 0.0381 | 0.0927 |
-| Steel2 | **B** | 2 | 504 | 0 | 0 | 0 | 0.1787 | 0.2885 |
+| Steel2 | **B** | 2 | 504 | 0 | 0 | 0 | 0.2256 | 0.2018 |
 | uhcs1 | **B** | 2 | 24 | 0 | 0 | 0 | 0.1151 | 0.2235 |
 | uhcs2 | **B** | 4 | 23 | 0 | 0 | 1 | 0.0505 | 0.1028 |
 
@@ -63,11 +63,16 @@ Mask and image dimensions disagreed by no more than the 2 px tolerance, so both 
 - mode: **B**
 - output: `/content/drive/MyDrive/phase11-persistent/gt_boundaries/Steel2`
 - pairs: 504 -> processed 504 (0 size-reconciled), rejected 0, excluded 0
-- boundary pixel fraction before cleanup (min/median/max): 0.0338/0.1787/0.2801
-- boundary pixel fraction after cleanup (min/median/max): 0.0413/0.2885/0.4215
-- intermediate medians: after speckle removal 0.1755, after CLOSE 0.2184
+- boundary pixel fraction before cleanup (min/median/max): 0.0153/0.2256/0.8524
+- boundary pixel fraction after cleanup (min/median/max): 0.0204/0.2018/0.3378
+- intermediate medians: after speckle removal 0.2211, after CLOSE 0.2384
 - K = 2 palette classes: `[255, 255, 255]`, `[0, 0, 0]`
 - K is the number of colour *peaks*, not the raw unique-colour count: colours within 48 RGB of a heavier colour are anti-aliasing or JPEG ramp values and snap to it.
+
+### Line-class boundary (`boundary_gt.mode_a_line_class`)
+
+- palette class 1 (colour `[0, 0, 0]`, the darkest) is treated as the painted boundary itself, NOT as a phase: `find_boundaries` is not run on it, because it would outline both edges of every line and trap the line's own pixels as a thin region
+- LINE/BLOB threshold 8 px: a connected component of that class no thicker than this passes its own pixels to the shared cleanup; a thicker one is a filled phase and keeps MODE B's outline (see `mode_a_raw_from_line_class`)
 
 ## uhcs1
 

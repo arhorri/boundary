@@ -1,0 +1,351 @@
+{
+  "generated_utc": "2026-09-30T12:14:55Z",
+  "decision": "adopt boundary_gt.mode_a_line_class for Steel2 only (Steel1 unchanged)",
+  "settings": {
+    "mode_a_line_class": {
+      "Steel2": 8
+    },
+    "min_region_area_px": {},
+    "line_width_px": 4.0,
+    "note": "configs/default.yaml still lists min_region_area_px Steel2: 50, never applied to the ground truth on disk; this regeneration forced it off"
+  },
+  "mode_a_line_class_record": {
+    "class_index": 1,
+    "colour": [
+      0,
+      0,
+      0
+    ],
+    "blob_thickness_px": 8.0
+  },
+  "gt_fingerprint": {
+    "before": {
+      "gt_extraction_sha256": "b6266b7480ad4db1",
+      "gt_extraction_generated_utc": "2026-09-16T07:38:12Z",
+      "boundary_gt_settings": {
+        "artifact_colours": {
+          "MetalDam": [
+            [
+              75,
+              176,
+              40
+            ]
+          ],
+          "uhcs2": [
+            [
+              75,
+              176,
+              40
+            ]
+          ]
+        },
+        "close_kernel": 3,
+        "exclusions": {
+          "uhcs2": [
+            "uhcs0596.png"
+          ]
+        },
+        "fold_artifact_colours": false,
+        "hsv_percentiles": [
+          2,
+          98
+        ],
+        "hsv_sample_files": 12,
+        "line_width_px": 4,
+        "max_unsnapped_fraction": 0.02,
+        "min_palette_share": 0.002,
+        "open_kernel": 3,
+        "open_mode": "speckle",
+        "output_subdir": "gt_boundaries",
+        "palette_merge_distance": 48,
+        "size_tolerance_px": 2
+      }
+    },
+    "after": {
+      "gt_extraction_sha256": "53155b40c2b6ebf8",
+      "gt_extraction_generated_utc": "2026-09-30T12:12:48Z",
+      "boundary_gt_settings": {
+        "artifact_colours": {
+          "MetalDam": [
+            [
+              75,
+              176,
+              40
+            ]
+          ],
+          "uhcs2": [
+            [
+              75,
+              176,
+              40
+            ]
+          ]
+        },
+        "close_kernel": 3,
+        "exclusions": {
+          "uhcs2": [
+            "uhcs0596.png"
+          ]
+        },
+        "fold_artifact_colours": false,
+        "hsv_percentiles": [
+          2,
+          98
+        ],
+        "hsv_sample_files": 12,
+        "line_width_px": 4,
+        "max_unsnapped_fraction": 0.02,
+        "min_palette_share": 0.002,
+        "min_region_area_px": {},
+        "mode_a_line_class": {
+          "Steel2": 8
+        },
+        "open_kernel": 3,
+        "open_mode": "speckle",
+        "output_subdir": "gt_boundaries",
+        "palette_merge_distance": 48,
+        "size_tolerance_px": 2
+      },
+      "mode_a_line_class": {
+        "Steel2": {
+          "class_index": 1,
+          "colour": [
+            0,
+            0,
+            0
+          ],
+          "blob_thickness_px": 8.0
+        }
+      }
+    }
+  },
+  "steel2_boundary_fraction_median": {
+    "before": 0.2884979248046875,
+    "after": 0.2017974853515625
+  },
+  "profile_in_memory_cell29": {
+    "mode_b": {
+      "tiles_without_any_boundary": 0,
+      "regions": {
+        "n_tiles": 504,
+        "regions_per_tile": 102.81547619047619,
+        "area_percentiles": {
+          "p25": 38.0,
+          "p50": 78.0,
+          "p75": 192.0
+        },
+        "share_lt_50": 0.3382157123834887,
+        "share_lt_100": 0.5788803334684189
+      },
+      "dangling_ends": {
+        "n_tiles": 504,
+        "endpoints_per_tile": {
+          "mean": 116.84722222222223,
+          "median": 116.0,
+          "p95": 161.84999999999997,
+          "max": 222.0
+        },
+        "interior_endpoints_per_tile": {
+          "mean": 83.59920634920636,
+          "median": 80.0,
+          "p95": 129.0,
+          "max": 198.0
+        },
+        "share_tiles_without_interior_endpoint": 0.0,
+        "interior_endpoints_per_1000_skeleton_px": 22.6409659944878
+      }
+    },
+    "mode_a": {
+      "tiles_without_any_boundary": 0,
+      "regions": {
+        "n_tiles": 504,
+        "regions_per_tile": 28.738095238095237,
+        "area_percentiles": {
+          "p25": 64.0,
+          "p50": 146.0,
+          "p75": 395.0
+        },
+        "share_lt_50": 0.19386909693454846,
+        "share_lt_100": 0.37827948080640705
+      },
+      "dangling_ends": {
+        "n_tiles": 504,
+        "endpoints_per_tile": {
+          "mean": 149.80357142857142,
+          "median": 153.0,
+          "p95": 193.0,
+          "max": 235.0
+        },
+        "interior_endpoints_per_tile": {
+          "mean": 126.8670634920635,
+          "median": 130.0,
+          "p95": 164.0,
+          "max": 211.0
+        },
+        "share_tiles_without_interior_endpoint": 0.0,
+        "interior_endpoints_per_1000_skeleton_px": 48.088920242381214
+      }
+    },
+    "mode_a_cleanup50": {
+      "tiles_without_any_boundary": 0,
+      "regions": {
+        "n_tiles": 504,
+        "regions_per_tile": 21.956349206349206,
+        "area_percentiles": {
+          "p25": 65.0,
+          "p50": 184.0,
+          "p75": 532.0
+        },
+        "share_lt_50": 0.2022410988613772,
+        "share_lt_100": 0.3428519790348816
+      },
+      "dangling_ends": {
+        "n_tiles": 504,
+        "endpoints_per_tile": {
+          "mean": 114.34722222222223,
+          "median": 121.0,
+          "p95": 148.0,
+          "max": 183.0
+        },
+        "interior_endpoints_per_tile": {
+          "mean": 98.74603174603175,
+          "median": 103.0,
+          "p95": 129.0,
+          "max": 164.0
+        },
+        "share_tiles_without_interior_endpoint": 0.0,
+        "interior_endpoints_per_1000_skeleton_px": 42.55934132560957
+      }
+    },
+    "mode_a_cleanup100": {
+      "tiles_without_any_boundary": 0,
+      "regions": {
+        "n_tiles": 504,
+        "regions_per_tile": 18.799603174603174,
+        "area_percentiles": {
+          "p25": 64.0,
+          "p50": 199.0,
+          "p75": 650.0
+        },
+        "share_lt_50": 0.20485488126649076,
+        "share_lt_100": 0.34912928759894457
+      },
+      "dangling_ends": {
+        "n_tiles": 504,
+        "endpoints_per_tile": {
+          "mean": 98.89484126984127,
+          "median": 107.0,
+          "p95": 138.0,
+          "max": 173.0
+        },
+        "interior_endpoints_per_tile": {
+          "mean": 86.17063492063492,
+          "median": 92.0,
+          "p95": 119.84999999999997,
+          "max": 155.0
+        },
+        "share_tiles_without_interior_endpoint": 0.0,
+        "interior_endpoints_per_1000_skeleton_px": 40.470361959537094
+      }
+    }
+  },
+  "regenerated_on_disk": {
+    "regions": {
+      "n_tiles": 504,
+      "regions_per_tile": 28.738095238095237,
+      "area_percentiles": {
+        "p25": 64.0,
+        "p50": 146.0,
+        "p75": 395.0
+      },
+      "share_lt_50": 0.19386909693454846,
+      "share_lt_100": 0.37827948080640705
+    },
+    "dangling_ends": {
+      "n_tiles": 504,
+      "endpoints_per_tile": {
+        "mean": 149.80357142857142,
+        "median": 153.0,
+        "p95": 193.0,
+        "max": 235.0
+      },
+      "interior_endpoints_per_tile": {
+        "mean": 126.8670634920635,
+        "median": 130.0,
+        "p95": 164.0,
+        "max": 211.0
+      },
+      "share_tiles_without_interior_endpoint": 0.0,
+      "interior_endpoints_per_1000_skeleton_px": 48.088920242381214
+    }
+  },
+  "interaction_with_min_region_area_px": "Both act on the palette-snapped LABEL map, cleanup first, then the line class is drawn from what is left -- so MODE A plus cleanup is applicable. Measured, not enabled: see mode_a_cleanup50 / mode_a_cleanup100 in profile_in_memory_cell29.",
+  "backup_of_mode_b_steel2_gt": "/content/drive/MyDrive/phase11-persistent/gt_boundaries/_backup_mode_b/Steel2",
+  "checks": [
+    {
+      "check": "Steel1 ground truth byte-identical before/after",
+      "ok": true,
+      "detail": "907 files"
+    },
+    {
+      "check": "no other dataset's ground truth changed",
+      "ok": true,
+      "detail": "MetalDam, uhcs1, uhcs2"
+    },
+    {
+      "check": "Steel1 record in gt_extraction.json unchanged",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "check": "every dataset other than Steel2 has an unchanged record",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "check": "Steel2 file set unchanged (same names, none missing, none stale)",
+      "ok": true,
+      "detail": "504 files"
+    },
+    {
+      "check": "Steel2 record carries the mode and LINE/BLOB threshold",
+      "ok": true,
+      "detail": "{'class_index': 1, 'colour': [0, 0, 0], 'blob_thickness_px': 8.0}"
+    },
+    {
+      "check": "cleanup is off in what was recorded",
+      "ok": true,
+      "detail": "{}"
+    },
+    {
+      "check": "gt_fingerprint differs from the MODE B ground truth's",
+      "ok": true,
+      "detail": "b6266b7480ad4db1 -> 53155b40c2b6ebf8"
+    },
+    {
+      "check": "regions/tile on disk equals Cell 29's in-memory MODE A, all tiles",
+      "ok": true,
+      "detail": "28.74 regions/tile, 37.8% under 100 px"
+    },
+    {
+      "check": "gallery tile 87450661_tile_2560_512.png: regions equal the forced diagnostic's MODE A count",
+      "ok": true,
+      "detail": "on disk 66 vs diagnostic 66 (MODE B was 207)"
+    },
+    {
+      "check": "gallery tile 87450661_tile_2048_2048.png: regions equal the forced diagnostic's MODE A count",
+      "ok": true,
+      "detail": "on disk 61 vs diagnostic 61 (MODE B was 205)"
+    },
+    {
+      "check": "gallery tile 87450741_tile_1024_1536.png: regions equal the forced diagnostic's MODE A count",
+      "ok": true,
+      "detail": "on disk 54 vs diagnostic 54 (MODE B was 201)"
+    },
+    {
+      "check": "gallery tile 87450661_tile_1280_1792.png: regions equal the forced diagnostic's MODE A count",
+      "ok": true,
+      "detail": "on disk 64 vs diagnostic 64 (MODE B was 200)"
+    }
+  ]
+}
