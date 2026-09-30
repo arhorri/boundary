@@ -1,0 +1,150 @@
+{
+  "config_hash": "067fecc2e06a7d0a",
+  "decomposition": {
+    "Steel1": {
+      "curve_length_ratio": 1.0165109634900882,
+      "dilated_dice": {
+        "0": 0.5934269854311537,
+        "1": 0.6678139246687484,
+        "2": 0.7164415166497038,
+        "3": 0.7544314744278183
+      },
+      "found": 0.8278442851383802,
+      "label": "MISPLACED",
+      "pixel_dice": 0.5934269854311537,
+      "placement_ok": false,
+      "pred_px": 897293,
+      "pred_within": {
+        "1": 0.6291813265009312,
+        "2": 0.7199120019882023,
+        "3": 0.7827264895636097,
+        "4": 0.8126743438319479,
+        "5": 0.8347786063192291
+      },
+      "real": 0.7823088197258384,
+      "skeleton_dice": 0.1512846811765524,
+      "skeleton_lift": 0.25493394282809145,
+      "skeleton_pred_px": 115990,
+      "skeleton_pred_within": {
+        "1": 0.40987154065005604,
+        "2": 0.5904043452021726,
+        "3": 0.719915509957755,
+        "4": 0.7823088197258384,
+        "5": 0.8237089404258988
+      },
+      "skeleton_true_px": 114106,
+      "skeleton_true_within": {
+        "1": 0.4194257970658861,
+        "2": 0.6091266015809861,
+        "3": 0.7524231854591344,
+        "4": 0.8278442851383802,
+        "5": 0.8849578462131702
+      },
+      "tiles": 96,
+      "tolerance_px": 4,
+      "true_px": 599737,
+      "true_within": {
+        "1": 0.8283130772321867,
+        "2": 0.8770577769922483,
+        "3": 0.9089250788262189,
+        "4": 0.9246219592921564,
+        "5": 0.9379561374402446
+      },
+      "verdict": "MISPLACED -- 83% of the true centreline has something within tolerance of it, but the two skeletons barely overlap (Dice 0.151) and only 78% of what was drawn is on a boundary. That is coincidental coverage from predicting far too much, not detection of the real curves",
+      "width_pred": 7.735951375118545,
+      "width_ratio": 1.4718426036900787,
+      "width_true": 5.255963753001595
+    },
+    "Steel2": {
+      "curve_length_ratio": 0.8217609106374305,
+      "dilated_dice": {
+        "0": 0.7340320339792994,
+        "1": 0.794799519453203,
+        "2": 0.8329430530554846,
+        "3": 0.865582982844955
+      },
+      "found": 0.9170762810411914,
+      "label": "OFFSET",
+      "pixel_dice": 0.7340320339792994,
+      "placement_ok": true,
+      "pred_px": 2008358,
+      "pred_within": {
+        "1": 0.8457984084510829,
+        "2": 0.9171128852525297,
+        "3": 0.956473895590328,
+        "4": 0.9723794263771698,
+        "5": 0.9824339086955612
+      },
+      "real": 0.9612362426821086,
+      "skeleton_dice": 0.4096071698037427,
+      "skeleton_lift": 0.5580235614285113,
+      "skeleton_pred_px": 314469,
+      "skeleton_pred_within": {
+        "1": 0.8298210634434555,
+        "2": 0.9046169892739825,
+        "3": 0.9427288540364869,
+        "4": 0.9612362426821086,
+        "5": 0.9741691549882501
+      },
+      "skeleton_true_px": 382677,
+      "skeleton_true_within": {
+        "1": 0.707238741810979,
+        "2": 0.8061446075933489,
+        "3": 0.8763291235166994,
+        "4": 0.9170762810411914,
+        "5": 0.9487818708728248
+      },
+      "tiles": 126,
+      "tolerance_px": 4,
+      "true_px": 1831627,
+      "true_within": {
+        "1": 0.871268549764772,
+        "2": 0.9221806623291751,
+        "3": 0.9545567956794697,
+        "4": 0.9687338087940394,
+        "5": 0.9774539248438683
+      },
+      "verdict": "OFFSET -- the curves are within 4 px of the truth but barely overlap it exactly (skeleton Dice 0.410). A sub-tolerance registration shift, not a placement failure and not thickness",
+      "width_pred": 6.38650550610712,
+      "width_ratio": 1.3343157572805788,
+      "width_true": 4.78635245912349
+    }
+  },
+  "epoch": 32,
+  "line_width_px": 4.0,
+  "platform": "colab",
+  "results": {
+    "Steel1": {
+      "ari": 0.5634215908142486,
+      "n_pred_regions": 13.3125,
+      "n_true_regions": 16.989583333333332,
+      "over_segmentation_factor": 0.9411933198091912,
+      "pq": 0.3238129582211932,
+      "pq_fn": 11.0625,
+      "pq_fp": 7.385416666666667,
+      "pq_tp": 5.927083333333333,
+      "pred_fraction": 0.1426208813985189,
+      "rq": 0.4298455435564024,
+      "sq": 0.7512566704723528,
+      "tiles": 96,
+      "vi": 0.7364409331881744
+    },
+    "Steel2": {
+      "ari": 0.33872064838867505,
+      "n_pred_regions": 44.53968253968254,
+      "n_true_regions": 34.46031746031746,
+      "over_segmentation_factor": 1.4078396884655142,
+      "pq": 0.31103733739040684,
+      "pq_fn": 18.396825396825395,
+      "pq_fp": 28.476190476190474,
+      "pq_tp": 16.063492063492063,
+      "pred_fraction": 0.24321516733320933,
+      "rq": 0.4041845252546203,
+      "sq": 0.7691914179916247,
+      "tiles": 126,
+      "vi": 1.4572623464520669
+    }
+  },
+  "run_name": "fold_steel_combined_modea",
+  "watershed_marker_threshold": 0.3
+}
