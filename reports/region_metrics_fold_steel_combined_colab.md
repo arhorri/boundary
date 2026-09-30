@@ -7,7 +7,7 @@ Marker-controlled watershed on the probability map (watershed_marker_threshold=0
 | dataset | tiles | ARI | VI | PQ | SQ | RQ | true regions | pred regions | over-seg factor |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | Steel1 | 96 | 0.549 | 0.769 | 0.303 | 0.739 | 0.406 | 17.0 | 13.4 | 0.98 |
-| Steel2 | 126 | 0.313 | 2.109 | 0.098 | 0.689 | 0.142 | 127.4 | 49.5 | 0.39 |
+| Steel2 | 126 | 0.313 | 2.108 | 0.098 | 0.688 | 0.142 | 127.4 | 49.5 | 0.39 |
 
 ## MISPLACED / OVER-DETECTION / THICKNESS decomposition
 
@@ -16,7 +16,7 @@ The pixel/skeleton view (:func:`decompose_error`) this region view complements -
 | dataset | verdict | pixel Dice | skeleton Dice | curve-length ratio | width ratio | tolerance px |
 | --- | --- | --- | --- | --- | --- | --- |
 | Steel1 | MISPLACED | 0.5857 | 0.1453 | 1.03 | 1.50 | 4 |
-| Steel2 | THICKNESS | 0.7762 | 0.2225 | 0.78 | 1.52 | 4 |
+| Steel2 | THICKNESS | 0.7762 | 0.2226 | 0.78 | 1.52 | 4 |
 
 Verdicts, in full:
 
