@@ -1,5 +1,5 @@
 {
-  "generated_utc": "2026-09-30T07:55:14Z",
+  "generated_utc": "2026-09-30T11:04:33Z",
   "fold": "fold_steel_combined",
   "settings": {
     "assert_single_tile": [
@@ -93,6 +93,7 @@
       "min_parents_per_split": 1,
       "held_out_label": "mixed(Steel1+Steel2)"
     },
+    "steel_combined_mode_a_name": "fold_steel_combined_modea",
     "stride": 128,
     "test_only": [
       "Steel2"
