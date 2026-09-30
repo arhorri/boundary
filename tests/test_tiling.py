@@ -443,3 +443,53 @@ def test_manifest_membership_reads_back_what_fold_membership_reports(tmp_path):
     tv = tiling.write_manifest(fold["rows"], tmp_path / "f.csv")
     te = tiling.write_manifest(fold["test_rows"], tmp_path / "f_test.csv")
     assert tiling.manifest_membership(tv, te) == tiling.fold_membership(fold)
+
+
+# --------------------------------------------------------------------------
+# refusal: the line-class fold is built once and never rebuilt under a checkpoint
+# --------------------------------------------------------------------------
+def _fold_dirs(tmp_path):
+    for name in ("manifests", "configs", "reports"):
+        (tmp_path / name).mkdir()
+    (tmp_path / "configs" / "fold_stats.yaml").write_text("folds:\n  other: {}\n")
+    return tmp_path / "manifests", tmp_path / "configs", tmp_path / "reports"
+
+
+def _snapshot(root):
+    return {str(p.relative_to(root)): p.read_bytes() for p in root.rglob("*") if p.is_file()}
+
+
+def test_fold_rebuild_is_allowed_when_nothing_of_that_name_exists(tmp_path):
+    m, c, r = _fold_dirs(tmp_path)
+    tiling.refuse_if_fold_exists("fold_x", m, c, r, tmp_path / "ckpt" / "fold_x")   # no raise
+
+
+@pytest.mark.parametrize("what", ["train_val_manifest", "test_manifest", "fold_stats_entry",
+                                  "md_report", "json_report", "checkpoint_dir"])
+def test_fold_rebuild_is_refused_if_any_trace_of_the_fold_exists(tmp_path, what):
+    m, c, r = _fold_dirs(tmp_path)
+    ckpt = tmp_path / "ckpt" / "fold_x"
+    if what == "train_val_manifest":
+        (m / "fold_x.csv").write_text("x")
+    elif what == "test_manifest":
+        (m / "fold_x_test.csv").write_text("x")
+    elif what == "fold_stats_entry":
+        (c / "fold_stats.yaml").write_text("folds:\n  other: {}\n  fold_x: {pos_weight: 1}\n")
+    elif what == "md_report":
+        (r / "tiling_fold_x.md").write_text("x")
+    elif what == "json_report":
+        (r / "tiling_fold_x.json").write_text("{}")
+    else:
+        ckpt.mkdir(parents=True)
+        (ckpt / "last.pt").write_bytes(b"weights")
+    before = _snapshot(tmp_path)
+    with pytest.raises(tiling.TilingError, match="REFUSING to rebuild fold 'fold_x'"):
+        tiling.refuse_if_fold_exists("fold_x", m, c, r, ckpt)
+    assert _snapshot(tmp_path) == before, "a refusal must not write anything"
+
+
+def test_an_empty_checkpoint_directory_does_not_count_as_training_having_started(tmp_path):
+    m, c, r = _fold_dirs(tmp_path)
+    ckpt = tmp_path / "ckpt" / "fold_x"
+    ckpt.mkdir(parents=True)
+    tiling.refuse_if_fold_exists("fold_x", m, c, r, ckpt)     # no raise

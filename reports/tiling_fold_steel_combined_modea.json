@@ -1,6 +1,6 @@
 {
-  "generated_utc": "2026-09-30T11:04:33Z",
-  "fold": "fold_steel_combined",
+  "generated_utc": "2026-09-30T12:15:08Z",
+  "fold": "fold_steel_combined_modea",
   "settings": {
     "assert_single_tile": [
       "Steel1",
@@ -82,7 +82,7 @@
     "patch_size": 256,
     "seed": 0,
     "steel_combined": {
-      "name": "fold_steel_combined",
+      "name": "fold_steel_combined_modea",
       "datasets": [
         "Steel1",
         "Steel2"
@@ -540,19 +540,19 @@
     "n_val_parents": 3,
     "train_boundary_fraction": {
       "min": 0.011673,
-      "mean": 0.133041,
-      "median": 0.103241,
-      "max": 0.420181,
+      "mean": 0.115035,
+      "median": 0.100769,
+      "max": 0.337769,
       "n": 965
     },
     "val_boundary_fraction": {
       "min": 0.007782,
-      "mean": 0.19511,
-      "median": 0.193954,
-      "max": 0.370697,
+      "mean": 0.148621,
+      "median": 0.147324,
+      "max": 0.262344,
       "n": 221
     },
-    "pos_weight": 6.516,
+    "pos_weight": 7.693,
     "sampling": {
       "mode": "parents",
       "weights": {
@@ -585,12 +585,12 @@
       "n_parents": 3,
       "boundary_fraction": {
         "min": 0.015274,
-        "mean": 0.218955,
-        "median": 0.239509,
-        "max": 0.421494,
+        "mean": 0.167116,
+        "median": 0.180428,
+        "max": 0.292801,
         "n": 222
       },
-      "note": "fold_steel_combined's own held-out test slice: parent-level, never touched by training or checkpoint selection, and never merged into the shared test manifest."
+      "note": "fold_steel_combined_modea's own held-out test slice: parent-level, never touched by training or checkpoint selection, and never merged into the shared test manifest."
     },
     "parent_allocation": {
       "train": {
@@ -637,7 +637,7 @@
     }
   },
   "manifests": {
-    "fold_steel_combined": "/content/boundary/reports/manifests/fold_steel_combined.csv",
-    "fold_steel_combined_test": "/content/boundary/reports/manifests/fold_steel_combined_test.csv"
+    "fold_steel_combined_modea": "/content/boundary/reports/manifests/fold_steel_combined_modea.csv",
+    "fold_steel_combined_modea_test": "/content/boundary/reports/manifests/fold_steel_combined_modea_test.csv"
   }
 }

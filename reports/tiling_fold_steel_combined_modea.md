@@ -1,9 +1,9 @@
-# fold_steel_combined
+# fold_steel_combined_modea
 
-- generated: 2026-09-30T11:04:33Z
+- generated: 2026-09-30T12:15:08Z
 - pooled from ['Steel1', 'Steel2'], split BY PARENT with seed 0
 - held out: `mixed(Steel1+Steel2)` — this fold has no single held-out DATASET in the LODO sense. The label is descriptive and matches no dataset in any per-dataset metrics breakdown by construction, which is what makes the held-out-specific paths in `src/train.py` fall back to their pooled behaviour instead of mislabelling a real dataset as this fold's held-out one.
-- pos_weight **6.516**, measured on THIS fold's own train split, never inherited from another fold
+- pos_weight **7.693**, measured on THIS fold's own train split, never inherited from another fold
 
 ## Parents and tiles per split
 
@@ -21,9 +21,9 @@ Total 1408 tiles. Target 0.7/0.15/0.15, achieved 0.685/0.157/0.158 by TILE count
 
 | split | min | mean | median | max | n |
 | --- | --- | --- | --- | --- | --- |
-| train | 0.011673 | 0.133041 | 0.103241 | 0.420181 | 965 |
-| val | 0.007782 | 0.19511 | 0.193954 | 0.370697 | 221 |
-| test | 0.015274 | 0.218955 | 0.239509 | 0.421494 | 222 |
+| train | 0.011673 | 0.115035 | 0.100769 | 0.337769 | 965 |
+| val | 0.007782 | 0.148621 | 0.147324 | 0.262344 | 221 |
+| test | 0.015274 | 0.167116 | 0.180428 | 0.292801 | 222 |
 
 ## Parent allocation
 
@@ -41,5 +41,5 @@ Every parent appears in exactly one split; a parent's tiles never straddle two s
 
 ## Manifests
 
-- `fold_steel_combined`: `/content/boundary/reports/manifests/fold_steel_combined.csv`
-- `fold_steel_combined_test`: `/content/boundary/reports/manifests/fold_steel_combined_test.csv`
+- `fold_steel_combined_modea`: `/content/boundary/reports/manifests/fold_steel_combined_modea.csv`
+- `fold_steel_combined_modea_test`: `/content/boundary/reports/manifests/fold_steel_combined_modea_test.csv`

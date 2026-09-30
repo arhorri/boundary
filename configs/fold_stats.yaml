@@ -7,7 +7,7 @@
 # while each dataset's share of it becomes sampling.target_share.
 # pos_weight is n_negative/n_positive over the train split, for
 # BCEWithLogitsLoss.
-generated_utc: '2026-09-30T07:55:16Z'
+generated_utc: '2026-09-30T12:15:08Z'
 patch_size: 256
 stride: 128
 min_boundary_frac: 0.005
@@ -336,5 +336,96 @@ folds:
         - im_val_cut10_400-H-6mm-4000x07
         Steel2:
         - '87450741'
+  fold_steel_combined_modea:
+    held_out: mixed(Steel1+Steel2)
+    alias_of: null
+    n_train_tiles: 965
+    n_val_tiles: 221
+    train_datasets:
+    - Steel1
+    - Steel2
+    val_datasets:
+    - Steel1
+    - Steel2
+    n_train_parents: 17
+    n_val_parents: 3
+    train_boundary_fraction:
+      min: 0.011673
+      mean: 0.115035
+      median: 0.100769
+      max: 0.337769
+      n: 965
+    val_boundary_fraction:
+      min: 0.007782
+      mean: 0.148621
+      median: 0.147324
+      max: 0.262344
+      n: 221
+    pos_weight: 7.693
+    sampling:
+      mode: parents
+      weights:
+        Steel1: 1.194208
+        Steel2: 0.450514
+      raw_counts:
+        Steel1: 713
+        Steel2: 252
+      n_parents:
+        Steel1: 15
+        Steel2: 2
+      target_share:
+        Steel1: 0.8824
+        Steel2: 0.1176
+      effective_counts:
+        Steel1: 851
+        Steel2: 114
+    test:
+      datasets:
+      - Steel1
+      - Steel2
+      n_tiles: 222
+      n_parents: 3
+      boundary_fraction:
+        min: 0.015274
+        mean: 0.167116
+        median: 0.180428
+        max: 0.292801
+        n: 222
+      note: 'fold_steel_combined_modea''s own held-out test slice: parent-level, never
+        touched by training or checkpoint selection, and never merged into the shared
+        test manifest.'
+    parent_allocation:
+      train:
+        Steel1:
+        - im_val_cut10-400-01-H-12mm-4000x14
+        - im_val_cut10-400-01-H-9mm-4000x10
+        - im_val_cut10-400-01-H-9mm-4000x12
+        - im_val_cut10-400-01-V-12mm-4000x16
+        - im_val_cut10-400-01-V-12mm-4000x17
+        - im_val_cut10-400-01-V-6mm-4000x07
+        - im_val_cut10-400-01-V-6mm-4000x08
+        - im_val_cut10-400-01-V-9mm-4000x12
+        - im_val_cut10_400-H-12mm-4000x14
+        - im_val_cut10_400-H-6mm-4000x06
+        - im_val_cut10_400-H-9mm-4000x10
+        - im_val_cut10_400-V-12mm-4000x14
+        - im_val_cut10_400-V-6mm-4000x06
+        - im_val_cut10_400-V-6mm-4000x07
+        - im_val_cut10_400-V-9mm-4000x10
+        Steel2:
+        - '87440491'
+        - '87450661'
+      val:
+        Steel1:
+        - im_val_cut10_400-H-9mm-4000x11
+        - im_val_cut10_400-V-9mm-4000x11
+        Steel2:
+        - '87431041'
+      test:
+        Steel1:
+        - im_val_cut10-400-01-H-6mm-4000x06
+        - im_val_cut10_400-H-6mm-4000x07
+        Steel2:
+        - '87450741'
 merged_folds:
-- fold_steel_combined
+- fold_steel_combined_modea

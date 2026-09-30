@@ -2613,9 +2613,13 @@ def test_fn_attribution_notebook_cell_selects_markers_on_val_before_test():
     afterwards, and classifies with src.train rather than inline code.
 
     More than one cell may call select_marker_threshold -- Cell 22 (the
-    first, narrower marker sweep) and Cell 23 (the extended sweep) both do --
+    first, narrower marker sweep), Cell 23 (the extended sweep) and Cell 32
+    (the retrain comparison, which selects once per checkpoint) all do --
     so this checks EACH one independently rather than asserting a fixed
-    count of cells.
+    count of cells. "VAL is predicted before the selection, TEST only after
+    it" is read from WHICH dataset each ``predict_tiles`` call is handed (its
+    second argument: the model comes first), not from how the call happens to
+    be wrapped across lines, so a cell may be written in either style.
     """
     nb_path = (Path(__file__).resolve().parent.parent / "notebooks"
                / "06d_steel_combined.ipynb")
@@ -2630,8 +2634,10 @@ def test_fn_attribution_notebook_cell_selects_markers_on_val_before_test():
     cells = [source(c) for c in nb["cells"]
              if c["cell_type"] == "code" and "select_marker_threshold(" in source(c)]
     assert cells, "no cell calls select_marker_threshold"
-    val_predict = "predict_tiles(\n    region_model, trainer.val_ds"
-    test_predict = "predict_tiles(\n    region_model, region_test_ds"
+    import re
+
+    # predict_tiles(<model>, <dataset>, ...): capture each call's position and dataset
+    predict = re.compile(r"predict_tiles\(\s*[\w.]+\s*,\s*([\w.]+)")
     for cell in cells:
         for line in cell.splitlines():
             if "select_marker_threshold(" in line:
@@ -2639,8 +2645,12 @@ def test_fn_attribution_notebook_cell_selects_markers_on_val_before_test():
                     f"select_marker_threshold called on something that is "
                     f"not *_val_rows: {line.strip()!r}")
         at = cell.index("select_marker_threshold(")
-        assert cell.count(val_predict) == 1 and cell.count(test_predict) == 1
-        assert cell.index(val_predict) < at < cell.index(test_predict)
+        calls = [(m.start(), m.group(1)) for m in predict.finditer(cell)]
+        val_calls = [pos for pos, ds in calls if "val" in ds and "test" not in ds]
+        test_calls = [pos for pos, ds in calls if "test" in ds]
+        assert len(val_calls) == 1 and len(test_calls) == 1, (
+            f"expected exactly one VAL and one TEST predict_tiles call, got {calls}")
+        assert val_calls[0] < at < test_calls[0]
         for banned in ("def classify", "np.bincount", "skeletonize"):
             assert banned not in cell, f"{banned} belongs in src/, not the notebook"
 
@@ -3068,3 +3078,106 @@ def test_region_connectivity_diff_reports_nothing_when_labellings_agree():
     diff = train_mod.region_connectivity_diff(true)
     assert diff["n_new_regions"] == diff["n_old_regions"] == 2
     assert diff["n_fragments"] == 0
+
+
+# --------------------------------------------------------------------------
+# NEW vs OLD checkpoint comparison (06d Cell 32)
+# --------------------------------------------------------------------------
+def _cmp_row(config, dataset, split="test", reference=False, dice=0.5, pq=0.3,
+             marker=0.3, threshold=0.6):
+    return {"config": config, "dataset": dataset, "split": split, "reference": reference,
+            "threshold": threshold, "marker_threshold": marker,
+            "decomposition": {"pixel_dice": dice, "tiles": 10},
+            "region": {"pq": pq, "sq": pq + 0.4, "rq": pq + 0.1,
+                       "over_segmentation_factor": 1.2}}
+
+
+def _cmp_rows(dice, pq_marker, pq_ref, marker=0.45):
+    rows = []
+    for d in ("Steel1", "Steel2"):
+        rows += [_cmp_row("none@tuned", d, dice=dice[d]),
+                 _cmp_row("watershed@val-best", d, pq=pq_marker[d], marker=marker),
+                 _cmp_row("reference: watershed_prob@tuned", d, reference=True,
+                          pq=pq_ref[d], marker=0.3)]
+    return rows
+
+
+def test_checkpoint_test_summary_takes_pixel_dice_and_val_marker_pq_per_dataset():
+    rows = _cmp_rows({"Steel1": 0.61, "Steel2": 0.55},
+                     {"Steel1": 0.33, "Steel2": 0.12}, {"Steel1": 0.30, "Steel2": 0.10})
+    out = train_mod.checkpoint_test_summary(rows, "watershed@val-best", "none@tuned")
+    assert out["Steel1"]["pixel_dice"] == 0.61 and out["Steel1"]["pq"] == 0.33
+    assert out["Steel2"]["marker_threshold"] == 0.45 and out["Steel2"]["pq"] == 0.12
+    assert out["Steel2"]["reference_default_marker"]["pq"] == 0.10
+    assert out["Steel2"]["reference_default_marker"]["marker_threshold"] == 0.3
+    assert out["Steel1"]["tiles"] == 10 and out["Steel1"]["threshold"] == 0.6
+
+
+def test_checkpoint_test_summary_refuses_val_rows_and_missing_or_duplicate_rows():
+    good = _cmp_rows({"Steel1": .5, "Steel2": .5}, {"Steel1": .3, "Steel2": .1},
+                     {"Steel1": .3, "Steel2": .1})
+    val = [dict(r, split="val") for r in good]
+    with pytest.raises(train_mod.TrainError, match="TEST rows only"):
+        train_mod.checkpoint_test_summary(val, "watershed@val-best", "none@tuned")
+    with pytest.raises(train_mod.TrainError, match="exactly one"):
+        train_mod.checkpoint_test_summary(good + [good[0]], "watershed@val-best", "none@tuned")
+    with pytest.raises(train_mod.TrainError, match="exactly one"):
+        train_mod.checkpoint_test_summary(good[:2] + good[3:], "watershed@val-best", "none@tuned")
+    with pytest.raises(train_mod.TrainError):
+        train_mod.checkpoint_test_summary([], "a", "b")
+
+
+def test_compare_checkpoint_summaries_reports_new_old_and_delta():
+    def summary(dice, pq):
+        return {d: {"pixel_dice": dice[d], "pq": pq[d], "sq": 0.7, "rq": pq[d] + 0.1}
+                for d in dice}
+    new = summary({"Steel1": 0.62, "Steel2": 0.50}, {"Steel1": 0.35, "Steel2": 0.20})
+    old = summary({"Steel1": 0.60, "Steel2": 0.40}, {"Steel1": 0.30, "Steel2": 0.10})
+    cmp = train_mod.compare_checkpoint_summaries(new, old)
+    assert cmp["Steel1"]["pq"] == {"new": 0.35, "old": 0.30, "delta": pytest.approx(0.05)}
+    assert cmp["Steel2"]["pixel_dice"]["delta"] == pytest.approx(0.10)
+    assert set(cmp["Steel1"]) == set(train_mod.COMPARISON_METRICS)
+    with pytest.raises(train_mod.TrainError, match="different datasets"):
+        train_mod.compare_checkpoint_summaries(new, {"Steel1": old["Steel1"]})
+
+
+# --------------------------------------------------------------------------
+# the line-class fold has its own checkpoint directory and cannot resume the old one
+# --------------------------------------------------------------------------
+def _pooled_trainers(tmp_path):
+    try:
+        old = _minimal_trainer(tmp_path, fold="fold_steel_combined")
+        new = _minimal_trainer(tmp_path, fold="fold_steel_combined_modea")
+    except train_mod.TrainError as exc:
+        if "not in configs/fold_stats.yaml" in str(exc):
+            pytest.skip(f"the real configs/fold_stats.yaml lacks a pooled fold: {exc}")
+        raise
+    return old, new
+
+
+def test_modea_fold_writes_to_its_own_checkpoint_directory(tmp_path):
+    old, new = _pooled_trainers(tmp_path)
+    assert old.run_name == "fold_steel_combined" and new.run_name == "fold_steel_combined_modea"
+    assert old.checkpoint_dir != new.checkpoint_dir
+    assert new.checkpoint_dir == tmp_path / old.settings["checkpoint_subdir"] / "fold_steel_combined_modea"
+    assert new.checkpoint_dir.parent == old.checkpoint_dir.parent
+    assert new.last_path.parent == new.best_path.parent == new.checkpoint_dir
+
+
+def test_modea_fold_does_not_resume_the_old_folds_checkpoint(tmp_path):
+    """Two independent barriers. (1) maybe_resume() only looks at THIS run's
+    last.pt, which is in another directory. (2) Even if the old checkpoint is
+    handed over explicitly, the fold it carries is refused.
+    """
+    old, new = _pooled_trainers(tmp_path)
+    old.best = {"metric": 0.5, "epoch": 0, "key": "A", "threshold": 0.5, "criterion": "x"}
+    old.history = [{"epoch": 0}]
+    old.save(0, is_best=False)
+    assert old.last_path.is_file() and not new.last_path.exists()
+
+    status = new.maybe_resume()
+    assert status["resumed"] is False and "no checkpoint at" in status["reason"]
+    assert str(new.last_path) == status["path"]
+
+    with pytest.raises(train_mod.TrainError, match="was written by fold 'fold_steel_combined'"):
+        new.maybe_resume(old.last_path)
