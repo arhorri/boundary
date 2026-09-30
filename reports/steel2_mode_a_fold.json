@@ -1,0 +1,197 @@
+{
+  "generated_utc": "2026-09-30T12:15:08Z",
+  "original_fold": "fold_steel_combined",
+  "new_fold": "fold_steel_combined_modea",
+  "retrain": {
+    "how": "run notebooks/06d_steel_combined.ipynb top to bottom: Cell 2 reads the recorded ground truth and resolves FOLD to the new fold by itself -- no edit",
+    "new_checkpoint_dir": "/content/drive/MyDrive/phase11-persistent/checkpoints/fold_steel_combined_modea",
+    "original_checkpoint_dir": "/content/drive/MyDrive/phase11-persistent/checkpoints/fold_steel_combined",
+    "new_fold_stats_entry": "configs/fold_stats.yaml folds.fold_steel_combined_modea",
+    "gt_fingerprint_the_new_checkpoint_will_carry": {
+      "gt_extraction_sha256": "53155b40c2b6ebf8",
+      "gt_extraction_generated_utc": "2026-09-30T12:12:48Z",
+      "boundary_gt_settings": {
+        "artifact_colours": {
+          "MetalDam": [
+            [
+              75,
+              176,
+              40
+            ]
+          ],
+          "uhcs2": [
+            [
+              75,
+              176,
+              40
+            ]
+          ]
+        },
+        "close_kernel": 3,
+        "exclusions": {
+          "uhcs2": [
+            "uhcs0596.png"
+          ]
+        },
+        "fold_artifact_colours": false,
+        "hsv_percentiles": [
+          2,
+          98
+        ],
+        "hsv_sample_files": 12,
+        "line_width_px": 4,
+        "max_unsnapped_fraction": 0.02,
+        "min_palette_share": 0.002,
+        "min_region_area_px": {},
+        "mode_a_line_class": {
+          "Steel2": 8
+        },
+        "open_kernel": 3,
+        "open_mode": "speckle",
+        "output_subdir": "gt_boundaries",
+        "palette_merge_distance": 48,
+        "size_tolerance_px": 2
+      },
+      "mode_a_line_class": {
+        "Steel2": {
+          "class_index": 1,
+          "colour": [
+            0,
+            0,
+            0
+          ],
+          "blob_thickness_px": 8.0
+        }
+      }
+    },
+    "not_started": true
+  },
+  "pos_weight": {
+    "old": 6.516,
+    "new": 7.693,
+    "new_per_dataset_train": {
+      "Steel1": 9.91290022506747,
+      "Steel2": 4.51742015942717
+    },
+    "sane_band": [
+      2.5,
+      100.0
+    ]
+  },
+  "boundary_fraction_train": {
+    "old": {
+      "min": 0.011673,
+      "mean": 0.133041,
+      "median": 0.103241,
+      "max": 0.420181,
+      "n": 965
+    },
+    "new": {
+      "min": 0.011673,
+      "mean": 0.115035,
+      "median": 0.100769,
+      "max": 0.337769,
+      "n": 965
+    }
+  },
+  "tile_membership": {
+    "train": {
+      "original": 965,
+      "rebuilt": 965
+    },
+    "val": {
+      "original": 221,
+      "rebuilt": 221
+    },
+    "test": {
+      "original": 222,
+      "rebuilt": 222
+    }
+  },
+  "untouched": {
+    "original_manifests": [
+      "dev.csv",
+      "fold_MetalDam.csv",
+      "fold_steel_combined.csv",
+      "fold_steel_combined_test.csv",
+      "fold_uhcs1.csv",
+      "fold_uhcs2.csv",
+      "test.csv"
+    ],
+    "original_reports": [
+      "fn_attribution_fold_steel_combined_colab.json",
+      "fn_attribution_fold_steel_combined_colab.md",
+      "gap_closing_fold_steel_combined_colab.json",
+      "gap_closing_fold_steel_combined_colab.md",
+      "postprocess_sweep_fold_steel_combined_colab.json",
+      "postprocess_sweep_fold_steel_combined_colab.md",
+      "region_metrics_fold_steel_combined_colab.json",
+      "region_metrics_fold_steel_combined_colab.md",
+      "tiling_fold_steel_combined.json",
+      "tiling_fold_steel_combined.md",
+      "train_fold_steel_combined_colab.json",
+      "train_fold_steel_combined_colab.md"
+    ],
+    "original_checkpoint_files": [
+      "best.pt",
+      "last.pt"
+    ]
+  },
+  "checks": [
+    {
+      "check": "tile membership per split identical to the original fold",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "check": "every pre-existing fold_stats entry unchanged (incl. the original)",
+      "ok": true,
+      "detail": "6 entries"
+    },
+    {
+      "check": "the new fold is recorded in fold_stats",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "check": "original fold's manifests byte-identical",
+      "ok": true,
+      "detail": "dev.csv, fold_MetalDam.csv, fold_steel_combined.csv, fold_steel_combined_test.csv, fold_uhcs1.csv, fold_uhcs2.csv, test.csv"
+    },
+    {
+      "check": "original fold's reports byte-identical",
+      "ok": true,
+      "detail": "12 files"
+    },
+    {
+      "check": "original checkpoint dir untouched (names, sizes, mtimes)",
+      "ok": true,
+      "detail": "2 files"
+    },
+    {
+      "check": "the new checkpoint directory does not exist yet (nothing to resume from)",
+      "ok": true,
+      "detail": "/content/drive/MyDrive/phase11-persistent/checkpoints/fold_steel_combined_modea"
+    },
+    {
+      "check": "new manifests carry the same tiles as the original",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "check": "fingerprint of the ground truth on disk records the line-class mode",
+      "ok": true,
+      "detail": "{'Steel2': {'class_index': 1, 'colour': [0, 0, 0], 'blob_thickness_px': 8.0}}"
+    },
+    {
+      "check": "pos_weight inside the sane band",
+      "ok": true,
+      "detail": "7.693"
+    },
+    {
+      "check": "pos_weight moved (the ground truth did change)",
+      "ok": true,
+      "detail": "6.516 -> 7.693"
+    }
+  ]
+}
