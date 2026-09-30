@@ -1,6 +1,6 @@
 # GT mode check: is a MODE B palette class actually a painted line?
 
-- generated: 2026-09-30T09:15:13Z
+- generated: 2026-09-30T11:54:21Z
 - settings: {'line_width_px': 4.0, 'blob_thickness_px': 8.0, 'thin_width_px': 8.0, 'sample_files': 60}
 
 MODE B assumes every palette class is a PHASE (an area with an inside) and draws `find_boundaries` around it. Nothing checks that assumption. This report measures, per dataset, whether the class actually looks like a thin painted line instead -- which `find_boundaries` would still happily outline on both edges, trapping the line's own pixels as a spurious strip "region".
