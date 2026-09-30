@@ -4228,6 +4228,67 @@ def marker_config_from_selection(selected: dict,
                             for d, r in selected.items()}}
 
 
+#: Metrics :func:`compare_checkpoint_summaries` differences, in report order.
+COMPARISON_METRICS = ("pixel_dice", "pq", "sq", "rq")
+
+
+def checkpoint_test_summary(test_rows: list, marker_config_name: str,
+                            pixel_config_name: str) -> dict:
+    """Per dataset, what ONE checkpoint scored on the TEST tiles, from
+    :func:`sweep_postprocess` rows: pixel Dice at its own tuned threshold
+    (``pixel_config_name``'s row), and PQ/SQ/RQ of the watershed at the
+    marker VAL selected (``marker_config_name``'s row), plus the default-marker
+    reference row so a caller can check the pipeline against a committed report.
+
+    Refuses rather than guessing when a dataset lacks exactly one row of any
+    of the three kinds.
+    """
+    if not test_rows:
+        raise TrainError("checkpoint_test_summary was given no rows.")
+    splits = sorted({r["split"] for r in test_rows})
+    if splits != ["test"]:
+        raise TrainError(f"a test summary needs TEST rows only, got {splits}.")
+    out = {}
+    for dataset in sorted({r["dataset"] for r in test_rows}):
+        mine = [r for r in test_rows if r["dataset"] == dataset]
+
+        def one(kind, pick):
+            hits = [r for r in mine if pick(r)]
+            if len(hits) != 1:
+                raise TrainError(f"{dataset}: expected exactly one {kind} row, "
+                                 f"found {len(hits)}.")
+            return hits[0]
+
+        marker = one("val-selected-marker", lambda r: r["config"] == marker_config_name)
+        pixel = one("pixel-Dice", lambda r: r["config"] == pixel_config_name)
+        reference = one("default-marker reference", lambda r: r["reference"])
+        out[dataset] = {
+            "tiles": pixel["decomposition"].get("tiles"),
+            "threshold": pixel["threshold"],
+            "pixel_dice": pixel["decomposition"]["pixel_dice"],
+            "marker_threshold": marker["marker_threshold"],
+            "pq": marker["region"]["pq"], "sq": marker["region"]["sq"],
+            "rq": marker["region"]["rq"],
+            "over_segmentation_factor": marker["region"]["over_segmentation_factor"],
+            "reference_default_marker": {
+                "marker_threshold": reference["marker_threshold"],
+                "pq": reference["region"]["pq"], "sq": reference["region"]["sq"],
+                "rq": reference["region"]["rq"]},
+        }
+    return out
+
+
+def compare_checkpoint_summaries(new: dict, old: dict) -> dict:
+    """``{dataset: {metric: {"new", "old", "delta"}}}`` over
+    :data:`COMPARISON_METRICS`. Both must cover the same datasets -- a
+    comparison of two checkpoints on different tile sets is not one."""
+    if sorted(new) != sorted(old):
+        raise TrainError(f"summaries cover different datasets: {sorted(new)} vs {sorted(old)}")
+    return {d: {m: {"new": new[d][m], "old": old[d][m],
+                    "delta": new[d][m] - old[d][m]} for m in COMPARISON_METRICS}
+            for d in sorted(new)}
+
+
 def fn_attribution_report_paths(run_name: str, platform: str,
                                 reports_dir: Optional[Path] = None) -> tuple:
     """``reports/fn_attribution_<run>_<platform>.{md,json}``."""

@@ -841,6 +841,41 @@ def build_steel_combined_fold(index: dict, settings: dict) -> dict:
 # --------------------------------------------------------------------------
 # statistics + sampling weights
 # --------------------------------------------------------------------------
+def refuse_if_fold_exists(fold_name: str, manifest_dir: Path, configs_dir: Path,
+                          reports_dir: Path, checkpoint_dir: Optional[Path] = None) -> None:
+    """Raise :class:`TilingError`, BEFORE anything is written, if a fold of this
+    name already exists in any of the places a rebuild would write.
+
+    Its manifests, its ``fold_stats.yaml`` entry, its tiling report, or a
+    non-empty checkpoint directory (training already started on it: rebuilding
+    manifests or ``pos_weight`` under a checkpoint would silently change what
+    it was trained on). Any one is enough. A rebuild of a fold that exists is
+    refused rather than repeated; delete it by hand if it is really meant to be
+    redone.
+    """
+    import yaml
+
+    manifest_dir, configs_dir, reports_dir = Path(manifest_dir), Path(configs_dir), Path(reports_dir)
+    found = []
+    for name in (f"{fold_name}.csv", f"{fold_name}_test.csv"):
+        if (manifest_dir / name).exists():
+            found.append(f"manifest {manifest_dir / name}")
+    stats = configs_dir / "fold_stats.yaml"
+    if stats.is_file():
+        doc = yaml.safe_load(stats.read_text()) or {}
+        if fold_name in (doc.get("folds") or {}):
+            found.append(f"fold_stats entry folds.{fold_name} in {stats}")
+    for suffix in ("md", "json"):
+        if (reports_dir / f"tiling_{fold_name}.{suffix}").exists():
+            found.append(f"report {reports_dir / f'tiling_{fold_name}.{suffix}'}")
+    if checkpoint_dir is not None and Path(checkpoint_dir).is_dir() and any(Path(checkpoint_dir).iterdir()):
+        found.append(f"checkpoint directory {checkpoint_dir} (not empty)")
+    if found:
+        raise TilingError(
+            f"REFUSING to rebuild fold {fold_name!r}: it already exists -- "
+            + "; ".join(found) + ". Nothing was written.")
+
+
 def fold_membership(fold: dict) -> dict:
     """``{split: sorted tile ids}`` of a ``build_steel_combined_fold`` result."""
     out = {"train": [], "val": [], "test": []}

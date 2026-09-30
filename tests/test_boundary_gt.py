@@ -765,3 +765,49 @@ def test_mode_a_adoption_notebook_cells_order_their_safety_steps():
     assert (cell2[0].index("tiling.apply_gt_variant(")
             < cell2[0].index('steel_cfg = settings["steel_combined"]')), (
         "Cell 2 must resolve the fold from the recorded ground truth before reading its name")
+
+
+# --------------------------------------------------------------------------
+# refusal: a second Steel2 regeneration must not be able to overwrite the backup
+# --------------------------------------------------------------------------
+def _listing(root):
+    return sorted(str(p.relative_to(root)) for p in root.rglob("*"))
+
+
+def test_regeneration_is_refused_when_the_extraction_already_records_the_line_class(tmp_path):
+    record = {"class_index": 1, "colour": [0, 0, 0], "blob_thickness_px": 8.0}
+    extraction = {"datasets": {"Steel2": {"mode_a_line_class": record}}}
+    (tmp_path / "Steel2").mkdir()
+    before = _listing(tmp_path)
+    with pytest.raises(boundary_gt.ExtractionError, match="REFUSING.*already records"):
+        boundary_gt.refuse_if_already_regenerated(extraction, tmp_path, "Steel2")
+    assert _listing(tmp_path) == before, "a refusal must not write anything"
+
+
+def test_regeneration_is_refused_when_the_backup_already_exists(tmp_path):
+    backup = tmp_path / boundary_gt.MODE_B_BACKUP_SUBDIR / "Steel2"
+    backup.mkdir(parents=True)
+    (backup / "a.png").write_bytes(b"the only copy of the original")
+    extraction = {"datasets": {"Steel2": {"mode_a_line_class": None}}}
+    before = _listing(tmp_path)
+    with pytest.raises(boundary_gt.ExtractionError, match="only copy of the original MODE B"):
+        boundary_gt.refuse_if_already_regenerated(extraction, tmp_path, "Steel2")
+    assert _listing(tmp_path) == before
+    assert (backup / "a.png").read_bytes() == b"the only copy of the original"
+
+
+def test_regeneration_refusal_names_every_problem_when_both_hold(tmp_path):
+    (tmp_path / boundary_gt.MODE_B_BACKUP_SUBDIR / "Steel2").mkdir(parents=True)
+    extraction = {"datasets": {"Steel2": {"mode_a_line_class": {"class_index": 1}}}}
+    with pytest.raises(boundary_gt.ExtractionError) as exc:
+        boundary_gt.refuse_if_already_regenerated(extraction, tmp_path, "Steel2")
+    assert "already records" in str(exc.value) and "only copy" in str(exc.value)
+
+
+def test_regeneration_is_allowed_on_a_clean_mode_b_state_and_for_other_datasets(tmp_path):
+    extraction = {"datasets": {"Steel1": {"mode_a_line_class": None},
+                               "Steel2": {"mode_a_line_class": None}}}
+    boundary_gt.refuse_if_already_regenerated(extraction, tmp_path, "Steel2")   # no raise
+    # another dataset's backup / record does not block this one
+    (tmp_path / boundary_gt.MODE_B_BACKUP_SUBDIR / "Steel1").mkdir(parents=True)
+    boundary_gt.refuse_if_already_regenerated(extraction, tmp_path, "Steel2")

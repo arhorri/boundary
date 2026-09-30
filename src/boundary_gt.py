@@ -1457,6 +1457,41 @@ def write_hsv_ranges(report: dict, configs_dir: Optional[Path] = None) -> Path:
     return path
 
 
+#: Where the MODE B ground truth of a dataset is copied before its line-class
+#: regeneration overwrites it, under ``GT_BOUNDARIES_ROOT``.
+MODE_B_BACKUP_SUBDIR = "_backup_mode_b"
+
+
+def refuse_if_already_regenerated(extraction: dict, gt_root: Path, dataset: str) -> None:
+    """Raise :class:`ExtractionError`, BEFORE anything is written, if the
+    line-class regeneration of ``dataset`` has already happened.
+
+    Two independent signs, either of which is enough. The extraction record
+    already carries ``mode_a_line_class`` for the dataset: the maps on disk are
+    no longer MODE B, so a second run would back up the NEW maps. Or the backup
+    directory exists: it holds the only copy of the original MODE B maps, and
+    the regeneration copies into it -- a second run must never get the chance
+    to overwrite that. Re-running is refused rather than made a no-op, so the
+    refusal is visible and the backup cannot be lost to a retried cell.
+    """
+    record = (extraction.get("datasets", {}).get(dataset) or {}).get("mode_a_line_class")
+    backup = Path(gt_root) / MODE_B_BACKUP_SUBDIR / dataset
+    problems = []
+    if record:
+        problems.append(
+            f"reports/gt_extraction.json already records mode_a_line_class for "
+            f"{dataset} ({record}): its boundary maps on disk are already line-class")
+    if backup.exists():
+        problems.append(
+            f"{backup} already exists: it is the only copy of the original MODE B "
+            f"{dataset} ground truth, and this step would overwrite it")
+    if problems:
+        raise ExtractionError(
+            f"REFUSING to regenerate {dataset}: " + "; ".join(problems) + ". Nothing was "
+            "written. If a previous run failed part-way, inspect the state by hand "
+            "(the backup is authoritative for MODE B) instead of re-running.")
+
+
 def merge_extraction_report(existing: dict, new: dict) -> dict:
     """Fold a PARTIAL re-extraction (a subset of folders) into the report of the
     full run, instead of overwriting it.
