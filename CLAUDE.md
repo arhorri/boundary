@@ -119,6 +119,21 @@ As currently audited, ALL FIVE folders are MODE B. The MODE A path exists and
 is tested but is not exercised by this data — do not assume it has been
 validated against a real MODE A folder.
 
+One exception to "MODE B yields phase interfaces": **Steel2's ground truth is
+generated with `boundary_gt.mode_a_line_class`** (`configs/default.yaml`, Steel2 only,
+LINE/BLOB threshold 8 px). Its dark mask class is an etched-line network, not a phase, and
+`find_boundaries` outlined both edges of every line (102.8 regions/tile; 28.7 with the
+line drawn itself: `reports/steel2_gt_mode_check_forced.md`). The audit still says MODE B
+-- the option reinterprets one palette class of a MODE B label map; it is not the HSV
+MODE A path. Because that changes the ground truth under a fold, the pooled fold built
+from it is named `fold_steel_combined_modea` (`tiling.apply_gt_variant`, read from what
+`reports/gt_extraction.json` records) with its own manifests, `fold_stats` entry and
+checkpoint directory; `fold_steel_combined` belongs to the old ground truth and is never
+rebuilt from the new one. The mode, resolved class and threshold are in
+`gt_extraction.json` and in `train.gt_fingerprint()`. Small-region cleanup
+(`min_region_area_px`) acts on the same label map, first; it is OFF in the regenerated
+Steel2 ground truth.
+
 Both modes share one cleanup: despeckle, CLOSE, skeletonize, dilate to a uniform
 `line_width_px`. Output is a uint8 PNG whose pixels are exactly 0 or 255.
 

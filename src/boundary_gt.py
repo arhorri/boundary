@@ -75,6 +75,17 @@ DEFAULTS = {
     # setting existed. Not a global default: Steel1 and every other dataset
     # must stay untouched while Steel2's speckle is cleaned up.
     "min_region_area_px": {},
+    # MODE B only. folder -> blob_thickness_px. A folder listed here has its
+    # DARKEST palette class treated as the painted boundary ITSELF instead of
+    # as a phase: see mode_a_raw_from_line_class and
+    # reports/steel2_gt_mode_check_forced.md for why (Steel2's dark class is an
+    # etched-line network, and find_boundaries outlined both edges of every
+    # line). Components of that class no thicker than blob_thickness_px are
+    # LINE (their own pixels are the boundary); thicker ones are BLOB (a
+    # filled phase, outlined as before). Absent = off -- a dataset not listed
+    # here is byte-identical to before this setting existed. Not a global
+    # default, for the same reason as min_region_area_px.
+    "mode_a_line_class": {},
 }
 
 #: A boundary map covering less/more than this is not a boundary map.
@@ -950,6 +961,47 @@ def mode_a_raw_from_line_class(labels: np.ndarray, class_index: int,
     return raw
 
 
+def line_class_index(palette: Sequence) -> int:
+    """Index of the palette's DARKEST class (lowest RGB sum; the first on a
+    tie) -- the class ``mode_a_line_class`` treats as the painted line. Chosen
+    from the palette rather than hardcoded so the record written into
+    gt_extraction.json says which colour it actually was.
+    """
+    if not len(palette):
+        raise ExtractionError("line_class_index: empty palette")
+    return min(range(len(palette)), key=lambda i: sum(_as_rgb(palette[i])))
+
+
+def skeleton_endpoint_stats(binary: np.ndarray, border_margin_px: int = 0) -> dict:
+    """Open-contour measure of a boundary map: the degree-1 pixels of its
+    skeleton (see ``postprocess._skeleton_endpoints``).
+
+    ``n_endpoints`` counts every one; ``n_interior_endpoints`` drops those
+    within ``border_margin_px`` of the tile edge, where a line simply runs off
+    the image and ends for a legitimate reason -- a dangling end is an
+    INTERIOR endpoint, a contour that stops in the middle of the tile and so
+    leaves two regions joined through the gap. Pass ``line_width_px`` as the
+    margin: a line cut by the tile edge has its skeleton end up to half a
+    width inside it.
+    """
+    from skimage.morphology import skeletonize
+
+    from src import postprocess
+
+    hit = np.asarray(binary, dtype=bool)
+    if not hit.any():
+        return {"n_endpoints": 0, "n_interior_endpoints": 0, "skeleton_px": 0}
+    skel = skeletonize(hit)
+    ends = postprocess._skeleton_endpoints(skel)
+    margin = int(border_margin_px)
+    interior = np.zeros_like(ends)
+    if ends.shape[0] > 2 * margin and ends.shape[1] > 2 * margin:
+        interior[margin:ends.shape[0] - margin, margin:ends.shape[1] - margin] = True
+    return {"n_endpoints": int(ends.sum()),
+            "n_interior_endpoints": int((ends & interior).sum()),
+            "skeleton_px": int(skel.sum())}
+
+
 def mode_b_vs_a_raw(labels: np.ndarray, class_index: int,
                     blob_thickness_px: float) -> tuple:
     """``(current MODE B raw, proposed MODE A raw)`` from the SAME label
@@ -1091,9 +1143,31 @@ def extract_folder(
     watch = watched_colours(name, settings)
     folded_idx = []
     min_region_area = int((settings["min_region_area_px"] or {}).get(name, 0))
+    line_thr = (settings.get("mode_a_line_class") or {}).get(name)
+    line_info = None
+    if line_thr is not None:
+        if mode != "B":
+            raise ExtractionError(
+                f"boundary_gt.mode_a_line_class is set for {name!r} but it is a "
+                "MODE A dataset; the option reinterprets a MODE B palette class, "
+                "which a painted-colour folder does not have.")
+        if not float(line_thr) > 0:
+            raise ExtractionError(
+                f"boundary_gt.mode_a_line_class[{name!r}] is the LINE/BLOB "
+                f"thickness in px and must be > 0, got {line_thr!r}")
     if mode == "B":
         palette = derive_palette(folder_report, settings)
         folded_idx = fold_targets(palette, name, settings)
+        if line_thr is not None:
+            line_idx = line_class_index(palette)
+            if line_idx in folded_idx:
+                raise ExtractionError(
+                    f"{name!r}: the line class (palette index {line_idx}) is also "
+                    "listed to be folded into the background; the two settings "
+                    "contradict each other.")
+            line_info = {"class_index": int(line_idx),
+                         "colour": [int(v) for v in _as_rgb(palette[line_idx])],
+                         "blob_thickness_px": float(line_thr)}
     else:
         window = window or derive_hsv_window(folder_report, kept, settings)
         if min_region_area:
@@ -1101,6 +1175,12 @@ def extract_folder(
                 f"boundary_gt.min_region_area_px is set for {name!r} but it "
                 "is a MODE A dataset; region-area merging is defined on the "
                 "phase-label map MODE B produces, not on painted colour.")
+
+    def build_raw(lbls):
+        if line_info is None:
+            return boundaries_from_labels(lbls)
+        return mode_a_raw_from_line_class(
+            lbls, line_info["class_index"], line_info["blob_thickness_px"])
 
     processed, rejected, reconciled = [], [], []
     out_dir = Path(out_dir) / name
@@ -1149,7 +1229,7 @@ def extract_folder(
 
                 region_merge = None
                 if min_region_area:
-                    raw_before_merge = boundaries_from_labels(labels)
+                    raw_before_merge = build_raw(labels)
                     labels, region_merge = merge_small_regions(
                         labels, min_region_area)
                     n_levels = int(len(np.unique(labels)))
@@ -1159,7 +1239,7 @@ def extract_folder(
                             "why": "min_region_area_px merged every phase "
                                    "into one label: no boundary would remain"})
                         continue
-                raw = boundaries_from_labels(labels)
+                raw = build_raw(labels)
                 if region_merge is not None:
                     region_merge["boundary_px_before"] = int(raw_before_merge.sum())
                     region_merge["boundary_px_after"] = int(raw.sum())
@@ -1222,6 +1302,7 @@ def extract_folder(
         "artifacts": _summarise_artifacts(watch, processed, folded_idx, palette),
         "folded_colours": [list(palette[i]) for i in folded_idx] if palette else [],
         "region_merge": _summarise_region_merge(processed, min_region_area),
+        "mode_a_line_class": line_info,
         "excluded": excluded,
         "rejected": rejected,
         "reconciled": reconciled,
@@ -1376,6 +1457,72 @@ def write_hsv_ranges(report: dict, configs_dir: Optional[Path] = None) -> Path:
     return path
 
 
+def merge_extraction_report(existing: dict, new: dict) -> dict:
+    """Fold a PARTIAL re-extraction (a subset of folders) into the report of the
+    full run, instead of overwriting it.
+
+    ``write_extraction_report`` writes whatever report it is handed, so handing
+    it the output of ``extract_all(datasets=["Steel2"])`` would delete every
+    other folder's record from reports/gt_extraction.json -- the record the GT
+    fingerprint hashes and tiling reads the line width from. This keeps every
+    folder ``new`` did not touch exactly as recorded, replaces the ones it did,
+    and refuses to mix two runs whose settings disagree: a folder extracted at
+    a different ``line_width_px`` than the others would leave one file claiming
+    a single setting for ground truth that is not uniform.
+
+    Settings are compared key by key. A key only ``new`` has is accepted when
+    it is off/empty (``{}``, ``None``, ``False`` -- the same thing absence
+    means, e.g. ``min_region_area_px`` on a report written before it existed),
+    and ``mode_a_line_class`` is additionally accepted when it names only
+    folders ``new`` actually extracted.
+    """
+    if not new.get("datasets"):
+        raise ExtractionError("merge_extraction_report: the new report has no datasets")
+    if new.get("failures"):
+        raise ExtractionError(
+            "merge_extraction_report: refusing to merge a report with failures "
+            f"{sorted(new['failures'])}; fix them first.")
+    old_s = dict(existing.get("settings") or {})
+    new_s = dict(new.get("settings") or {})
+    extracted = set(new["datasets"])
+    drift = []
+    for key in sorted(set(old_s) | set(new_s)):
+        if key in old_s and key in new_s:
+            if old_s[key] != new_s[key] and key != "mode_a_line_class":
+                drift.append(key)
+        elif key in new_s:
+            value = new_s[key]
+            if key == "mode_a_line_class":
+                stray = sorted(set(value or {}) - extracted)
+                if stray:
+                    drift.append(f"{key} (names {stray}, not extracted by this run)")
+            elif value not in ({}, None, False, []):
+                drift.append(key)
+        else:
+            drift.append(f"{key} (only in the existing report)")
+    if "mode_a_line_class" in old_s and "mode_a_line_class" in new_s:
+        kept = {d: v for d, v in (old_s["mode_a_line_class"] or {}).items()
+                if d not in extracted}
+        combined = dict(kept, **(new_s["mode_a_line_class"] or {}))
+        new_s["mode_a_line_class"] = combined
+    if drift:
+        raise ExtractionError(
+            "merge_extraction_report: the new run's settings differ from the "
+            f"recorded ones in {drift}. Merging would leave one report describing "
+            "ground truth that was not generated uniformly; regenerate every "
+            "folder instead, or undo the settings change.")
+    merged = json.loads(json.dumps(existing))
+    merged["generated_utc"] = new.get("generated_utc", merged.get("generated_utc"))
+    merged["settings"] = json.loads(json.dumps(new_s))
+    slim = json.loads(json.dumps(new["datasets"]))
+    for d in slim.values():
+        d.pop("files", None)
+    merged["datasets"].update(slim)
+    merged["failures"] = {k: v for k, v in (merged.get("failures") or {}).items()
+                          if k not in extracted}
+    return merged
+
+
 def write_extraction_report(report: dict, reports_dir: Optional[Path] = None) -> tuple:
     """Write reports/gt_extraction.md and its machine-readable twin."""
     reports_dir = Path(reports_dir or (REPO_ROOT / "reports"))
@@ -1478,6 +1625,19 @@ def render_markdown(report: dict) -> str:
                 f"- HSV lower {[round(v, 1) for v in w['lower']]}, "
                 f"upper {[round(v, 1) for v in w['upper']]}"
                 + (" (hue wraps)" if w.get("wraps_hue") else ""),
+            ]
+        lc = d.get("mode_a_line_class")
+        if lc:
+            lines += [
+                "", "### Line-class boundary (`boundary_gt.mode_a_line_class`)", "",
+                f"- palette class {lc['class_index']} (colour `{lc['colour']}`, the "
+                "darkest) is treated as the painted boundary itself, NOT as a phase: "
+                "`find_boundaries` is not run on it, because it would outline both "
+                "edges of every line and trap the line's own pixels as a thin region",
+                f"- LINE/BLOB threshold {lc['blob_thickness_px']:g} px: a connected "
+                "component of that class no thicker than this passes its own pixels "
+                "to the shared cleanup; a thicker one is a filled phase and keeps "
+                "MODE B's outline (see `mode_a_raw_from_line_class`)",
             ]
         rm = d.get("region_merge") or {}
         if rm.get("enabled"):
@@ -1788,4 +1948,88 @@ def write_mode_check_forced_report(payload: dict, reports_dir: Optional[Path] = 
     json_path = reports_dir / "steel2_gt_mode_check_forced.json"
     json_path.write_text(json.dumps(payload, indent=2))
     md_path.write_text(render_mode_check_forced_markdown(payload))
+    return md_path, json_path
+
+
+# --------------------------------------------------------------------------
+# MODE A adoption for Steel2: profile summaries + a generic report writer
+# (reports/steel2_mode_a_regeneration.*, reports/steel2_mode_a_fold.*)
+# --------------------------------------------------------------------------
+def region_profile_summary(n_regions_per_tile: Sequence, areas: Sequence) -> dict:
+    """Regions/tile and region-area percentiles / small-region shares over a
+    set of tiles -- the same five numbers every region diagnostic in this
+    repo reports, in one place so a profile computed in memory and one read
+    back from written PNGs are compared with the exact same arithmetic."""
+    a = np.asarray(list(areas), dtype=float)
+    if not len(n_regions_per_tile) or not a.size:
+        raise ExtractionError("region_profile_summary: no tiles/regions given")
+    return {
+        "n_tiles": int(len(n_regions_per_tile)),
+        "regions_per_tile": float(np.mean(n_regions_per_tile)),
+        "area_percentiles": {f"p{p}": float(np.percentile(a, p)) for p in (25, 50, 75)},
+        "share_lt_50": float((a < 50).mean()),
+        "share_lt_100": float((a < 100).mean()),
+    }
+
+
+def endpoint_profile_summary(per_tile: Sequence) -> dict:
+    """Summarise :func:`skeleton_endpoint_stats` over tiles: per-tile mean /
+    median / p95 of all endpoints and of interior (dangling) ones, and the
+    share of tiles with NO dangling end at all."""
+    if not len(per_tile):
+        raise ExtractionError("endpoint_profile_summary: no tiles given")
+    total = np.array([t["n_endpoints"] for t in per_tile], dtype=float)
+    inner = np.array([t["n_interior_endpoints"] for t in per_tile], dtype=float)
+    skel = np.array([t["skeleton_px"] for t in per_tile], dtype=float)
+
+    def stats(x):
+        return {"mean": float(x.mean()), "median": float(np.median(x)),
+                "p95": float(np.percentile(x, 95)), "max": float(x.max())}
+
+    return {
+        "n_tiles": int(len(per_tile)),
+        "endpoints_per_tile": stats(total),
+        "interior_endpoints_per_tile": stats(inner),
+        "share_tiles_without_interior_endpoint": float((inner == 0).mean()),
+        "interior_endpoints_per_1000_skeleton_px": (
+            float(1000.0 * inner.sum() / skel.sum()) if skel.sum() else None),
+    }
+
+
+def _report_bullets(obj, indent: int = 0) -> list:
+    pad = "  " * indent
+    if isinstance(obj, dict):
+        lines = []
+        for k, v in obj.items():
+            if isinstance(v, (dict, list)) and v:
+                lines.append(f"{pad}- **{k}**:")
+                lines += _report_bullets(v, indent + 1)
+            else:
+                lines.append(f"{pad}- **{k}**: {v if not isinstance(v, float) else f'{v:.6g}'}")
+        return lines
+    if isinstance(obj, list):
+        if all(not isinstance(v, (dict, list)) for v in obj):
+            return [f"{pad}- " + ", ".join(str(v) for v in obj)]
+        lines = []
+        for i, v in enumerate(obj):
+            lines.append(f"{pad}- [{i}]")
+            lines += _report_bullets(v, indent + 1)
+        return lines
+    return [f"{pad}- {obj}"]
+
+
+def write_payload_report(stem: str, title: str, intro: str, payload: dict,
+                         reports_dir: Optional[Path] = None) -> tuple:
+    """Write ``reports/<stem>.{md,json}``: the payload verbatim as JSON, and
+    the same content as nested bullets under one heading per top-level key.
+    For diagnostics whose value is the numbers themselves, where a bespoke
+    renderer would only restate them."""
+    reports_dir = Path(reports_dir or (REPO_ROOT / "reports"))
+    reports_dir.mkdir(parents=True, exist_ok=True)
+    md_path, json_path = reports_dir / f"{stem}.md", reports_dir / f"{stem}.json"
+    json_path.write_text(json.dumps(payload, indent=2, default=str))
+    lines = [f"# {title}", "", intro.strip(), ""]
+    for key, value in payload.items():
+        lines += [f"## {key}", ""] + _report_bullets(value) + [""]
+    md_path.write_text("\n".join(lines))
     return md_path, json_path

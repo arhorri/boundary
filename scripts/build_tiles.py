@@ -61,6 +61,10 @@ def main(argv=None) -> int:
 
     audit = boundary_gt.load_audit(reports_dir)
     extraction = tiling.load_extraction(reports_dir)
+    # If the boundary maps were generated with boundary_gt.mode_a_line_class,
+    # the pooled fold is a different fold (own manifests, fold_stats entry and
+    # checkpoint directory) -- never a rewrite of fold_steel_combined.
+    settings = tiling.apply_gt_variant(settings, extraction)
 
     print(f"indexing boundary maps under {gt_root}")
     index = tiling.build_index(extraction, audit, gt_root, settings,

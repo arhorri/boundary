@@ -98,6 +98,14 @@ DEFAULTS = {
         "min_parents_per_split": 1,
         "held_out_label": "mixed(Steel1+Steel2)",
     },
+    # The name the pooled fold takes when any of its datasets' ground truth was
+    # generated with boundary_gt.mode_a_line_class (recorded per dataset in
+    # reports/gt_extraction.json): a different ground truth is a different
+    # experiment, so it gets its own manifests, fold_stats entry and -- since
+    # the trainer keys checkpoints by fold name -- its own checkpoint
+    # directory, and the original fold's files are never rewritten from it.
+    # See apply_gt_variant().
+    "steel_combined_mode_a_name": "fold_steel_combined_modea",
 }
 
 #: pos_weight outside this band means the class balance is not what we think.
@@ -183,6 +191,33 @@ def load_config(config_path: Optional[Path] = None) -> dict:
             f"{settings['patch_size']}: tiles would leave gaps in the image."
         )
     return settings
+
+
+def apply_gt_variant(settings: dict, extraction: dict) -> dict:
+    """``settings`` with the pooled fold renamed when its ground truth is the
+    line-class (MODE A) variant, read from what ``extraction`` RECORDS -- not
+    from configs/default.yaml, which can disagree with the boundary maps on
+    disk in either direction.
+
+    Without this, the pooled-fold notebook and ``scripts/build_tiles.py``
+    would rebuild ``fold_steel_combined`` -- manifests, ``pos_weight`` and all
+    -- from ground truth that is no longer what that fold's checkpoint was
+    trained on, silently rewriting the files that checkpoint's reports point
+    at. With it, the same commands build ``fold_steel_combined_modea`` beside
+    it. Returns ``settings`` itself, unchanged, when no pooled dataset uses
+    the option.
+    """
+    cfg = settings["steel_combined"]
+    recorded = {d: (extraction.get("datasets", {}).get(d) or {}).get("mode_a_line_class")
+                for d in cfg["datasets"]}
+    if not any(recorded.values()):
+        return settings
+    renamed = dict(cfg, name=settings["steel_combined_mode_a_name"])
+    if renamed["name"] == cfg["name"]:
+        raise TilingError(
+            "tiling.steel_combined_mode_a_name equals tiling.steel_combined.name "
+            f"({cfg['name']!r}): the line-class fold would overwrite the original.")
+    return dict(settings, steel_combined=renamed)
 
 
 def load_extraction(reports_dir: Optional[Path] = None) -> dict:
@@ -806,6 +841,43 @@ def build_steel_combined_fold(index: dict, settings: dict) -> dict:
 # --------------------------------------------------------------------------
 # statistics + sampling weights
 # --------------------------------------------------------------------------
+def fold_membership(fold: dict) -> dict:
+    """``{split: sorted tile ids}`` of a ``build_steel_combined_fold`` result."""
+    out = {"train": [], "val": [], "test": []}
+    for r in fold["rows"]:
+        out[r["split"]].append(r["tile_id"])
+    out["test"] = [r["tile_id"] for r in fold["test_rows"]]
+    return {k: sorted(v) for k, v in out.items()}
+
+
+def manifest_membership(train_val_csv: Path, test_csv: Path) -> dict:
+    """The same ``{split: sorted tile ids}``, read back from a written
+    fold's two manifests -- so a rebuilt fold can be compared with the one
+    already on disk without re-deriving either from the other."""
+    import csv
+
+    out = {"train": [], "val": [], "test": []}
+    with open(train_val_csv, newline="") as f:
+        for row in csv.DictReader(f):
+            out[row["split"]].append(row["tile_id"])
+    with open(test_csv, newline="") as f:
+        out["test"] = [row["tile_id"] for row in csv.DictReader(f)]
+    return {k: sorted(v) for k, v in out.items()}
+
+
+def membership_diff(old: dict, new: dict) -> dict:
+    """``{split: {"only_old": [...], "only_new": [...]}}`` for every split
+    whose tile set differs, plus tiles that moved between splits. Empty when
+    the two are identical -- which is what "only the ground truth changed,
+    not which tile is in which split" means."""
+    diff = {}
+    for split in sorted(set(old) | set(new)):
+        a, b = set(old.get(split, [])), set(new.get(split, []))
+        if a != b:
+            diff[split] = {"only_old": sorted(a - b), "only_new": sorted(b - a)}
+    return diff
+
+
 def pos_weight(rows: Sequence) -> Optional[float]:
     """n_negative / n_positive over a split, from the tile boundary fractions."""
     if not rows:

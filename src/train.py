@@ -886,11 +886,24 @@ def gt_fingerprint(reports_dir: Optional[Path] = None) -> Optional[dict]:
         return None
     blob = path.read_bytes()
     report = json.loads(blob)
-    return {
+    fingerprint = {
         "gt_extraction_sha256": hashlib.sha256(blob).hexdigest()[:16],
         "gt_extraction_generated_utc": report.get("generated_utc"),
         "boundary_gt_settings": report.get("settings"),
     }
+    # Which folders had a palette class reinterpreted as the painted boundary
+    # (boundary_gt.mode_a_line_class), and WHICH class and LINE/BLOB threshold
+    # that resolved to -- the class index and colour are derived from the
+    # palette, so they are in no setting. Only added when at least one folder
+    # uses it: a fingerprint saved before this option existed has no such key,
+    # and adding an always-present empty one would make every such checkpoint
+    # mismatch ground truth that did not change.
+    line_class = {name: d["mode_a_line_class"]
+                  for name, d in sorted((report.get("datasets") or {}).items())
+                  if d.get("mode_a_line_class")}
+    if line_class:
+        fingerprint["mode_a_line_class"] = line_class
+    return fingerprint
 
 
 def verify_gt_fingerprint(state: dict, expected: Optional[dict], path) -> str:

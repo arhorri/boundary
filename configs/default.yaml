@@ -264,6 +264,28 @@ boundary_gt:
   min_region_area_px:
     Steel2: 50
 
+  # MODE B only. folder -> LINE/BLOB thickness (px). The folder's DARKEST palette
+  # class is treated as the painted boundary itself instead of as a phase, so
+  # find_boundaries is not run on it (it outlines both edges of every line and
+  # traps the line's own pixels as thin "regions"); connected components of that
+  # class no thicker than this pass their own pixels to the shared cleanup, thicker
+  # ones are filled phases and keep MODE B's outline. Absent is OFF -- every
+  # dataset not listed is byte-identical to before this setting existed.
+  #
+  # Steel2 only. reports/steel2_gt_mode_check_forced.md, 504 tiles: regions/tile
+  # 102.8 -> 28.7, share under 100 px 57.9% -> 37.8%; moving the grey cut from 64 to
+  # 224 changed nothing, so the fragmentation is in the mask, not the binarization.
+  # 8 is the threshold that comparison used, not a tuned value.
+  #
+  # NOTE the interaction with min_region_area_px above: both act on the palette-
+  # snapped LABEL map, cleanup first. The Steel2 ground truth on disk was generated
+  # BEFORE min_region_area_px existed (reports/gt_extraction.json has no region_merge
+  # record), and the regeneration that adopts this option turns the cleanup OFF
+  # explicitly (notebooks/06d_steel_combined.ipynb Cell 30), so that what changes is
+  # MODE A alone. A plain re-run of step 2 against this file would apply BOTH.
+  mode_a_line_class:
+    Steel2: 8
+
 # Remote-session settings. Every host-specific absolute path lives HERE and
 # nowhere else: no module may contain a literal /content or /kaggle path.
 # Consumed by scripts/bootstrap_session.py, src/paths.py and
