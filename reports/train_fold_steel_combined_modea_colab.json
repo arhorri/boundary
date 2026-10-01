@@ -81,7 +81,7 @@
  },
  "platform": "colab",
  "held_out": "mixed(Steel1+Steel2)",
- "generated_utc": "2026-09-30T14:38:33Z",
+ "generated_utc": "2026-10-01T07:21:21Z",
  "summary": {
   "fold": "fold_steel_combined_modea",
   "run_name": "fold_steel_combined_modea",
@@ -152,13 +152,13 @@
   "log_dir": "/content/drive/MyDrive/phase11-persistent/logs/fold_steel_combined_modea",
   "cache": {
    "train": {
-    "source": "cold",
-    "seconds": 6.42,
+    "source": "warm",
+    "seconds": 3.15,
     "images": 965
    },
    "val": {
-    "source": "cold",
-    "seconds": 1.79,
+    "source": "warm",
+    "seconds": 2.16,
     "images": 221
    }
   },
@@ -46837,10 +46837,7 @@
    },
    "is_best": false,
    "epochs_since_improvement": 7,
-   "stopped_early": false,
-   "checkpoints": {
-    "last": "/content/drive/MyDrive/phase11-persistent/checkpoints/fold_steel_combined_modea/last.pt"
-   }
+   "stopped_early": false
   }
  ]
 }
