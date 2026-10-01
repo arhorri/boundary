@@ -177,6 +177,14 @@ def get_github_token(platform: str) -> str:
     to have is a detection bug, not a missing secret -- so it is used, and the
     disagreement is printed rather than turned into a dead end.
     """
+    # A token already read in this process is reused. The Colab secret store is
+    # asked through the browser, which stops answering (TimeoutException) once the
+    # tab has been idle or disconnected for a long run -- hours into training, the
+    # push at the end of a cell then fails although GH_TOKEN is set and Cell 1 read
+    # it fine. An explicit GH_TOKEN in the environment gets the same precedence.
+    cached = os.environ.get("GH_TOKEN")
+    if cached and cached.strip():
+        return cached.strip()
     tried = []
     order = [platform] + [name for name in SECRET_READERS if name != platform]
     for name in order:
@@ -193,7 +201,9 @@ def get_github_token(platform: str) -> str:
                 print(f"  ! GH_TOKEN came from the {name} secret store, but the "
                       f"platform was detected as {platform}.")
                 print(f"  ! evidence: {platform_evidence()}")
-            return token.strip()
+            token = token.strip()
+            os.environ["GH_TOKEN"] = token      # cached for later pushes: see above
+            return token
         tried.append(f"{name} store: no secret named GH_TOKEN")
 
     token = os.environ.get("GH_TOKEN")
