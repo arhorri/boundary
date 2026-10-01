@@ -87,6 +87,20 @@ def _current_branch(repo_root: Path) -> str:
     return branch
 
 
+def _unpushed_commits(repo_root: Path, branch: str) -> int:
+    """Local commits not on ``origin/<branch>`` (0 when that ref is unknown).
+
+    Counted against the remote-tracking ref this checkout last saw, so it can
+    only ever UNDER-state what the remote lacks -- never invent commits.
+    """
+    proc = _run(["git", "rev-list", "--count", f"origin/{branch}..HEAD"], repo_root,
+                check=False, quiet=True)
+    try:
+        return int(proc.stdout.strip()) if proc.returncode == 0 else 0
+    except ValueError:
+        return 0
+
+
 def _diagnose_unchanged(repo_root: Path, expect: Sequence, dirs: Sequence) -> None:
     """Explain a "nothing changed" that the caller did not expect.
 
@@ -170,21 +184,29 @@ def push_results(
 
     staged = _run(["git", "diff", "--cached", "--name-only"], repo_root, quiet=True)
     changed = [ln for ln in staged.stdout.splitlines() if ln.strip()]
-    if not changed:
+    ahead = _unpushed_commits(repo_root, branch)
+    if not changed and not ahead:
         print("push_results: nothing changed in "
               + ", ".join(existing) + " - nothing to commit or push.")
         if expect:
             _diagnose_unchanged(repo_root, expect, existing)
         return False
 
-    print("push_results: committing " + str(len(changed)) + " file(s):")
-    for name in changed:
-        print(f"    {name}")
-
-    _run(["git", "commit", "-m", message], repo_root, quiet=True)
-
+    # The token comes BEFORE the commit. If it is unavailable the call fails with
+    # nothing committed -- committing first and failing at the push left a local
+    # commit that a retry then reported as "nothing changed" and never pushed.
     mod = _bootstrap_module(repo_root)
     token = mod.get_github_token(mod.detect_platform())
+
+    if changed:
+        print("push_results: committing " + str(len(changed)) + " file(s):")
+        for name in changed:
+            print(f"    {name}")
+        _run(["git", "commit", "-m", message], repo_root, quiet=True)
+    else:
+        print(f"push_results: nothing new to commit, but {ahead} local commit(s) are "
+              f"not on origin/{branch} (an earlier push failed after committing) -- "
+              "pushing them.")
     url = _run(["git", "remote", "get-url", "origin"], repo_root, quiet=True).stdout.strip()
     if not url:
         raise PushError("origin remote is not configured.")
