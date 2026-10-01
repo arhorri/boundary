@@ -7,7 +7,7 @@
 # while each dataset's share of it becomes sampling.target_share.
 # pos_weight is n_negative/n_positive over the train split, for
 # BCEWithLogitsLoss.
-generated_utc: '2026-09-30T12:15:08Z'
+generated_utc: '2026-10-01T06:42:47Z'
 patch_size: 256
 stride: 128
 min_boundary_frac: 0.005
