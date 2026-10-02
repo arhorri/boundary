@@ -1,0 +1,718 @@
+{
+  "title": "Steel GT / region-path step -- final",
+  "fold": "fold_steel_combined_modea",
+  "checkpoint": {
+    "epoch": {
+      "value": 32,
+      "source": "reports/region_metrics_fold_steel_combined_modea_colab.json",
+      "key": [
+        "epoch"
+      ]
+    },
+    "config_hash": {
+      "value": "067fecc2e06a7d0a",
+      "source": "reports/region_metrics_fold_steel_combined_modea_colab.json",
+      "key": [
+        "config_hash"
+      ]
+    },
+    "gt_extraction_sha256": {
+      "value": "53155b40c2b6ebf8",
+      "source": "reports/modea_retrain_comparison_colab.json",
+      "key": [
+        "checkpoints",
+        "new",
+        "gt_fingerprint",
+        "gt_extraction_sha256"
+      ]
+    }
+  },
+  "final_test": {
+    "Steel1": {
+      "tiles": {
+        "value": 96,
+        "source": "reports/region_metrics_fold_steel_combined_modea_colab.json",
+        "key": [
+          "decomposition",
+          "Steel1",
+          "tiles"
+        ]
+      },
+      "pixel_dice": {
+        "value": 0.5934309207252186,
+        "source": "reports/region_metrics_fold_steel_combined_modea_colab.json",
+        "key": [
+          "decomposition",
+          "Steel1",
+          "pixel_dice"
+        ]
+      },
+      "skeleton_dice": {
+        "value": 0.15128994123987344,
+        "source": "reports/region_metrics_fold_steel_combined_modea_colab.json",
+        "key": [
+          "decomposition",
+          "Steel1",
+          "skeleton_dice"
+        ]
+      },
+      "verdict": {
+        "value": "MISPLACED",
+        "source": "reports/region_metrics_fold_steel_combined_modea_colab.json",
+        "key": [
+          "decomposition",
+          "Steel1",
+          "label"
+        ]
+      },
+      "watershed_marker": {
+        "value": 0.6,
+        "source": "reports/gap_closing_fold_steel_combined_modea_colab.json",
+        "key": [
+          "marker",
+          "test_rows",
+          {
+            "config": "watershed@val-best marker (extended)",
+            "dataset": "Steel1"
+          },
+          "marker_threshold"
+        ]
+      },
+      "pq": {
+        "value": 0.34076945333636016,
+        "source": "reports/gap_closing_fold_steel_combined_modea_colab.json",
+        "key": [
+          "marker",
+          "test_rows",
+          {
+            "config": "watershed@val-best marker (extended)",
+            "dataset": "Steel1"
+          },
+          "pq"
+        ]
+      },
+      "sq": {
+        "value": 0.7413380570977496,
+        "source": "reports/gap_closing_fold_steel_combined_modea_colab.json",
+        "key": [
+          "marker",
+          "test_rows",
+          {
+            "config": "watershed@val-best marker (extended)",
+            "dataset": "Steel1"
+          },
+          "sq"
+        ]
+      },
+      "rq": {
+        "value": 0.4571316170979058,
+        "source": "reports/gap_closing_fold_steel_combined_modea_colab.json",
+        "key": [
+          "marker",
+          "test_rows",
+          {
+            "config": "watershed@val-best marker (extended)",
+            "dataset": "Steel1"
+          },
+          "rq"
+        ]
+      },
+      "over_segmentation_factor": {
+        "value": 0.9365011675365961,
+        "source": "reports/gap_closing_fold_steel_combined_modea_colab.json",
+        "key": [
+          "marker",
+          "test_rows",
+          {
+            "config": "watershed@val-best marker (extended)",
+            "dataset": "Steel1"
+          },
+          "over_segmentation_factor"
+        ]
+      },
+      "repeat_measurement_same_checkpoint_same_marker": {
+        "pq": {
+          "value": 0.3405034196334467,
+          "source": "reports/modea_retrain_comparison_colab.json",
+          "key": [
+            "summaries",
+            "new",
+            "Steel1",
+            "pq"
+          ]
+        },
+        "sq": {
+          "value": 0.7414394347724466,
+          "source": "reports/modea_retrain_comparison_colab.json",
+          "key": [
+            "summaries",
+            "new",
+            "Steel1",
+            "sq"
+          ]
+        },
+        "rq": {
+          "value": 0.45667343175986863,
+          "source": "reports/modea_retrain_comparison_colab.json",
+          "key": [
+            "summaries",
+            "new",
+            "Steel1",
+            "rq"
+          ]
+        },
+        "marker": {
+          "value": 0.6,
+          "source": "reports/modea_retrain_comparison_colab.json",
+          "key": [
+            "summaries",
+            "new",
+            "Steel1",
+            "marker_threshold"
+          ]
+        },
+        "over_segmentation_factor": {
+          "value": 0.9357571199175485,
+          "source": "reports/modea_retrain_comparison_colab.json",
+          "key": [
+            "summaries",
+            "new",
+            "Steel1",
+            "over_segmentation_factor"
+          ]
+        }
+      }
+    },
+    "Steel2": {
+      "tiles": {
+        "value": 126,
+        "source": "reports/region_metrics_fold_steel_combined_modea_colab.json",
+        "key": [
+          "decomposition",
+          "Steel2",
+          "tiles"
+        ]
+      },
+      "pixel_dice": {
+        "value": 0.7340263906937258,
+        "source": "reports/region_metrics_fold_steel_combined_modea_colab.json",
+        "key": [
+          "decomposition",
+          "Steel2",
+          "pixel_dice"
+        ]
+      },
+      "skeleton_dice": {
+        "value": 0.4096119063021299,
+        "source": "reports/region_metrics_fold_steel_combined_modea_colab.json",
+        "key": [
+          "decomposition",
+          "Steel2",
+          "skeleton_dice"
+        ]
+      },
+      "verdict": {
+        "value": "OFFSET",
+        "source": "reports/region_metrics_fold_steel_combined_modea_colab.json",
+        "key": [
+          "decomposition",
+          "Steel2",
+          "label"
+        ]
+      },
+      "watershed_marker": {
+        "value": 0.6,
+        "source": "reports/gap_closing_fold_steel_combined_modea_colab.json",
+        "key": [
+          "marker",
+          "test_rows",
+          {
+            "config": "watershed@val-best marker (extended)",
+            "dataset": "Steel2"
+          },
+          "marker_threshold"
+        ]
+      },
+      "pq": {
+        "value": 0.360499752219093,
+        "source": "reports/gap_closing_fold_steel_combined_modea_colab.json",
+        "key": [
+          "marker",
+          "test_rows",
+          {
+            "config": "watershed@val-best marker (extended)",
+            "dataset": "Steel2"
+          },
+          "pq"
+        ]
+      },
+      "sq": {
+        "value": 0.7651541940404984,
+        "source": "reports/gap_closing_fold_steel_combined_modea_colab.json",
+        "key": [
+          "marker",
+          "test_rows",
+          {
+            "config": "watershed@val-best marker (extended)",
+            "dataset": "Steel2"
+          },
+          "sq"
+        ]
+      },
+      "rq": {
+        "value": 0.46991111043159267,
+        "source": "reports/gap_closing_fold_steel_combined_modea_colab.json",
+        "key": [
+          "marker",
+          "test_rows",
+          {
+            "config": "watershed@val-best marker (extended)",
+            "dataset": "Steel2"
+          },
+          "rq"
+        ]
+      },
+      "over_segmentation_factor": {
+        "value": 1.0709186320406523,
+        "source": "reports/gap_closing_fold_steel_combined_modea_colab.json",
+        "key": [
+          "marker",
+          "test_rows",
+          {
+            "config": "watershed@val-best marker (extended)",
+            "dataset": "Steel2"
+          },
+          "over_segmentation_factor"
+        ]
+      },
+      "repeat_measurement_same_checkpoint_same_marker": {
+        "pq": {
+          "value": 0.36018907013085727,
+          "source": "reports/modea_retrain_comparison_colab.json",
+          "key": [
+            "summaries",
+            "new",
+            "Steel2",
+            "pq"
+          ]
+        },
+        "sq": {
+          "value": 0.7659555440431641,
+          "source": "reports/modea_retrain_comparison_colab.json",
+          "key": [
+            "summaries",
+            "new",
+            "Steel2",
+            "sq"
+          ]
+        },
+        "rq": {
+          "value": 0.4691511658666803,
+          "source": "reports/modea_retrain_comparison_colab.json",
+          "key": [
+            "summaries",
+            "new",
+            "Steel2",
+            "rq"
+          ]
+        },
+        "marker": {
+          "value": 0.6,
+          "source": "reports/modea_retrain_comparison_colab.json",
+          "key": [
+            "summaries",
+            "new",
+            "Steel2",
+            "marker_threshold"
+          ]
+        },
+        "over_segmentation_factor": {
+          "value": 1.0726639261500834,
+          "source": "reports/modea_retrain_comparison_colab.json",
+          "key": [
+            "summaries",
+            "new",
+            "Steel2",
+            "over_segmentation_factor"
+          ]
+        }
+      }
+    }
+  },
+  "decisions": {
+    "steel2_mode_a_line_class": {
+      "decision": "Steel2 ground truth generated with boundary_gt.mode_a_line_class: 8",
+      "regions_per_tile_mode_b": {
+        "value": 102.81547619047619,
+        "source": "reports/steel2_gt_mode_check_forced.json",
+        "key": [
+          "variants",
+          "k2",
+          "full_steel2",
+          "mode_b",
+          "regions_per_tile"
+        ]
+      },
+      "regions_per_tile_mode_a": {
+        "value": 28.738095238095237,
+        "source": "reports/steel2_gt_mode_check_forced.json",
+        "key": [
+          "variants",
+          "k2",
+          "full_steel2",
+          "mode_a",
+          "regions_per_tile"
+        ]
+      },
+      "steel2_pq_new_model_new_gt": {
+        "value": 0.36018907013085727,
+        "source": "reports/modea_retrain_comparison_colab.json",
+        "key": [
+          "comparison",
+          "Steel2",
+          "pq",
+          "new"
+        ]
+      },
+      "steel2_pq_old_model_new_gt_control": {
+        "value": 0.0955025979020724,
+        "source": "reports/modea_retrain_comparison_colab.json",
+        "key": [
+          "comparison",
+          "Steel2",
+          "pq",
+          "old"
+        ]
+      }
+    },
+    "connectivity_1_labeling": {
+      "decision": "true_regions_from_boundary labels background at connectivity=1 (a diagonal-only boundary no longer leaks two regions into one)",
+      "gt_regions_per_tile_steel1_before": {
+        "value": 12.395833333333334,
+        "source": "reports/region_metrics_fold_steel_combined_colab.json",
+        "key": [
+          "results",
+          "Steel1",
+          "n_true_regions"
+        ],
+        "commit": "881d37e"
+      },
+      "gt_regions_per_tile_steel1_after": {
+        "value": 16.989583333333332,
+        "source": "reports/region_metrics_fold_steel_combined_colab.json",
+        "key": [
+          "results",
+          "Steel1",
+          "n_true_regions"
+        ],
+        "commit": "0ce89c5"
+      },
+      "gt_regions_per_tile_steel2_before": {
+        "value": 111.96825396825396,
+        "source": "reports/region_metrics_fold_steel_combined_colab.json",
+        "key": [
+          "results",
+          "Steel2",
+          "n_true_regions"
+        ],
+        "commit": "881d37e"
+      },
+      "gt_regions_per_tile_steel2_after": {
+        "value": 127.39682539682539,
+        "source": "reports/region_metrics_fold_steel_combined_colab.json",
+        "key": [
+          "results",
+          "Steel2",
+          "n_true_regions"
+        ],
+        "commit": "0ce89c5"
+      },
+      "test": "tests/test_train.py::test_true_regions_from_boundary_does_not_leak_through_a_diagonal_only_boundary"
+    },
+    "watershed_marker_0_6_over_gap_closing": {
+      "decision": "region path = watershed_prob at marker 0.6 (both datasets, VAL-selected)",
+      "steel1_pq_watershed": {
+        "value": 0.34076945333636016,
+        "source": "reports/gap_closing_fold_steel_combined_modea_colab.json",
+        "key": [
+          "gap_closing",
+          "test_rows",
+          {
+            "config": "watershed@val-best marker (extended)",
+            "dataset": "Steel1"
+          },
+          "pq"
+        ]
+      },
+      "steel1_pq_gap_closing": {
+        "value": 0.29794718054845737,
+        "source": "reports/gap_closing_fold_steel_combined_modea_colab.json",
+        "key": [
+          "gap_closing",
+          "test_rows",
+          {
+            "config": "selected gap-closing (val-best)",
+            "dataset": "Steel1"
+          },
+          "pq"
+        ]
+      },
+      "steel2_pq_watershed": {
+        "value": 0.360499752219093,
+        "source": "reports/gap_closing_fold_steel_combined_modea_colab.json",
+        "key": [
+          "gap_closing",
+          "test_rows",
+          {
+            "config": "watershed@val-best marker (extended)",
+            "dataset": "Steel2"
+          },
+          "pq"
+        ]
+      },
+      "steel2_pq_gap_closing": {
+        "value": 0.3648659525276245,
+        "source": "reports/gap_closing_fold_steel_combined_modea_colab.json",
+        "key": [
+          "gap_closing",
+          "test_rows",
+          {
+            "config": "selected gap-closing (val-best)",
+            "dataset": "Steel2"
+          },
+          "pq"
+        ]
+      },
+      "selected_marker_steel1": {
+        "value": 0.6,
+        "source": "reports/gap_closing_fold_steel_combined_modea_colab.json",
+        "key": [
+          "marker",
+          "selected",
+          "Steel1",
+          "marker_threshold"
+        ]
+      },
+      "selected_marker_steel2": {
+        "value": 0.6,
+        "source": "reports/gap_closing_fold_steel_combined_modea_colab.json",
+        "key": [
+          "marker",
+          "selected",
+          "Steel2",
+          "marker_threshold"
+        ]
+      }
+    },
+    "postprocess_rejected": {
+      "decision": "no post-processing of the binary boundary for the region path",
+      "selected_config_steel1": {
+        "value": "skeleton_redilate@0.70",
+        "source": "reports/postprocess_sweep_fold_steel_combined_modea_colab.json",
+        "key": [
+          "selected",
+          "Steel1",
+          "config"
+        ]
+      },
+      "selected_config_steel2": {
+        "value": "skeleton_redilate@0.70",
+        "source": "reports/postprocess_sweep_fold_steel_combined_modea_colab.json",
+        "key": [
+          "selected",
+          "Steel2",
+          "config"
+        ]
+      },
+      "steel1_pq_selected_postprocess": {
+        "value": 0.2979473571062202,
+        "source": "reports/postprocess_sweep_fold_steel_combined_modea_colab.json",
+        "key": [
+          "test_rows",
+          {
+            "config": "selected (val-best)",
+            "dataset": "Steel1"
+          },
+          "pq"
+        ]
+      },
+      "steel2_pq_selected_postprocess": {
+        "value": 0.36486581131902607,
+        "source": "reports/postprocess_sweep_fold_steel_combined_modea_colab.json",
+        "key": [
+          "test_rows",
+          {
+            "config": "selected (val-best)",
+            "dataset": "Steel2"
+          },
+          "pq"
+        ]
+      }
+    },
+    "min_region_area_px_off": {
+      "decision": "boundary_gt.min_region_area_px off; the regenerated Steel2 GT was made with it off and no model was trained with it on",
+      "recorded_setting": {
+        "value": {},
+        "source": "reports/gt_extraction.json",
+        "key": [
+          "settings",
+          "min_region_area_px"
+        ]
+      },
+      "steel2_regions_per_tile_mode_a": {
+        "value": 28.738095238095237,
+        "source": "reports/steel2_mode_a_regeneration.json",
+        "key": [
+          "profile_in_memory_cell29",
+          "mode_a",
+          "regions",
+          "regions_per_tile"
+        ]
+      },
+      "steel2_regions_per_tile_mode_a_cleanup50": {
+        "value": 21.956349206349206,
+        "source": "reports/steel2_mode_a_regeneration.json",
+        "key": [
+          "profile_in_memory_cell29",
+          "mode_a_cleanup50",
+          "regions",
+          "regions_per_tile"
+        ]
+      }
+    }
+  },
+  "limitations": {
+    "steel1_misplaced": {
+      "verdict": {
+        "value": "MISPLACED",
+        "source": "reports/region_metrics_fold_steel_combined_modea_colab.json",
+        "key": [
+          "decomposition",
+          "Steel1",
+          "label"
+        ]
+      },
+      "skeleton_dice": {
+        "value": 0.15128994123987344,
+        "source": "reports/region_metrics_fold_steel_combined_modea_colab.json",
+        "key": [
+          "decomposition",
+          "Steel1",
+          "skeleton_dice"
+        ]
+      }
+    },
+    "steel2_open_contours_in_gt": {
+      "interior_endpoints_per_tile_mean": {
+        "value": 126.8670634920635,
+        "source": "reports/steel2_mode_a_regeneration.json",
+        "key": [
+          "regenerated_on_disk",
+          "dangling_ends",
+          "interior_endpoints_per_tile",
+          "mean"
+        ]
+      },
+      "share_tiles_without_interior_endpoint": {
+        "value": 0.0,
+        "source": "reports/steel2_mode_a_regeneration.json",
+        "key": [
+          "regenerated_on_disk",
+          "dangling_ends",
+          "share_tiles_without_interior_endpoint"
+        ]
+      }
+    },
+    "steel2_fn_classes_test_none_at_tuned": {
+      "TINY": {
+        "value": 855,
+        "source": "reports/fn_attribution_fold_steel_combined_modea_colab.json",
+        "key": [
+          "attribution",
+          "test",
+          "none@tuned",
+          "Steel2",
+          "counts",
+          "TINY"
+        ]
+      },
+      "TINY_fraction": {
+        "value": 0.2836761778367618,
+        "source": "reports/fn_attribution_fold_steel_combined_modea_colab.json",
+        "key": [
+          "attribution",
+          "test",
+          "none@tuned",
+          "Steel2",
+          "fractions",
+          "TINY"
+        ]
+      },
+      "MERGED": {
+        "value": 2098,
+        "source": "reports/fn_attribution_fold_steel_combined_modea_colab.json",
+        "key": [
+          "attribution",
+          "test",
+          "none@tuned",
+          "Steel2",
+          "counts",
+          "MERGED"
+        ]
+      },
+      "MERGED_fraction": {
+        "value": 0.6960849369608494,
+        "source": "reports/fn_attribution_fold_steel_combined_modea_colab.json",
+        "key": [
+          "attribution",
+          "test",
+          "none@tuned",
+          "Steel2",
+          "fractions",
+          "MERGED"
+        ]
+      },
+      "fn_per_tile": {
+        "value": 23.92063492063492,
+        "source": "reports/fn_attribution_fold_steel_combined_modea_colab.json",
+        "key": [
+          "attribution",
+          "test",
+          "none@tuned",
+          "Steel2",
+          "fn_per_tile"
+        ]
+      }
+    },
+    "single_seed": {
+      "steel1_pq_delta_new_minus_old": {
+        "value": -0.0023548098321658495,
+        "source": "reports/modea_retrain_comparison_colab.json",
+        "key": [
+          "comparison",
+          "Steel1",
+          "pq",
+          "delta"
+        ]
+      },
+      "steel1_test_parents": {
+        "value": 2,
+        "source": "reports/modea_retrain_comparison_colab.json",
+        "key": [
+          "test_tiles",
+          "Steel1",
+          "parents"
+        ]
+      },
+      "steel2_test_parents": {
+        "value": 1,
+        "source": "reports/modea_retrain_comparison_colab.json",
+        "key": [
+          "test_tiles",
+          "Steel2",
+          "parents"
+        ]
+      }
+    }
+  }
+}

@@ -137,6 +137,33 @@ Steel2 ground truth.
 Both modes share one cleanup: despeckle, CLOSE, skeletonize, dilate to a uniform
 `line_width_px`. Output is a uint8 PNG whose pixels are exactly 0 or 255.
 
+## Current state — Steel GT / region-path step FINALIZED (handoff)
+
+Read `reports/steel_step_final.md` first: final TEST numbers, every decision with its
+evidence, known limitations. Every number there is copied from a committed report and
+`tests/test_steel_step.py` checks each one against its source.
+
+- **Default steel fold: `fold_steel_combined_modea`** (configs/default.yaml
+  `steel_step.default_fold`), trained to epoch 39, best.pt = epoch 32, config hash
+  `067fecc2e06a7d0a`, on ground truth `gt_extraction_sha256` `53155b40c2b6ebf8`
+  (`steel_step.expected_gt_sha256`). `06d_steel_combined.ipynb` Cell 2 refuses any other fold.
+  `fold_steel_combined` (old MODE B Steel2 GT) is the superseded control: kept, never rebuilt.
+- **Region path** (`steel_step.region_path`): `watershed_prob`, marker 0.6 for Steel1 and
+  Steel2 (VAL-selected), no post-processing, `boundary_gt.min_region_area_px` off.
+  `steel_step` is a top-level section ON PURPOSE: `train.config_hash` hashes only
+  model/loss/train(HASHED_TRAIN_KEYS)/dataset, so it cannot invalidate the checkpoint.
+  `train.region_metrics.watershed_marker_threshold` stays 0.3 -- every committed region
+  report was computed at it. Read the region path with `train.load_steel_step()`.
+- **`06d_steel_combined.ipynb` is safe for a fresh "Run all"**: Cell 14 prints
+  `RUN ALREADY COMPLETE` and skips `fit()` for a finished (or patience-stopped) run;
+  Cells 25-29 are diagnostics that print "skipped (diagnostic)" unless `RUN_DIAGNOSTICS = True`
+  (set once in Cell 2, default False); Cells 30-31 print "already done -- skipped" in exactly
+  the finished state and raise, writing nothing, in any partial or foreign state. The MODE B
+  Steel2 backup (`GT_BOUNDARIES_ROOT/_backup_mode_b/Steel2`) is never overwritten.
+- **Next step (stated, not started)**: one time-boxed model round on
+  `fold_steel_combined_modea` -- Arms C + D plus a seed control, judged on Steel1 skeleton
+  Dice -- then Phase 2 watershed segmentation on the region path above.
+
 ## Fold protocol (decided in step 3, do not re-litigate in later steps)
 - Tiles are not independent samples. Every tile carries a `parent_id`; splits
   are made BY PARENT so tiles of one micrograph never straddle train and val.
