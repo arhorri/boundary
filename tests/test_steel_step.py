@@ -52,12 +52,49 @@ def _report():
     return json.loads(REPORT.read_text())
 
 
-def test_every_number_in_the_final_report_is_identical_to_its_committed_source():
+FLOAT_TOLERANCE = 5e-3
+
+
+def _same(expected, actual, where):
+    """Floats within ``FLOAT_TOLERANCE`` (absolute); integers, booleans and strings exact."""
+    if isinstance(expected, dict) and isinstance(actual, dict):
+        assert expected.keys() == actual.keys(), (where, sorted(expected), sorted(actual))
+        for k in expected:
+            _same(expected[k], actual[k], f"{where}.{k}")
+    elif isinstance(expected, (list, tuple)) and isinstance(actual, (list, tuple)):
+        assert len(expected) == len(actual), where
+        for i, (a, b) in enumerate(zip(expected, actual)):
+            _same(a, b, f"{where}[{i}]")
+    elif isinstance(expected, float) or isinstance(actual, float):
+        assert not isinstance(expected, bool) and not isinstance(actual, bool), where
+        assert abs(float(expected) - float(actual)) <= FLOAT_TOLERANCE, (where, expected, actual)
+    else:
+        assert expected == actual and type(expected) is type(actual), (where, expected, actual)
+
+
+def test_every_number_in_the_final_report_matches_its_committed_source():
+    """The report copies each number from a committed source report, and this checks it still
+    agrees. FLOATS are compared with an absolute tolerance of 5e-3, not exactly: evaluating
+    one checkpoint on the GPU is not bit-reproducible, and every "Run all" of
+    06d_steel_combined.ipynb rewrites the region / post-processing / attribution reports with
+    their 3rd-4th decimals moved by ~0.002-0.003. Exact matching would fail on each re-run
+    although nothing real changed. Integers, booleans and strings stay exact -- a count, a
+    verdict or a fold name that differs is a real difference, not noise."""
     entries = [(p, e) for p, e in _entries(_report()) if "commit" not in e]
     assert len(entries) > 40
     for path, e in entries:
         source = json.loads((ROOT / e["source"]).read_text())
-        assert _walk(source, e["key"]) == e["value"], (path, e["source"], e["key"])
+        _same(e["value"], _walk(source, e["key"]), f"{path} <- {e['source']}:{e['key']}")
+
+
+def test_the_provenance_comparison_tolerates_float_noise_but_not_real_differences():
+    _same(0.4095, 0.4121, "x")                     # 0.0026: GPU noise
+    _same({"a": [1, 0.1000]}, {"a": [1, 0.1049]}, "x")
+    for expected, actual in ((0.4095, 0.4146),     # 0.0051: past the tolerance
+                             (3, 4), (3, "3"),
+                             ("steel", "Steel"), (True, False), (1, True)):
+        with pytest.raises(AssertionError):
+            _same(expected, actual, "x")
 
 
 def test_numbers_taken_from_git_history_match_that_commit():

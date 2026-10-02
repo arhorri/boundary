@@ -415,6 +415,11 @@ def test_comparison_cell_pushes_only_after_its_checks_and_names_the_report_by_pl
 def test_cell_33_measures_without_touching_training_or_config():
     cell = _cell_after("## Cell 33 ")
     assert "losses_mod.thickness_invariance_profile(" in cell
+    assert "line_width=case_width" in cell, "the width-independent checks need each case's width"
+    for check in ("cldice_below_quarter_of_dice", "pred_skeleton_real",
+                  "true_skeleton_real", "pred_skeleton_on_true"):
+        assert check in cell, f"the table must name {check}"
+    assert "CL_ITERS = (3, 4, 5, 6)" in cell and "CL_WIDTHS = (2, 4)" in cell
     assert "losses_mod.skeleton_measurements(" in cell
     # a measurement: no assignment to a setting, no write of a config file, no training
     for banned in ('["cldice_iters"] =', "cldice_iters:", "safe_dump", ".fit(", "Trainer(",
