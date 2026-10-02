@@ -395,8 +395,55 @@ def skeleton_measurements(mask: np.ndarray, iters_list: Sequence = (3, 4, 5)) ->
 INVARIANCE_CHECKS = ("cldice_below_quarter_of_dice", "pred_skeleton_real",
                      "true_skeleton_real", "pred_skeleton_on_true")
 
+#: The constants of those checks. Shared by :func:`invariance_checks` and therefore by the
+#: test and the Cell 33 measurement, so the two cannot drift apart.
+INVARIANCE_CLDICE_FRACTION = 0.25   # cldice(dilated) < this * dice(dilated)
+INVARIANCE_SKELETON_FRACTION = 0.25  # a skeleton counts as "real" above this share of its reference
+INVARIANCE_ON_TRUE_FRACTION = 0.8   # share of the predicted skeleton lying on the true one
 
-def thickness_invariance_profile(truth: np.ndarray, iters_list: Sequence,
+#: What each check failing means, for assertion messages and reports.
+INVARIANCE_CHECK_MEANING = {
+    "cldice_below_quarter_of_dice": (
+        "clDice charges nearly as much as Dice for a topology-preserving thickness change"),
+    "pred_skeleton_real": (
+        "the dilated prediction's skeleton is essentially empty (< 0.25 of the true skeleton), "
+        "so t_prec = smooth/smooth = 1 and a low clDice is degenerate rather than invariant"),
+    "true_skeleton_real": (
+        "the ground truth's own skeleton is essentially empty (< 0.25 of area / line_width)"),
+    "pred_skeleton_on_true": (
+        "the dilated prediction's skeleton does not lie on the true boundary (< 0.8 overlap)"),
+}
+
+
+def invariance_checks(parts: dict, dice: float, cldice: float, line_width: float) -> dict:
+    """The four :data:`INVARIANCE_CHECKS`, as ``{name: bool}``, all WIDTH-INDEPENDENT.
+
+    ``parts`` is ``cldice_parts(...)`` of the dilated prediction against the truth.
+
+    * ``cldice_below_quarter_of_dice``: ``cldice < 0.25 * dice``.
+    * ``pred_skeleton_real``: ``skel_pred_sum > 0.25 * skel_true_sum`` -- the predicted
+      skeleton is not near-empty RELATIVE TO THE TRUE ONE. (The first version compared it
+      with the mask area, which grows with the line width: 0.25 * area is a skeleton length
+      only at 2 px, and at 4 px it demanded more skeleton than the line has.)
+    * ``true_skeleton_real``: ``skel_true_sum > 0.25 * (true_sum / line_width)`` -- the
+      expected centreline length of a line is its area over its width.
+    * ``pred_skeleton_on_true``: ``skel_pred_on_true > 0.8 * skel_pred_sum``.
+    """
+    width = float(line_width)
+    if not width >= 1.0:
+        raise LossError(f"line_width must be >= 1, got {line_width!r}")
+    return {
+        "cldice_below_quarter_of_dice": cldice < INVARIANCE_CLDICE_FRACTION * dice,
+        "pred_skeleton_real": (
+            parts["skel_pred_sum"] > INVARIANCE_SKELETON_FRACTION * parts["skel_true_sum"]),
+        "true_skeleton_real": (
+            parts["skel_true_sum"] > INVARIANCE_SKELETON_FRACTION * (parts["true_sum"] / width)),
+        "pred_skeleton_on_true": (
+            parts["skel_pred_on_true"] > INVARIANCE_ON_TRUE_FRACTION * parts["skel_pred_sum"]),
+    }
+
+
+def thickness_invariance_profile(truth: np.ndarray, iters_list: Sequence, line_width: float,
                                  magnitude: float = 10.0, smooth: float = 1.0,
                                  eps: float = 1e-6) -> dict:
     """Does clDice ignore a one-pixel dilation of ``truth``, at each iteration count?
@@ -404,10 +451,10 @@ def thickness_invariance_profile(truth: np.ndarray, iters_list: Sequence,
     ``{iters: {dice_dilated, cldice_dilated, skel_pred_sum, skel_true_sum,
     skel_pred_on_true, true_sum, checks, holds, failed}}``. The prediction is ``truth``
     dilated by one pixel all round (topology intact), scored through the real
-    :func:`dice_term` / :func:`cldice_term` / :func:`cldice_parts`. ``holds`` is the
-    conjunction of :data:`INVARIANCE_CHECKS`, the same conditions
-    tests/test_losses.py asserts, so a notebook measuring them and the test judging them
-    cannot drift apart.
+    :func:`dice_term` / :func:`cldice_term` / :func:`cldice_parts`. ``line_width`` is the
+    width of ``truth``'s lines in pixels. ``holds`` is the conjunction of
+    :func:`invariance_checks`, the same function tests/test_losses.py asserts through, so a
+    notebook measuring them and the test judging them cannot drift apart.
     """
     arr = (np.asarray(truth) > 0).astype(np.uint8)
     target = as_target(arr)
@@ -417,17 +464,14 @@ def thickness_invariance_profile(truth: np.ndarray, iters_list: Sequence,
     for iters in iters_list:
         cl = float(cldice_term(logits, target, iters=int(iters), smooth=smooth, eps=eps))
         parts = cldice_parts(logits, target, iters=int(iters), smooth=smooth, eps=eps)
-        checks = {
-            "cldice_below_quarter_of_dice": cl < 0.25 * dice,
-            "pred_skeleton_real": parts["skel_pred_sum"] > 0.25 * parts["true_sum"],
-            "true_skeleton_real": parts["skel_true_sum"] > 0.25 * parts["true_sum"],
-            "pred_skeleton_on_true": parts["skel_pred_on_true"] > 0.8 * parts["skel_pred_sum"],
-        }
+        checks = invariance_checks(parts, dice, cl, line_width)
         out[int(iters)] = {
             "dice_dilated": dice, "cldice_dilated": cl,
             **{k: parts[k] for k in ("skel_pred_sum", "skel_true_sum",
                                      "skel_pred_on_true", "true_sum")},
-            "checks": checks, "holds": all(checks.values()),
+            "line_width_px": float(line_width),
+            "checks": {k: bool(v) for k, v in checks.items()},
+            "holds": all(checks.values()),
             "failed": [k for k in INVARIANCE_CHECKS if not checks[k]],
         }
     return out

@@ -297,17 +297,11 @@ def test_cldice_is_far_less_sensitive_to_thickness_than_dice(criterion, dense_ti
         "thickness change; its whole contribution here is not doing that -- "
         + detail)
     # ... and it is invariance, not degeneracy: both skeletons carry real
-    # pixels and the predicted one lies on the true boundary.
-    assert parts["dilated"]["skel_pred_sum"] > 0.25 * parts["dilated"]["true_sum"], (
-        "the dilated prediction's skeleton is essentially empty, so t_prec is "
-        "smooth/smooth = 1 and the low clDice is degenerate rather than "
-        "topology-invariant -- " + detail)
-    assert parts["dilated"]["skel_true_sum"] > 0.25 * parts["dilated"]["true_sum"], (
-        "the ground truth's own skeleton is essentially empty -- " + detail)
-    assert (parts["dilated"]["skel_pred_on_true"]
-            > 0.8 * parts["dilated"]["skel_pred_sum"]), (
-        "the dilated prediction's skeleton does not lie on the true boundary, "
-        "so its low clDice is not centreline agreement -- " + detail)
+    # pixels and the predicted one lies on the true boundary. The width-independent
+    # conditions are losses.invariance_checks, the same function Cell 33 measures with.
+    checks = losses.invariance_checks(parts["dilated"], dice_dil, cl_dil, line_width)
+    for name in losses.INVARIANCE_CHECKS:
+        assert checks[name], f"{name}: {losses.INVARIANCE_CHECK_MEANING[name]} -- " + detail
     # Consequence of the two above, stated as the ranking it produces: relative
     # to the thickness error, clDice puts the break far higher than Dice does.
     # Cross-multiplied, so a clDice of exactly 0 on the dilated case cannot
@@ -551,7 +545,8 @@ def test_thickness_invariance_on_a_straight_line_needs_iterations_of_about_half_
     ``rows / 2`` iterations the dilated (rows + 2 px) line is not yet consumed, its skeleton
     is EMPTY, and clDice comes out ~0 for the wrong reason -- ``pred_skeleton_real`` is the
     check that catches it. From ``rows / 2`` up it holds at every count."""
-    profile = losses.thickness_invariance_profile(_horizontal_band(rows), [1, 2, 3, 4, 5])
+    profile = losses.thickness_invariance_profile(_horizontal_band(rows), [1, 2, 3, 4, 5],
+                                                  line_width=rows)
     for iters, row in profile.items():
         if iters < first_iters:
             # an EMPTY predicted skeleton also has nothing "on" the truth (0 > 0 is false), so
@@ -566,6 +561,66 @@ def test_thickness_invariance_on_a_straight_line_needs_iterations_of_about_half_
 
 
 def test_thickness_invariance_profile_names_the_checks_it_applies():
-    profile = losses.thickness_invariance_profile(_horizontal_band(4), [3])
+    profile = losses.thickness_invariance_profile(_horizontal_band(4), [3], line_width=4)
     assert set(profile[3]["checks"]) == set(losses.INVARIANCE_CHECKS)
     assert profile[3]["failed"] == [] and profile[3]["holds"] is True
+
+
+# --------------------------------------------------------------------------
+# the width-independent invariance checks
+# --------------------------------------------------------------------------
+def _old_width2_checks(parts, dice, cldice):
+    """The checks as first written (calibrated at 2 px): both skeleton thresholds were a
+    fraction of the MASK AREA. Kept here only to show the new ones agree at width 2."""
+    return {
+        "cldice_below_quarter_of_dice": cldice < 0.25 * dice,
+        "pred_skeleton_real": parts["skel_pred_sum"] > 0.25 * parts["true_sum"],
+        "true_skeleton_real": parts["skel_true_sum"] > 0.25 * parts["true_sum"],
+        "pred_skeleton_on_true": parts["skel_pred_on_true"] > 0.8 * parts["skel_pred_sum"],
+    }
+
+
+def _grid_of_lines(width, size=64, spacing=16):
+    mask = np.zeros((size, size), dtype=np.uint8)
+    for k in range(spacing // 2, size, spacing):
+        mask[k:k + width, 4:size - 4] = 1
+        mask[4:size - 4, k:k + width] = 1
+    return mask
+
+
+@pytest.mark.parametrize("fixture", ["band", "grid"])
+@pytest.mark.parametrize("iters", [1, 2, 3, 4, 5, 6])
+def test_new_invariance_checks_agree_with_the_old_ones_at_width_two(fixture, iters):
+    mask = _horizontal_band(2) if fixture == "band" else _grid_of_lines(2)
+    target = losses.as_target(mask)
+    logits = losses.as_logits(losses.dilate_mask(mask, iterations=1), 10.0)
+    dice = float(losses.dice_term(logits, target, smooth=1.0))
+    cl = float(losses.cldice_term(logits, target, iters=iters, smooth=1.0, eps=1e-6))
+    parts = losses.cldice_parts(logits, target, iters=iters, smooth=1.0, eps=1e-6)
+    new = losses.invariance_checks(parts, dice, cl, line_width=2)
+    assert new == _old_width2_checks(parts, dice, cl), (fixture, iters, parts, new)
+
+
+def test_invariance_checks_flag_the_four_pixel_dense_tile_failures_from_colab():
+    """The numbers reported by the Colab run of the dense MetalDam tile at 4 px (the data is
+    not available here, so they are entered as given): iters=3 left a 904 px predicted
+    skeleton against a 7069 px true one -- NOT real -- while iters=5 (skeleton 3385.7 against
+    7190, mask area 39486, overlap 3225) is, which the old area-based threshold (0.25 * 39486
+    = 9871 > 3385.7) wrongly refused."""
+    dice = 0.15544
+    iters3 = {"skel_pred_sum": 904.0, "skel_true_sum": 7069.0, "true_sum": 39486.0,
+              "skel_pred_on_true": 850.0}
+    got3 = losses.invariance_checks(iters3, dice, 0.04205, line_width=4)
+    assert not got3["pred_skeleton_real"]                 # 904 < 0.25 * 7069
+    iters5 = {"skel_pred_sum": 3385.7, "skel_true_sum": 7190.0, "true_sum": 39486.0,
+              "skel_pred_on_true": 3225.0}
+    got5 = losses.invariance_checks(iters5, dice, 0.02437, line_width=4)
+    assert all(got5.values()), got5
+    assert not _old_width2_checks(iters5, dice, 0.02437)["pred_skeleton_real"]
+
+
+def test_invariance_checks_refuse_a_nonsense_width():
+    parts = {"skel_pred_sum": 1.0, "skel_true_sum": 1.0, "true_sum": 1.0, "skel_pred_on_true": 1.0}
+    for bad in (0, 0.5, float("nan")):
+        with pytest.raises(losses.LossError):
+            losses.invariance_checks(parts, 0.1, 0.01, bad)
