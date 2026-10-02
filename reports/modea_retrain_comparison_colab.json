@@ -1,0 +1,292 @@
+{
+  "generated_utc": "2026-10-02T09:02:20Z",
+  "folds": {
+    "new": "fold_steel_combined_modea",
+    "old": "fold_steel_combined"
+  },
+  "checkpoints": {
+    "new": {
+      "path": "/content/drive/MyDrive/phase11-persistent/checkpoints/fold_steel_combined_modea/best.pt",
+      "epoch": 32,
+      "config_hash": "067fecc2e06a7d0a",
+      "gt_fingerprint": {
+        "gt_extraction_sha256": "53155b40c2b6ebf8",
+        "gt_extraction_generated_utc": "2026-09-30T12:12:48Z",
+        "boundary_gt_settings": {
+          "artifact_colours": {
+            "MetalDam": [
+              [
+                75,
+                176,
+                40
+              ]
+            ],
+            "uhcs2": [
+              [
+                75,
+                176,
+                40
+              ]
+            ]
+          },
+          "close_kernel": 3,
+          "exclusions": {
+            "uhcs2": [
+              "uhcs0596.png"
+            ]
+          },
+          "fold_artifact_colours": false,
+          "hsv_percentiles": [
+            2,
+            98
+          ],
+          "hsv_sample_files": 12,
+          "line_width_px": 4,
+          "max_unsnapped_fraction": 0.02,
+          "min_palette_share": 0.002,
+          "min_region_area_px": {},
+          "mode_a_line_class": {
+            "Steel2": 8
+          },
+          "open_kernel": 3,
+          "open_mode": "speckle",
+          "output_subdir": "gt_boundaries",
+          "palette_merge_distance": 48,
+          "size_tolerance_px": 2
+        },
+        "mode_a_line_class": {
+          "Steel2": {
+            "class_index": 1,
+            "colour": [
+              0,
+              0,
+              0
+            ],
+            "blob_thickness_px": 8.0
+          }
+        }
+      }
+    },
+    "old": {
+      "path": "/content/drive/MyDrive/phase11-persistent/checkpoints/fold_steel_combined/best.pt",
+      "epoch": 21,
+      "config_hash": "067fecc2e06a7d0a",
+      "gt_fingerprint": null
+    }
+  },
+  "how_to_read": {
+    "Steel1": "same tiles, same ground truth: new vs old is a direct comparison",
+    "Steel2": "new model vs the NEW ground truth is the score of interest; the OLD model scored against the same NEW ground truth is the control, so 'delta' is what retraining adds beyond changing the ground truth under the same tiles. Nothing here scores the NEW model against the OLD Steel2 ground truth."
+  },
+  "test_tiles": {
+    "Steel1": {
+      "tiles": 96,
+      "parents": 2
+    },
+    "Steel2": {
+      "tiles": 126,
+      "parents": 1
+    }
+  },
+  "marker_grid_selected_on_val": [
+    0.2,
+    0.25,
+    0.3,
+    0.35,
+    0.4,
+    0.45,
+    0.5,
+    0.55,
+    0.6,
+    0.7
+  ],
+  "default_marker": 0.3,
+  "selected_markers": {
+    "new": {
+      "Steel1": 0.6,
+      "Steel2": 0.6
+    },
+    "old": {
+      "Steel1": 0.55,
+      "Steel2": 0.7
+    }
+  },
+  "tuned_thresholds": {
+    "new": {
+      "Steel1": 0.75,
+      "Steel2": 0.8
+    },
+    "old": {
+      "Steel1": 0.7,
+      "Steel2": 0.85
+    }
+  },
+  "comparison": {
+    "Steel1": {
+      "pixel_dice": {
+        "new": 0.5934426514235022,
+        "old": 0.5857254381692819,
+        "delta": 0.0077172132542202565
+      },
+      "pq": {
+        "new": 0.3405034196334467,
+        "old": 0.34285822946561256,
+        "delta": -0.0023548098321658495
+      },
+      "sq": {
+        "new": 0.7414394347724466,
+        "old": 0.7442243991523365,
+        "delta": -0.0027849643798899537
+      },
+      "rq": {
+        "new": 0.45667343175986863,
+        "old": 0.45741814227267413,
+        "delta": -0.000744710512805502
+      }
+    },
+    "Steel2": {
+      "pixel_dice": {
+        "new": 0.7340208719945791,
+        "old": 0.5964377229327829,
+        "delta": 0.13758314906179625
+      },
+      "pq": {
+        "new": 0.36018907013085727,
+        "old": 0.0955025979020724,
+        "delta": 0.2646864722287849
+      },
+      "sq": {
+        "new": 0.7659555440431641,
+        "old": 0.6402179603272486,
+        "delta": 0.12573758371591548
+      },
+      "rq": {
+        "new": 0.4691511658666803,
+        "old": 0.14526834549749182,
+        "delta": 0.3238828203691885
+      }
+    }
+  },
+  "summaries": {
+    "new": {
+      "Steel1": {
+        "tiles": 96,
+        "threshold": 0.75,
+        "pixel_dice": 0.5934426514235022,
+        "marker_threshold": 0.6,
+        "pq": 0.3405034196334467,
+        "sq": 0.7414394347724466,
+        "rq": 0.45667343175986863,
+        "over_segmentation_factor": 0.9357571199175485,
+        "reference_default_marker": {
+          "marker_threshold": 0.3,
+          "pq": 0.32349410587432964,
+          "sq": 0.7512219435058975,
+          "rq": 0.42940620070889474
+        }
+      },
+      "Steel2": {
+        "tiles": 126,
+        "threshold": 0.8,
+        "pixel_dice": 0.7340208719945791,
+        "marker_threshold": 0.6,
+        "pq": 0.36018907013085727,
+        "sq": 0.7659555440431641,
+        "rq": 0.4691511658666803,
+        "over_segmentation_factor": 1.0726639261500834,
+        "reference_default_marker": {
+          "marker_threshold": 0.3,
+          "pq": 0.3104513450200755,
+          "sq": 0.7691935863838311,
+          "rq": 0.4035817070004878
+        }
+      }
+    },
+    "old": {
+      "Steel1": {
+        "tiles": 96,
+        "threshold": 0.7,
+        "pixel_dice": 0.5857254381692819,
+        "marker_threshold": 0.55,
+        "pq": 0.34285822946561256,
+        "sq": 0.7442243991523365,
+        "rq": 0.45741814227267413,
+        "over_segmentation_factor": 0.9925522155551976,
+        "reference_default_marker": {
+          "marker_threshold": 0.3,
+          "pq": 0.3021765421567726,
+          "sq": 0.7395754191675746,
+          "rq": 0.4047438298125406
+        }
+      },
+      "Steel2": {
+        "tiles": 126,
+        "threshold": 0.85,
+        "pixel_dice": 0.5964377229327829,
+        "marker_threshold": 0.7,
+        "pq": 0.0955025979020724,
+        "sq": 0.6402179603272486,
+        "rq": 0.14526834549749182,
+        "over_segmentation_factor": 1.926460335885543,
+        "reference_default_marker": {
+          "marker_threshold": 0.3,
+          "pq": 0.06407015353159048,
+          "sq": 0.5990780248603619,
+          "rq": 0.0983869255186203
+        }
+      }
+    }
+  },
+  "checks": [
+    {
+      "check": "test tile membership identical in both folds (train, val and test)",
+      "ok": true,
+      "detail": "train 965, val 221, test 222"
+    },
+    {
+      "check": "both checkpoints scored exactly the same test tiles, in the same order",
+      "ok": true,
+      "detail": "222 tiles"
+    },
+    {
+      "check": "Steel1 test tiles: same ground-truth files and boundary fractions in both folds",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "check": "Steel2 test tiles: same tiles, different ground truth",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "check": "the NEW checkpoint was trained on the ground truth on disk",
+      "ok": true,
+      "detail": "53155b40c2b6ebf8"
+    },
+    {
+      "check": "the OLD checkpoint was NOT (it is the control)",
+      "ok": true,
+      "detail": "None"
+    },
+    {
+      "check": "both runs share one config hash (only the ground truth and fold name differ)",
+      "ok": true,
+      "detail": "067fecc2e06a7d0a"
+    },
+    {
+      "check": "markers were selected on VAL rows only, for both",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "check": "TEST scored exactly the three pre-declared configurations, for both",
+      "ok": true,
+      "detail": "watershed_prob@val-best marker, none@tuned, reference: watershed_prob@tuned"
+    },
+    {
+      "check": "the pipeline reproduces the committed OLD-fold report on Steel1 (same model, tiles, GT, default marker)",
+      "ok": true,
+      "detail": "0.3022 vs committed 0.3027 (region_metrics_fold_steel_combined_colab.json)"
+    }
+  ]
+}
