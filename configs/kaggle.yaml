@@ -1,0 +1,76 @@
+# Kaggle-only configuration overlay.
+#
+# With the host-keyed reports a Kaggle run pushes, this file is the ENTIRE
+# divergence of the `kaggle` branch from `main` -- check it with
+# `git diff --stat main kaggle`, which must show this file and
+# reports/train_*_kaggle.* and nothing else. It is merged over
+# configs/default.yaml by src/paths.py:load_config() whenever the detected
+# platform is "kaggle", so every notebook and every src module is byte-identical
+# on both branches. Nothing but configuration belongs here: if a platform
+# difference cannot be expressed as a key below, it belongs in
+# scripts/bootstrap_session.py, src/paths.py or src/session.py on main, where
+# BOTH hosts get it.
+#
+# Two input datasets must be attached to the Kaggle notebook:
+#   /kaggle/input/phase11-microstructure-data/   the data/ folder (raw + masks)
+#   /kaggle/input/phase11-gt-boundaries/         gt_boundaries/ from step 2
+#
+# Reminder: /kaggle/working does NOT survive the session unless the notebook
+# version is saved. The bootstrap prints this warning on every Kaggle run, and
+# src/session.py prints the exact Save Version step at the end of training.
+#
+# Use notebooks/06_train.ipynb -- there is no separate Kaggle training notebook.
+# The multi-session behaviour is dispatched from src/session.py on main.
+
+session:
+  branch: kaggle          # this checkout stays on this branch when it re-syncs
+
+  kaggle:
+    # NOT /kaggle/input. This account's notebooks mount attached datasets
+    # nested by owner -- /kaggle/input/datasets/<owner>/<slug>/ -- rather than
+    # flat at /kaggle/input/<slug>/. resolve_paths() builds both data_root and
+    # gt_boundaries_root as `input_root / <slug>`, so pointing input_root at the
+    # owner directory fixes both with one key and keeps the slugs meaningful.
+    # If a session ever mounts flat instead, this is the line to change back;
+    # the bootstrap prints the listing of what it actually found.
+    input_root: /kaggle/input/datasets/alirezahorri
+    working_dir: /kaggle/working
+    dataset_slug: phase11-microstructure-data
+    gt_dataset_slug: phase11-gt-boundaries
+    branch: kaggle
+
+    # Checkpoint survival across sessions. Consumed by src/session.py ON MAIN,
+    # through session.for_host() -- the single platform dispatch point. Nothing
+    # on this branch implements it; these are the knobs the Kaggle strategy
+    # reads. Every key is optional; the module's DEFAULTS cover them, and an
+    # unknown key here is an error rather than a typo that silently does
+    # nothing.
+    persist:
+      # Kaggle kills a free GPU session at its limit with no grace period, so
+      # the budget sits under the 9 h allowance and src/kaggle_persist.py stops
+      # the trainer AFTER a completed epoch's checkpoint is on disk, never
+      # mid-epoch.
+      session_budget_hours: 8.5
+      # Held back from the budget so the run still has time to write
+      # reports/train_<fold>.md and push it. A session killed during
+      # push_results loses the only artefact git ever sees.
+      reserve_minutes: 25
+      # Input dataset slugs to search for last.pt, most preferred first. Empty
+      # means "scan every attached dataset", which is what you want when the
+      # checkpoint came from a saved version of the training notebook and
+      # Kaggle generated the slug.
+      resume_input_slugs: []
+      # Refuse to stage a checkpoint larger than this. A wrong path that
+      # happens to contain a last.pt should fail loudly, not fill the disk.
+      max_stage_mb: 2048
+
+# Kaggle-only dataset overrides.
+dataset:
+  # OFF on Kaggle, deliberately. The persistent tile cache exists because a
+  # cold decode off Google Drive costs ~0.6 s per file and is paid again on
+  # every Colab session start. /kaggle/input is a local SSD mount with none of
+  # that latency, so the cache buys nothing here -- and it would write several
+  # GB into /kaggle/working, the directory whose size decides whether Save
+  # Version can capture the 93 MB checkpoint that actually matters.
+  # In-memory caching (cache_images) stays ON: that one is still worth it.
+  persist_cache: false
