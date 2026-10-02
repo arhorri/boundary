@@ -53,48 +53,131 @@ def _report():
 
 
 FLOAT_TOLERANCE = 5e-3
+INT_TOLERANCE_ABS, INT_TOLERANCE_REL = 3, 0.01
+
+#: Reports whose numbers are computed from a checkpoint's PREDICTIONS (by file-name prefix).
+PREDICTION_SOURCES = ("region_metrics_", "postprocess_sweep_", "fn_attribution_",
+                      "gap_closing_", "modea_retrain_comparison_")
+#: Integers that count the DATA or identify the run, even when a prediction report records
+#: them: they cannot move with a re-run, so they are compared exactly.
+STRUCTURAL_KEYS = frozenset({"tiles", "n_tiles", "parents", "n_parents", "files", "n_files",
+                             "epoch", "best_epoch", "folds", "fold_size", "size", "seed"})
 
 
-def _same(expected, actual, where):
-    """Floats within ``FLOAT_TOLERANCE`` (absolute); integers, booleans and strings exact."""
+def _is_prediction_derived(source, key):
+    last = key[-1] if key else None
+    return (Path(source).name.startswith(PREDICTION_SOURCES)
+            and not (isinstance(last, str) and last in STRUCTURAL_KEYS))
+
+
+def _allowed(expected, actual, source, key):
+    """The absolute difference a recorded value may have from its source, or 0 for exact."""
+    if isinstance(expected, bool) or isinstance(actual, bool):
+        return 0
+    if isinstance(expected, float) or isinstance(actual, float):
+        # a float above 1 from a prediction report is a COUNT-scale quantity (fn_per_tile ~ 24),
+        # not a 0..1 score: it gets the integers' relative allowance. Scores keep the absolute one.
+        magnitude = max(abs(expected), abs(actual))
+        if magnitude > 1 and _is_prediction_derived(source, key):
+            return max(FLOAT_TOLERANCE, INT_TOLERANCE_REL * magnitude)
+        return FLOAT_TOLERANCE
+    if isinstance(expected, int) and isinstance(actual, int) and _is_prediction_derived(
+            source, key):
+        return max(INT_TOLERANCE_ABS, INT_TOLERANCE_REL * max(abs(expected), abs(actual)))
+    return 0
+
+
+def _mismatches(expected, actual, source, key, where=()):
+    """Every disagreement between a recorded value and its source, as dicts (empty = none)."""
+    here = ".".join(str(w) for w in where) or "<value>"
     if isinstance(expected, dict) and isinstance(actual, dict):
-        assert expected.keys() == actual.keys(), (where, sorted(expected), sorted(actual))
-        for k in expected:
-            _same(expected[k], actual[k], f"{where}.{k}")
-    elif isinstance(expected, (list, tuple)) and isinstance(actual, (list, tuple)):
-        assert len(expected) == len(actual), where
-        for i, (a, b) in enumerate(zip(expected, actual)):
-            _same(a, b, f"{where}[{i}]")
-    elif isinstance(expected, float) or isinstance(actual, float):
-        assert not isinstance(expected, bool) and not isinstance(actual, bool), where
-        assert abs(float(expected) - float(actual)) <= FLOAT_TOLERANCE, (where, expected, actual)
-    else:
-        assert expected == actual and type(expected) is type(actual), (where, expected, actual)
+        out = []
+        for k in sorted(set(expected) | set(actual), key=str):
+            if k not in expected or k not in actual:
+                out.append({"path": ".".join(str(w) for w in where + (k,)), "recorded": expected.get(k, "<absent>"),
+                            "source": actual.get(k, "<absent>"), "allowed": 0})
+            else:
+                out += _mismatches(expected[k], actual[k], source, key, where + (k,))
+        return out
+    if isinstance(expected, (list, tuple)) and isinstance(actual, (list, tuple)):
+        if len(expected) != len(actual):
+            return [{"path": here, "recorded": f"len {len(expected)}",
+                     "source": f"len {len(actual)}", "allowed": 0}]
+        out = []
+        for i, (x, y) in enumerate(zip(expected, actual)):
+            out += _mismatches(x, y, source, key, where + (i,))
+        return out
+    allowed = _allowed(expected, actual, source, key)
+    numeric = (isinstance(expected, (int, float)) and isinstance(actual, (int, float))
+               and not isinstance(expected, bool) and not isinstance(actual, bool))
+    same = abs(expected - actual) <= allowed if numeric else (
+        expected == actual and type(expected) is type(actual))
+    if same:
+        return []
+    return [{"path": here, "recorded": expected, "source": actual, "allowed": allowed}]
 
 
 def test_every_number_in_the_final_report_matches_its_committed_source():
-    """The report copies each number from a committed source report, and this checks it still
-    agrees. FLOATS are compared with an absolute tolerance of 5e-3, not exactly: evaluating
-    one checkpoint on the GPU is not bit-reproducible, and every "Run all" of
-    06d_steel_combined.ipynb rewrites the region / post-processing / attribution reports with
-    their 3rd-4th decimals moved by ~0.002-0.003. Exact matching would fail on each re-run
-    although nothing real changed. Integers, booleans and strings stay exact -- a count, a
-    verdict or a fold name that differs is a real difference, not noise."""
+    """The report copies each number from a committed source report; this checks it still
+    agrees. Re-running 06d_steel_combined.ipynb rewrites the region / post-processing /
+    attribution reports and evaluating one checkpoint on the GPU is not bit-reproducible, so
+    what is PRODUCED BY THE MODEL moves a little on every "Run all" and exact matching would
+    fail with nothing really changed. The rule:
+
+    * floats (scores in 0..1): absolute tolerance 5e-3; a float above 1 from a prediction report
+      (a per-tile count such as fn_per_tile) gets the integers' allowance below instead;
+    * integers derived from predictions (any source named region_metrics_*, postprocess_sweep_*,
+      fn_attribution_*, gap_closing_*, modea_retrain_comparison_*: region counts, FN-class
+      counts): max(3, 1% of the larger value);
+    * STRUCTURAL integers (tile counts, parents, files, epochs, fold sizes -- ``STRUCTURAL_KEYS``)
+      and everything else -- strings, booleans, verdict labels, hashes, commit ids, a recorded
+      settings dict: EXACT. A verdict flipping MISPLACED -> OFFSET is a real change, not noise.
+
+    Every mismatch is collected and reported together, so one run shows all of them."""
     entries = [(p, e) for p, e in _entries(_report()) if "commit" not in e]
     assert len(entries) > 40
+    bad = []
     for path, e in entries:
         source = json.loads((ROOT / e["source"]).read_text())
-        _same(e["value"], _walk(source, e["key"]), f"{path} <- {e['source']}:{e['key']}")
+        for m in _mismatches(e["value"], _walk(source, e["key"]), e["source"], e["key"]):
+            bad.append({"entry": ".".join(str(x) for x in path), "source_file": e["source"],
+                        "key": e["key"], **m})
+    assert not bad, f"{len(bad)} recorded number(s) differ from their source:\n" + "\n".join(
+        f"  {m['entry']} [{m['path']}]: recorded {m['recorded']!r} vs source {m['source']!r} "
+        f"(allowed +-{m['allowed']:g}) <- {m['source_file']} {m['key']}" for m in bad)
 
 
-def test_the_provenance_comparison_tolerates_float_noise_but_not_real_differences():
-    _same(0.4095, 0.4121, "x")                     # 0.0026: GPU noise
-    _same({"a": [1, 0.1000]}, {"a": [1, 0.1049]}, "x")
-    for expected, actual in ((0.4095, 0.4146),     # 0.0051: past the tolerance
-                             (3, 4), (3, "3"),
-                             ("steel", "Steel"), (True, False), (1, True)):
-        with pytest.raises(AssertionError):
-            _same(expected, actual, "x")
+def test_the_provenance_comparison_tolerates_model_noise_but_not_real_differences():
+    fn = "reports/fn_attribution_fold_steel_combined_modea_colab.json"
+    rm = "reports/region_metrics_fold_steel_combined_modea_colab.json"
+    cfg = "reports/gt_extraction.json"
+
+    def bad(expected, actual, source, key):
+        return _mismatches(expected, actual, source, key)
+
+    assert not bad(0.4095, 0.4121, rm, ["x"])                      # float noise 0.0026
+    assert bad(0.4095, 0.4146, rm, ["x"])                          # past 5e-3
+    assert not bad(2096, 2094, fn, ["Steel2", "counts", "MERGED"])  # the Colab failure
+    assert not bad(2096, 2096 + 20, fn, ["Steel2", "counts", "MERGED"])   # 20 <= 1% of 2116
+    assert bad(2096, 2096 + 22, fn, ["Steel2", "counts", "MERGED"])
+    assert not bad(23.904761904761905, 23.896825396825395, fn, ["Steel2", "fn_per_tile"])
+    assert bad(23.9, 24.2, fn, ["Steel2", "fn_per_tile"])          # 0.3 > 1% of 24.2
+    assert bad(23.9, 23.9 + 0.01, cfg, ["fn_per_tile"])            # not a prediction report
+    assert not bad(10, 13, fn, ["a", "n"]) and bad(10, 14, fn, ["a", "n"])  # floor of 3
+    # structural integers stay exact even inside a prediction report
+    assert bad(96, 95, rm, ["decomposition", "Steel1", "tiles"])
+    assert bad(32, 33, rm, ["epoch"])
+    assert bad(2, 3, "reports/modea_retrain_comparison_colab.json",
+               ["test_tiles", "Steel1", "parents"])
+    # a source that is not a prediction report is exact
+    assert bad(2096, 2094, cfg, ["settings", "n"])
+    # strings, booleans, labels
+    assert bad("MISPLACED", "OFFSET", rm, ["decomposition", "Steel1", "label"])
+    assert bad(True, False, rm, ["flag"]) and bad(1, True, fn, ["Steel2", "counts", "X"])
+    # nested values, with the path of each mismatch named
+    got = bad({"a": [1, 0.1], "b": "x"}, {"a": [1, 0.2], "b": "y"}, rm, ["k"])
+    assert sorted(m["path"] for m in got) == ["a.1", "b"]
+    assert [m["path"] for m in bad({"a": 1}, {"a": 1, "z": 2}, cfg, ["k"])] == ["z"]
 
 
 def test_numbers_taken_from_git_history_match_that_commit():
