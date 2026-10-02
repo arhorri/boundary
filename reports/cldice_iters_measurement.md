@@ -1,0 +1,467 @@
+# soft_skeletonize iterations vs line width, measured
+
+soft skeleton thickness / length and the clDice thickness-invariance property for iterations 3-6, on straight and diagonal synthetic lines of width 2 and 4 and on the densest MetalDam tile. Nothing in training or config was changed.
+
+## generated_utc
+
+- 2026-10-02T20:09:37Z
+
+## note
+
+- MEASUREMENT for the model round. loss.cldice_iters (the training setting) and every config default are unchanged; this says which iteration count a thickness-invariance TEST needs, and what a change to the training setting would be a candidate for.
+
+## iters_measured
+
+- 3, 4, 5, 6
+
+## ground_truth_line_width_px
+
+- 4.0
+
+## training_default_cldice_iters
+
+- 3
+
+## formula_thickness_invariance_iters
+
+- **2**: 3
+- **4**: 5
+
+## checks
+
+- **names**:
+  - cldice_below_quarter_of_dice, pred_skeleton_real, true_skeleton_real, pred_skeleton_on_true
+- **meaning**:
+  - **cldice_below_quarter_of_dice**: clDice charges nearly as much as Dice for a topology-preserving thickness change
+  - **pred_skeleton_real**: the dilated prediction's skeleton is essentially empty (< 0.25 of the true skeleton), so t_prec = smooth/smooth = 1 and a low clDice is degenerate rather than invariant
+  - **true_skeleton_real**: the ground truth's own skeleton is essentially empty (< 0.25 of area / line_width)
+  - **pred_skeleton_on_true**: the dilated prediction's skeleton does not lie on the true boundary (< 0.8 overlap)
+- **constants**:
+  - **cldice_fraction_of_dice**: 0.25
+  - **skeleton_fraction**: 0.25
+  - **on_true_fraction**: 0.8
+- **pred_skeleton_real**: skel_pred_sum > skeleton_fraction * skel_true_sum
+- **true_skeleton_real**: skel_true_sum > skeleton_fraction * (true_sum / line_width)
+
+## table
+
+- case                                            W iters  skel px length px  thick    skelP    skelT  on_true  cl(dil) dice(dil)  cl<.25dice  pred_real  true_real    on_true  holds, straight, width 2                               2     3      224       112   2.00    224.0    224.0    224.0   0.0000    0.3414           Y          Y          Y          Y      Y, straight, width 2                               2     4      224       112   2.00    224.0    224.0    224.0   0.0000    0.3414           Y          Y          Y          Y      Y, straight, width 2                               2     5      224       112   2.00    224.0    224.0    224.0   0.0000    0.3414           Y          Y          Y          Y      Y, straight, width 2                               2     6      224       112   2.00    224.0    224.0    224.0   0.0000    0.3414           Y          Y          Y          Y      Y, diagonal 45deg, width 2                         2     3      102       102   1.00      0.0    102.0      0.0   0.0000    0.2909           Y          N          Y          N      N, diagonal 45deg, width 2                         2     4      102       102   1.00    100.0    102.0    100.0   0.0000    0.2909           Y          Y          Y          Y      Y, diagonal 45deg, width 2                         2     5      102       102   1.00    100.0    102.0    100.0   0.0000    0.2909           Y          Y          Y          Y      Y, diagonal 45deg, width 2                         2     6      102       102   1.00    100.0    102.0    100.0   0.0000    0.2909           Y          Y          Y          Y      Y, straight, width 4                               4     3      220       110   2.00    220.0    220.0    220.0   0.0000    0.2088           Y          Y          Y          Y      Y, straight, width 4                               4     4      220       110   2.00    220.0    220.0    220.0   0.0000    0.2088           Y          Y          Y          Y      Y, straight, width 4                               4     5      220       110   2.00    220.0    220.0    220.0   0.0000    0.2088           Y          Y          Y          Y      Y, straight, width 4                               4     6      220       110   2.00    220.0    220.0    220.0   0.0000    0.2088           Y          Y          Y          Y      Y, diagonal 45deg, width 4                         4     3      104       104   1.00      0.0    104.0      0.0   0.0000    0.2924           Y          N          Y          N      N, diagonal 45deg, width 4                         4     4      104       104   1.00    102.0    104.0    102.0   0.0000    0.2924           Y          Y          Y          Y      Y, diagonal 45deg, width 4                         4     5      104       104   1.00    102.0    104.0    102.0   0.0000    0.2924           Y          Y          Y          Y      Y, diagonal 45deg, width 4                         4     6      104       104   1.00    102.0    104.0    102.0   0.0000    0.2924           Y          Y          Y          Y      Y, dense MetalDam tile (GT line width 4)           4     3     7069      5181   1.36    903.9   7069.0    830.9   0.0420    0.1554           N          N          Y          Y      N, dense MetalDam tile (GT line width 4)           4     4     7174      5262   1.36   2267.8   7174.0   2163.8   0.0235    0.1554           Y          Y          Y          Y      Y, dense MetalDam tile (GT line width 4)           4     5     7190      5273   1.36   3385.7   7190.0   3224.7   0.0244    0.1554           Y          Y          Y          Y      Y, dense MetalDam tile (GT line width 4)           4     6     7190      5273   1.36   3772.7   7190.0   3568.7   0.0278    0.1554           Y          Y          Y          Y      Y
+
+## cases
+
+- **straight, width 2**:
+  - **mask_px**: 224
+  - **line_width_px**: 2
+  - **by_iters**:
+    - **3**:
+      - **mask_px**: 224
+      - **skeleton_px**: 224
+      - **skeleton_soft_sum**: 224
+      - **centreline_px**: 112
+      - **thickness_px**: 2
+      - **dice_dilated**: 0.341385
+      - **cldice_dilated**: 2.3067e-05
+      - **skel_pred_sum**: 223.98
+      - **skel_true_sum**: 224
+      - **skel_pred_on_true**: 223.98
+      - **true_sum**: 224
+      - **checks**:
+        - **cldice_below_quarter_of_dice**: True
+        - **pred_skeleton_real**: True
+        - **true_skeleton_real**: True
+        - **pred_skeleton_on_true**: True
+      - **holds**: True
+      - **failed**: []
+    - **4**:
+      - **mask_px**: 224
+      - **skeleton_px**: 224
+      - **skeleton_soft_sum**: 224
+      - **centreline_px**: 112
+      - **thickness_px**: 2
+      - **dice_dilated**: 0.341385
+      - **cldice_dilated**: 2.3067e-05
+      - **skel_pred_sum**: 223.98
+      - **skel_true_sum**: 224
+      - **skel_pred_on_true**: 223.98
+      - **true_sum**: 224
+      - **checks**:
+        - **cldice_below_quarter_of_dice**: True
+        - **pred_skeleton_real**: True
+        - **true_skeleton_real**: True
+        - **pred_skeleton_on_true**: True
+      - **holds**: True
+      - **failed**: []
+    - **5**:
+      - **mask_px**: 224
+      - **skeleton_px**: 224
+      - **skeleton_soft_sum**: 224
+      - **centreline_px**: 112
+      - **thickness_px**: 2
+      - **dice_dilated**: 0.341385
+      - **cldice_dilated**: 2.3067e-05
+      - **skel_pred_sum**: 223.98
+      - **skel_true_sum**: 224
+      - **skel_pred_on_true**: 223.98
+      - **true_sum**: 224
+      - **checks**:
+        - **cldice_below_quarter_of_dice**: True
+        - **pred_skeleton_real**: True
+        - **true_skeleton_real**: True
+        - **pred_skeleton_on_true**: True
+      - **holds**: True
+      - **failed**: []
+    - **6**:
+      - **mask_px**: 224
+      - **skeleton_px**: 224
+      - **skeleton_soft_sum**: 224
+      - **centreline_px**: 112
+      - **thickness_px**: 2
+      - **dice_dilated**: 0.341385
+      - **cldice_dilated**: 2.3067e-05
+      - **skel_pred_sum**: 223.98
+      - **skel_true_sum**: 224
+      - **skel_pred_on_true**: 223.98
+      - **true_sum**: 224
+      - **checks**:
+        - **cldice_below_quarter_of_dice**: True
+        - **pred_skeleton_real**: True
+        - **true_skeleton_real**: True
+        - **pred_skeleton_on_true**: True
+      - **holds**: True
+      - **failed**: []
+  - **smallest_iters_from_which_invariance_holds**: 3
+- **diagonal 45deg, width 2**:
+  - **mask_px**: 522
+  - **line_width_px**: 2
+  - **by_iters**:
+    - **3**:
+      - **mask_px**: 522
+      - **skeleton_px**: 102
+      - **skeleton_soft_sum**: 102
+      - **centreline_px**: 102
+      - **thickness_px**: 1
+      - **dice_dilated**: 0.290912
+      - **cldice_dilated**: 2.29478e-05
+      - **skel_pred_sum**: 0
+      - **skel_true_sum**: 102
+      - **skel_pred_on_true**: 0
+      - **true_sum**: 522
+      - **checks**:
+        - **cldice_below_quarter_of_dice**: True
+        - **pred_skeleton_real**: False
+        - **true_skeleton_real**: True
+        - **pred_skeleton_on_true**: False
+      - **holds**: False
+      - **failed**:
+        - pred_skeleton_real, pred_skeleton_on_true
+    - **4**:
+      - **mask_px**: 522
+      - **skeleton_px**: 102
+      - **skeleton_soft_sum**: 102
+      - **centreline_px**: 102
+      - **thickness_px**: 1
+      - **dice_dilated**: 0.290912
+      - **cldice_dilated**: 2.29478e-05
+      - **skel_pred_sum**: 99.9909
+      - **skel_true_sum**: 102
+      - **skel_pred_on_true**: 99.9909
+      - **true_sum**: 522
+      - **checks**:
+        - **cldice_below_quarter_of_dice**: True
+        - **pred_skeleton_real**: True
+        - **true_skeleton_real**: True
+        - **pred_skeleton_on_true**: True
+      - **holds**: True
+      - **failed**: []
+    - **5**:
+      - **mask_px**: 522
+      - **skeleton_px**: 102
+      - **skeleton_soft_sum**: 102
+      - **centreline_px**: 102
+      - **thickness_px**: 1
+      - **dice_dilated**: 0.290912
+      - **cldice_dilated**: 2.29478e-05
+      - **skel_pred_sum**: 99.9909
+      - **skel_true_sum**: 102
+      - **skel_pred_on_true**: 99.9909
+      - **true_sum**: 522
+      - **checks**:
+        - **cldice_below_quarter_of_dice**: True
+        - **pred_skeleton_real**: True
+        - **true_skeleton_real**: True
+        - **pred_skeleton_on_true**: True
+      - **holds**: True
+      - **failed**: []
+    - **6**:
+      - **mask_px**: 522
+      - **skeleton_px**: 102
+      - **skeleton_soft_sum**: 102
+      - **centreline_px**: 102
+      - **thickness_px**: 1
+      - **dice_dilated**: 0.290912
+      - **cldice_dilated**: 2.29478e-05
+      - **skel_pred_sum**: 99.9909
+      - **skel_true_sum**: 102
+      - **skel_pred_on_true**: 99.9909
+      - **true_sum**: 522
+      - **checks**:
+        - **cldice_below_quarter_of_dice**: True
+        - **pred_skeleton_real**: True
+        - **true_skeleton_real**: True
+        - **pred_skeleton_on_true**: True
+      - **holds**: True
+      - **failed**: []
+  - **smallest_iters_from_which_invariance_holds**: 4
+- **straight, width 4**:
+  - **mask_px**: 448
+  - **line_width_px**: 4
+  - **by_iters**:
+    - **3**:
+      - **mask_px**: 448
+      - **skeleton_px**: 220
+      - **skeleton_soft_sum**: 220
+      - **centreline_px**: 110
+      - **thickness_px**: 2
+      - **dice_dilated**: 0.208809
+      - **cldice_dilated**: 2.3067e-05
+      - **skel_pred_sum**: 219.98
+      - **skel_true_sum**: 220
+      - **skel_pred_on_true**: 219.98
+      - **true_sum**: 448
+      - **checks**:
+        - **cldice_below_quarter_of_dice**: True
+        - **pred_skeleton_real**: True
+        - **true_skeleton_real**: True
+        - **pred_skeleton_on_true**: True
+      - **holds**: True
+      - **failed**: []
+    - **4**:
+      - **mask_px**: 448
+      - **skeleton_px**: 220
+      - **skeleton_soft_sum**: 220
+      - **centreline_px**: 110
+      - **thickness_px**: 2
+      - **dice_dilated**: 0.208809
+      - **cldice_dilated**: 2.3067e-05
+      - **skel_pred_sum**: 219.98
+      - **skel_true_sum**: 220
+      - **skel_pred_on_true**: 219.98
+      - **true_sum**: 448
+      - **checks**:
+        - **cldice_below_quarter_of_dice**: True
+        - **pred_skeleton_real**: True
+        - **true_skeleton_real**: True
+        - **pred_skeleton_on_true**: True
+      - **holds**: True
+      - **failed**: []
+    - **5**:
+      - **mask_px**: 448
+      - **skeleton_px**: 220
+      - **skeleton_soft_sum**: 220
+      - **centreline_px**: 110
+      - **thickness_px**: 2
+      - **dice_dilated**: 0.208809
+      - **cldice_dilated**: 2.3067e-05
+      - **skel_pred_sum**: 219.98
+      - **skel_true_sum**: 220
+      - **skel_pred_on_true**: 219.98
+      - **true_sum**: 448
+      - **checks**:
+        - **cldice_below_quarter_of_dice**: True
+        - **pred_skeleton_real**: True
+        - **true_skeleton_real**: True
+        - **pred_skeleton_on_true**: True
+      - **holds**: True
+      - **failed**: []
+    - **6**:
+      - **mask_px**: 448
+      - **skeleton_px**: 220
+      - **skeleton_soft_sum**: 220
+      - **centreline_px**: 110
+      - **thickness_px**: 2
+      - **dice_dilated**: 0.208809
+      - **cldice_dilated**: 2.3067e-05
+      - **skel_pred_sum**: 219.98
+      - **skel_true_sum**: 220
+      - **skel_pred_on_true**: 219.98
+      - **true_sum**: 448
+      - **checks**:
+        - **cldice_below_quarter_of_dice**: True
+        - **pred_skeleton_real**: True
+        - **true_skeleton_real**: True
+        - **pred_skeleton_on_true**: True
+      - **holds**: True
+      - **failed**: []
+  - **smallest_iters_from_which_invariance_holds**: 3
+- **diagonal 45deg, width 4**:
+  - **mask_px**: 528
+  - **line_width_px**: 4
+  - **by_iters**:
+    - **3**:
+      - **mask_px**: 528
+      - **skeleton_px**: 104
+      - **skeleton_soft_sum**: 104
+      - **centreline_px**: 104
+      - **thickness_px**: 1
+      - **dice_dilated**: 0.292373
+      - **cldice_dilated**: 2.29478e-05
+      - **skel_pred_sum**: 0
+      - **skel_true_sum**: 104
+      - **skel_pred_on_true**: 0
+      - **true_sum**: 528
+      - **checks**:
+        - **cldice_below_quarter_of_dice**: True
+        - **pred_skeleton_real**: False
+        - **true_skeleton_real**: True
+        - **pred_skeleton_on_true**: False
+      - **holds**: False
+      - **failed**:
+        - pred_skeleton_real, pred_skeleton_on_true
+    - **4**:
+      - **mask_px**: 528
+      - **skeleton_px**: 104
+      - **skeleton_soft_sum**: 104
+      - **centreline_px**: 104
+      - **thickness_px**: 1
+      - **dice_dilated**: 0.292373
+      - **cldice_dilated**: 2.29478e-05
+      - **skel_pred_sum**: 101.991
+      - **skel_true_sum**: 104
+      - **skel_pred_on_true**: 101.991
+      - **true_sum**: 528
+      - **checks**:
+        - **cldice_below_quarter_of_dice**: True
+        - **pred_skeleton_real**: True
+        - **true_skeleton_real**: True
+        - **pred_skeleton_on_true**: True
+      - **holds**: True
+      - **failed**: []
+    - **5**:
+      - **mask_px**: 528
+      - **skeleton_px**: 104
+      - **skeleton_soft_sum**: 104
+      - **centreline_px**: 104
+      - **thickness_px**: 1
+      - **dice_dilated**: 0.292373
+      - **cldice_dilated**: 2.29478e-05
+      - **skel_pred_sum**: 101.991
+      - **skel_true_sum**: 104
+      - **skel_pred_on_true**: 101.991
+      - **true_sum**: 528
+      - **checks**:
+        - **cldice_below_quarter_of_dice**: True
+        - **pred_skeleton_real**: True
+        - **true_skeleton_real**: True
+        - **pred_skeleton_on_true**: True
+      - **holds**: True
+      - **failed**: []
+    - **6**:
+      - **mask_px**: 528
+      - **skeleton_px**: 104
+      - **skeleton_soft_sum**: 104
+      - **centreline_px**: 104
+      - **thickness_px**: 1
+      - **dice_dilated**: 0.292373
+      - **cldice_dilated**: 2.29478e-05
+      - **skel_pred_sum**: 101.991
+      - **skel_true_sum**: 104
+      - **skel_pred_on_true**: 101.991
+      - **true_sum**: 528
+      - **checks**:
+        - **cldice_below_quarter_of_dice**: True
+        - **pred_skeleton_real**: True
+        - **true_skeleton_real**: True
+        - **pred_skeleton_on_true**: True
+      - **holds**: True
+      - **failed**: []
+  - **smallest_iters_from_which_invariance_holds**: 4
+- **dense MetalDam tile (GT line width 4)**:
+  - **mask_px**: 39486
+  - **line_width_px**: 4
+  - **by_iters**:
+    - **3**:
+      - **mask_px**: 39486
+      - **skeleton_px**: 7069
+      - **skeleton_soft_sum**: 7069
+      - **centreline_px**: 5181
+      - **thickness_px**: 1.36441
+      - **dice_dilated**: 0.155444
+      - **cldice_dilated**: 0.0420478
+      - **skel_pred_sum**: 903.918
+      - **skel_true_sum**: 7069
+      - **skel_pred_on_true**: 830.925
+      - **true_sum**: 39486
+      - **checks**:
+        - **cldice_below_quarter_of_dice**: False
+        - **pred_skeleton_real**: False
+        - **true_skeleton_real**: True
+        - **pred_skeleton_on_true**: True
+      - **holds**: False
+      - **failed**:
+        - cldice_below_quarter_of_dice, pred_skeleton_real
+    - **4**:
+      - **mask_px**: 39486
+      - **skeleton_px**: 7174
+      - **skeleton_soft_sum**: 7174
+      - **centreline_px**: 5262
+      - **thickness_px**: 1.36336
+      - **dice_dilated**: 0.155444
+      - **cldice_dilated**: 0.0234773
+      - **skel_pred_sum**: 2267.79
+      - **skel_true_sum**: 7174
+      - **skel_pred_on_true**: 2163.8
+      - **true_sum**: 39486
+      - **checks**:
+        - **cldice_below_quarter_of_dice**: True
+        - **pred_skeleton_real**: True
+        - **true_skeleton_real**: True
+        - **pred_skeleton_on_true**: True
+      - **holds**: True
+      - **failed**: []
+    - **5**:
+      - **mask_px**: 39486
+      - **skeleton_px**: 7190
+      - **skeleton_soft_sum**: 7190
+      - **centreline_px**: 5273
+      - **thickness_px**: 1.36355
+      - **dice_dilated**: 0.155444
+      - **cldice_dilated**: 0.0243681
+      - **skel_pred_sum**: 3385.69
+      - **skel_true_sum**: 7190
+      - **skel_pred_on_true**: 3224.71
+      - **true_sum**: 39486
+      - **checks**:
+        - **cldice_below_quarter_of_dice**: True
+        - **pred_skeleton_real**: True
+        - **true_skeleton_real**: True
+        - **pred_skeleton_on_true**: True
+      - **holds**: True
+      - **failed**: []
+    - **6**:
+      - **mask_px**: 39486
+      - **skeleton_px**: 7190
+      - **skeleton_soft_sum**: 7190
+      - **centreline_px**: 5273
+      - **thickness_px**: 1.36355
+      - **dice_dilated**: 0.155444
+      - **cldice_dilated**: 0.0277998
+      - **skel_pred_sum**: 3772.66
+      - **skel_true_sum**: 7190
+      - **skel_pred_on_true**: 3568.68
+      - **true_sum**: 39486
+      - **checks**:
+        - **cldice_below_quarter_of_dice**: True
+        - **pred_skeleton_real**: True
+        - **true_skeleton_real**: True
+        - **pred_skeleton_on_true**: True
+      - **holds**: True
+      - **failed**: []
+  - **smallest_iters_from_which_invariance_holds**: 4
+
+## formula_iters_for_the_ground_truth_width
+
+- 5
+
+## formula_holds_on_the_dense_tile
+
+- True
