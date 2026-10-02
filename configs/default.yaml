@@ -261,8 +261,13 @@ boundary_gt:
   # before/after cleanup cell prints the region counts, area percentiles and a
   # 4-tile visual at whatever threshold is set here, specifically so the
   # threshold can be judged by eye rather than assumed correct because it ran.
-  min_region_area_px:
-    Steel2: 50
+  #
+  # DECIDED OFF (reports/steel_step_final.md): Steel2: 50 used to sit here as a
+  # provisional value but was never applied to the ground truth on disk
+  # (reports/gt_extraction.json records min_region_area_px: {}); the Steel2 GT is
+  # now line-class (mode_a_line_class below) with the cleanup off, and this file
+  # now says what the recorded ground truth actually is.
+  min_region_area_px: {}
 
   # MODE B only. folder -> LINE/BLOB thickness (px). The folder's DARKEST palette
   # class is treated as the painted boundary itself instead of as a phase, so
@@ -277,12 +282,9 @@ boundary_gt:
   # 224 changed nothing, so the fragmentation is in the mask, not the binarization.
   # 8 is the threshold that comparison used, not a tuned value.
   #
-  # NOTE the interaction with min_region_area_px above: both act on the palette-
-  # snapped LABEL map, cleanup first. The Steel2 ground truth on disk was generated
-  # BEFORE min_region_area_px existed (reports/gt_extraction.json has no region_merge
-  # record), and the regeneration that adopts this option turns the cleanup OFF
-  # explicitly (notebooks/06d_steel_combined.ipynb Cell 30), so that what changes is
-  # MODE A alone. A plain re-run of step 2 against this file would apply BOTH.
+  # The interaction with min_region_area_px above: both act on the palette-snapped
+  # LABEL map, cleanup first. The cleanup is OFF (above), matching the line-class
+  # Steel2 ground truth on disk, so a plain re-run of step 2 reproduces it.
   mode_a_line_class:
     Steel2: 8
 
@@ -372,6 +374,10 @@ tiling:
     test_frac: 0.15
     min_parents_per_split: 1   # Steel2 has only 4 parents -- guarantees >=1 per split
     held_out_label: "mixed(Steel1+Steel2)"
+  # The name the pooled fold takes when reports/gt_extraction.json records
+  # boundary_gt.mode_a_line_class for Steel1 or Steel2 (tiling.apply_gt_variant).
+  # It is the DEFAULT steel fold now -- see steel_step.default_fold below.
+  steel_combined_mode_a_name: fold_steel_combined_modea
 
   # The 48 Steel1 tiles of parent im_val_cut10-400-01-V-9mm-4000x13, which
   # ships images but no masks. They have no ground truth and cannot be
@@ -481,3 +487,28 @@ dataset:
 
   manifest_subdir: manifests
   gt_subdir: gt_boundaries
+
+# The finalized Steel GT / region-path step (reports/steel_step_final.md).
+#
+# A TOP-LEVEL section on purpose: train.config_hash hashes only the model, loss,
+# train (HASHED_TRAIN_KEYS) and dataset settings, so nothing here can change the
+# hash of an existing checkpoint (fold_steel_combined_modea best.pt: 067fecc2e06a7d0a).
+# Read by train.load_steel_step(); validated there.
+steel_step:
+  # The steel fold every steel notebook resolves to. 06d Cell 2 refuses to run on
+  # any other: the ground truth on disk must be the line-class one.
+  default_fold: fold_steel_combined_modea
+  # train.gt_fingerprint(...)["gt_extraction_sha256"] of the line-class ground truth
+  # that fold was trained on. 06d Cells 30/31 skip only in exactly this state.
+  expected_gt_sha256: 53155b40c2b6ebf8
+  # Boundary map -> regions, for this fold. watershed_prob is the watershed seeded by
+  # prob < marker; the marker is per dataset, chosen on VAL in
+  # reports/gap_closing_fold_steel_combined_modea_colab.json (both 0.6). NOT
+  # train.region_metrics.watershed_marker_threshold (0.3), which every committed
+  # region report was computed at and which stays as it is for comparability.
+  region_path:
+    partition: watershed_prob
+    watershed_marker_threshold:
+      Steel1: 0.6
+      Steel2: 0.6
+    postprocess: none

@@ -4228,6 +4228,90 @@ def marker_config_from_selection(selected: dict,
                             for d, r in selected.items()}}
 
 
+def load_steel_step(config_path: Optional[Path] = None) -> dict:
+    """The finalized steel step (``steel_step:`` in configs/default.yaml), validated.
+
+    A top-level section, NOT under ``train:``: :func:`config_hash` hashes only the
+    model/loss/train/dataset settings, so the decisions recorded here (the default
+    steel fold, the ground-truth fingerprint it was trained on, the region path)
+    cannot change the hash of an existing checkpoint. Raises :class:`TrainError`
+    on a missing or malformed section -- a locked decision that silently fell back
+    to a default would not be locked.
+    """
+    import re
+
+    from src import paths as paths_mod
+    from src import postprocess as postprocess_mod
+
+    cfg = paths_mod.load_config(config_path)
+    section = cfg.get("steel_step")
+    if not isinstance(section, dict):
+        raise TrainError("configs/default.yaml has no steel_step mapping; it records "
+                         "the finalized steel fold and region path (see "
+                         "reports/steel_step_final.md).")
+    known = {"default_fold", "expected_gt_sha256", "region_path"}
+    unknown = set(section) - known
+    missing = known - set(section)
+    if unknown or missing:
+        raise TrainError(f"steel_step: unknown keys {sorted(unknown)}, missing "
+                         f"{sorted(missing)}; expected exactly {sorted(known)}")
+    if not isinstance(section["default_fold"], str) or not section["default_fold"]:
+        raise TrainError(f"steel_step.default_fold must be a fold name, got "
+                         f"{section['default_fold']!r}")
+    sha = str(section["expected_gt_sha256"])
+    if not re.fullmatch(r"[0-9a-f]{16}", sha):
+        raise TrainError(f"steel_step.expected_gt_sha256 must be the 16-hex-digit "
+                         f"gt_extraction_sha256 of gt_fingerprint(), got {sha!r}")
+    rp = section["region_path"]
+    if not isinstance(rp, dict) or set(rp) != {"partition", "watershed_marker_threshold",
+                                               "postprocess"}:
+        raise TrainError("steel_step.region_path must have exactly partition, "
+                         f"watershed_marker_threshold and postprocess, got {rp!r}")
+    if rp["partition"] not in POSTPROCESS_PARTITIONS:
+        raise TrainError(f"steel_step.region_path.partition must be one of "
+                         f"{POSTPROCESS_PARTITIONS}, got {rp['partition']!r}")
+    markers = rp["watershed_marker_threshold"]
+    if not isinstance(markers, dict) or not markers:
+        raise TrainError("steel_step.region_path.watershed_marker_threshold must map "
+                         f"dataset -> marker, got {markers!r}")
+    bad = {d: m for d, m in markers.items()
+           if not isinstance(m, (int, float)) or not 0.0 < float(m) < 1.0}
+    if bad:
+        raise TrainError(f"steel_step.region_path markers must be in (0, 1): {bad}")
+    if rp["postprocess"] not in postprocess_mod.MODES:
+        raise TrainError(f"steel_step.region_path.postprocess must be one of "
+                         f"{postprocess_mod.MODES}, got {rp['postprocess']!r}")
+    return {"default_fold": section["default_fold"], "expected_gt_sha256": sha,
+            "region_path": {"partition": rp["partition"],
+                            "watershed_marker_threshold": {d: float(m) for d, m
+                                                           in markers.items()},
+                            "postprocess": rp["postprocess"]}}
+
+
+def run_completion(history: Sequence, total_epochs: int) -> tuple:
+    """``(complete, why)`` for a run whose ``history`` was restored by
+    ``Trainer.maybe_resume``.
+
+    Complete when the last recorded epoch is the final one, or when it was the
+    epoch patience stopped the run on. The second case matters: ``fit`` would
+    otherwise resume an early-stopped run at ``last + 1`` and train past the point
+    its own stopping rule ended it.
+    """
+    total = int(total_epochs)
+    if total < 1:
+        raise TrainError(f"total_epochs must be >= 1, got {total_epochs!r}")
+    if not history:
+        return False, "no epochs recorded yet"
+    last = history[-1]
+    epoch = int(last["epoch"])
+    if last.get("stopped_early"):
+        return True, (f"stopped early by train.patience at epoch {epoch} "
+                      f"({len(history)} epoch(s) recorded)")
+    if epoch >= total - 1:
+        return True, f"all {total} epochs done (last epoch {epoch})"
+    return False, f"{epoch + 1} of {total} epochs done"
+
+
 #: Metrics :func:`compare_checkpoint_summaries` differences, in report order.
 COMPARISON_METRICS = ("pixel_dice", "pq", "sq", "rq")
 

@@ -14,9 +14,11 @@ pytest gate runs these on the host.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -56,7 +58,7 @@ FOLD_GUARD = "tiling.refuse_if_fold_exists("
 
 
 # --------------------------------------------------------------------------
-# 1a. the regeneration cell refuses, in order, and re-running cannot reach the backup
+# 1a. the regeneration cell: guard order (static); skip / refuse / proceed (exec)
 # --------------------------------------------------------------------------
 def test_regeneration_cell_refuses_before_it_hashes_copies_or_writes_anything():
     cell = _the_cell("boundary_gt.extract_all(")
@@ -79,61 +81,8 @@ def test_regeneration_cell_has_no_path_that_continues_when_the_backup_exists():
     assert "GT_BACKUP.exists()" not in cell, "existence is decided by the refusal, not a branch"
 
 
-def _regen_namespace(tmp_path, record=None):
-    pytest.importorskip("tqdm")
-    from src import boundary_gt, tiling
-
-    reports, gt = tmp_path / "reports", tmp_path / "gt"
-    reports.mkdir()
-    (gt / "Steel2").mkdir(parents=True)
-    (reports / "gt_extraction.json").write_text(json.dumps(
-        {"datasets": {"Steel1": {"mode_a_line_class": None},
-                      "Steel2": {"mode_a_line_class": record}}}))
-    return {"audit": {}, "line_width": 4.0, "REPORTS": reports, "GT_ROOT": gt, "PATHS": {},
-            "ma_profile": {}, "ma_line_idx": 1, "tiling": tiling, "boundary_gt": boundary_gt,
-            "__name__": "cell"}
-
-
-def _listing(root):
-    return sorted(str(p.relative_to(root)) for p in root.rglob("*"))
-
-
-def _run_regen_guard(ns):
-    exec(compile(_prefix_through(_the_cell("boundary_gt.extract_all("), REGEN_GUARD),
-                 "<cell 30>", "exec"), ns)
-
-
-def test_the_real_regeneration_cell_refuses_when_steel2_is_already_line_class(tmp_path):
-    from src import boundary_gt
-
-    ns = _regen_namespace(tmp_path, record={"class_index": 1, "colour": [0, 0, 0],
-                                            "blob_thickness_px": 8.0})
-    before = _listing(tmp_path)
-    with pytest.raises(boundary_gt.ExtractionError, match="REFUSING to regenerate Steel2"):
-        _run_regen_guard(ns)
-    assert _listing(tmp_path) == before, "a refusal must not write anything"
-
-
-def test_the_real_regeneration_cell_refuses_when_the_backup_already_exists(tmp_path):
-    from src import boundary_gt
-
-    ns = _regen_namespace(tmp_path, record=None)
-    backup = ns["GT_ROOT"] / boundary_gt.MODE_B_BACKUP_SUBDIR / "Steel2"
-    backup.mkdir(parents=True)
-    (backup / "a.png").write_bytes(b"the only copy of the original")
-    before = _listing(tmp_path)
-    with pytest.raises(boundary_gt.ExtractionError, match="only copy of the original MODE B"):
-        _run_regen_guard(ns)
-    assert _listing(tmp_path) == before
-    assert (backup / "a.png").read_bytes() == b"the only copy of the original"
-
-
-def test_the_real_regeneration_cell_gets_past_its_guard_on_a_clean_mode_b_state(tmp_path):
-    _run_regen_guard(_regen_namespace(tmp_path, record=None))      # no raise
-
-
 # --------------------------------------------------------------------------
-# 1b. the fold-rebuild cell refuses if the fold exists
+# 1b. the fold-rebuild cell: guard order (static); skip / refuse / proceed (exec)
 # --------------------------------------------------------------------------
 def test_fold_cell_refuses_before_it_reads_the_index_or_writes_anything():
     cell = _the_cell("tiling.membership_diff(")
@@ -145,55 +94,243 @@ def test_fold_cell_refuses_before_it_reads_the_index_or_writes_anything():
     assert "NEW_CKPT" in cell[guard:guard + 120], "the checkpoint directory is part of the refusal"
 
 
-def _fold_namespace(tmp_path):
+def _fingerprint_of(reports_dir):
+    """What train.gt_fingerprint reports for the sha, without importing torch."""
+    path = Path(reports_dir) / "gt_extraction.json"
+    return {"gt_extraction_sha256": hashlib.sha256(path.read_bytes()).hexdigest()[:16]}
+
+
+def _stub_train(expected_sha):
+    return SimpleNamespace(gt_fingerprint=_fingerprint_of,
+                           load_steel_step=lambda: {"expected_gt_sha256": expected_sha})
+
+
+def _scratch_gt(tmp_path, record=None, backup=False, backup_files=True, sha="match"):
+    """A scratch REPORTS/GT_ROOT laid out as the regeneration leaves them (or not)."""
+    reports, gt = tmp_path / "reports", tmp_path / "gt"
+    reports.mkdir(exist_ok=True)
+    (gt / "Steel2").mkdir(parents=True, exist_ok=True)
+    (gt / "Steel1").mkdir(parents=True, exist_ok=True)
+    (reports / "gt_extraction.json").write_text(json.dumps(
+        {"datasets": {"Steel1": {"mode_a_line_class": None},
+                      "Steel2": {"mode_a_line_class": record}}}))
+    if backup:
+        from src import boundary_gt
+
+        b = gt / boundary_gt.MODE_B_BACKUP_SUBDIR / "Steel2"
+        b.mkdir(parents=True)
+        if backup_files:
+            (b / "a.png").write_bytes(b"the only copy of the original")
+    real = _fingerprint_of(reports)["gt_extraction_sha256"]
+    return reports, gt, (real if sha == "match" else "0" * 16)
+
+
+LINE_RECORD = {"class_index": 1, "colour": [0, 0, 0], "blob_thickness_px": 8.0}
+
+
+def _regen_ns(reports, gt, expected_sha, **extra):
     pytest.importorskip("tqdm")
     from src import boundary_gt, tiling
 
-    for name in ("manifests", "configs", "reports", "gt"):
-        (tmp_path / name).mkdir()
-    (tmp_path / "configs" / "fold_stats.yaml").write_text("folds:\n  other: {}\n")
-    return {"audit": {}, "line_width": 4.0, "REPORTS": tmp_path / "reports",
-            "CONFIGS": tmp_path / "configs", "GT_ROOT": tmp_path / "gt",
-            "MANIFEST_DIR": tmp_path / "manifests", "DATASETS": ["Steel1", "Steel2"],
-            "PATHS": {"persistent_dir": str(tmp_path / "persist")},
-            "train_settings": {"checkpoint_subdir": "checkpoints"},
-            "Path": Path, "tiling": tiling, "boundary_gt": boundary_gt, "__name__": "cell"}
+    ns = {"audit": {}, "line_width": 4.0, "REPORTS": reports, "GT_ROOT": gt, "PATHS": {},
+          "tiling": tiling, "boundary_gt": boundary_gt, "train_mod": _stub_train(expected_sha),
+          "Path": Path, "json": json, "__name__": "cell"}
+    ns.update(extra)
+    return ns
 
 
-def _run_fold_guard(ns):
-    exec(compile(_prefix_through(_the_cell("tiling.membership_diff("), FOLD_GUARD),
-                 "<cell 31>", "exec"), ns)
+def _listing(root):
+    return sorted(str(p.relative_to(root)) for p in root.rglob("*"))
 
 
 def _snapshot(root):
     return {str(p.relative_to(root)): p.read_bytes() for p in root.rglob("*") if p.is_file()}
 
 
-def test_the_real_fold_cell_gets_past_its_guard_when_the_fold_does_not_exist(tmp_path):
-    _run_fold_guard(_fold_namespace(tmp_path))       # no raise
+def _exec_cell(cell, ns, label):
+    out = []
+    ns["print"] = lambda *a, **k: out.append(" ".join(str(x) for x in a))
+    exec(compile(cell, label, "exec"), ns)
+    return "\n".join(out)
 
 
-@pytest.mark.parametrize("what", ["manifest", "fold_stats_entry", "report", "checkpoint"])
-def test_the_real_fold_cell_refuses_when_the_fold_already_exists(tmp_path, what):
+def test_the_real_regeneration_cell_skips_in_exactly_the_finished_state(tmp_path):
+    reports, gt, sha = _scratch_gt(tmp_path, record=LINE_RECORD, backup=True)
+    before = _snapshot(tmp_path)
+    printed = _exec_cell(_the_cell("boundary_gt.extract_all("), _regen_ns(reports, gt, sha),
+                         "<cell 30>")
+    assert "Cell 30 already done -- skipped" in printed
+    assert _snapshot(tmp_path) == before, "the skip must not write anything"
+
+
+@pytest.mark.parametrize("state", [
+    dict(record=LINE_RECORD, backup=False),                       # record, no backup
+    dict(record=None, backup=True),                               # backup, no record
+    dict(record=LINE_RECORD, backup=True, backup_files=False),    # empty backup
+    dict(record=LINE_RECORD, backup=True, sha="other"),           # foreign fingerprint
+    dict(record=None, backup=True, backup_files=False),           # empty backup, no record
+])
+def test_the_real_regeneration_cell_refuses_any_partial_or_foreign_state(tmp_path, state):
+    from src import boundary_gt
+
+    reports, gt, sha = _scratch_gt(tmp_path, **state)
+    before = _snapshot(tmp_path)
+    with pytest.raises(boundary_gt.ExtractionError, match="REFUSING"):
+        _exec_cell(_the_cell("boundary_gt.extract_all("), _regen_ns(reports, gt, sha),
+                   "<cell 30>")
+    assert _snapshot(tmp_path) == before, "a refusal must not write anything"
+
+
+def test_the_real_regeneration_cell_proceeds_from_the_clean_state_only_with_cell_29(tmp_path):
+    reports, gt, sha = _scratch_gt(tmp_path, record=None, backup=False)
+    cell = _the_cell("boundary_gt.extract_all(")
+    # without Cell 29's profile it stops, writing nothing
+    before = _snapshot(tmp_path)
+    with pytest.raises(SystemExit, match="RUN_DIAGNOSTICS"):
+        _exec_cell(_prefix_through(cell, REGEN_GUARD), _regen_ns(reports, gt, sha), "<cell 30>")
+    assert _snapshot(tmp_path) == before
+    # with it, it gets past every guard (the heavy work after them is not run here)
+    _exec_cell(_prefix_through(cell, REGEN_GUARD),
+               _regen_ns(reports, gt, sha, ma_profile={}, ma_line_idx=1), "<cell 30>")
+
+
+def _fold_ns(tmp_path, expected_sha):
+    pytest.importorskip("tqdm")
+    pytest.importorskip("yaml")
+    from src import boundary_gt, tiling
+
+    for name in ("manifests", "configs"):
+        (tmp_path / name).mkdir(exist_ok=True)
+    (tmp_path / "configs" / "fold_stats.yaml").write_text("folds:\n  other: {}\n")
+    return {"audit": {}, "line_width": 4.0, "REPORTS": tmp_path / "reports",
+            "CONFIGS": tmp_path / "configs", "GT_ROOT": tmp_path / "gt",
+            "MANIFEST_DIR": tmp_path / "manifests", "DATASETS": ["Steel1", "Steel2"],
+            "PATHS": {"persistent_dir": str(tmp_path / "persist")},
+            "train_settings": {"checkpoint_subdir": "checkpoints"},
+            "train_mod": _stub_train(expected_sha), "Path": Path, "json": json,
+            "tiling": tiling, "boundary_gt": boundary_gt, "__name__": "cell"}
+
+
+def _new_fold():
     from src import tiling
 
-    ns = _fold_namespace(tmp_path)
-    new = tiling.load_config()["steel_combined_mode_a_name"]
-    if what == "manifest":
+    return tiling.load_config()["steel_combined_mode_a_name"]
+
+
+def test_the_real_fold_cell_skips_when_ground_truth_and_fold_are_both_done(tmp_path):
+    reports, gt, sha = _scratch_gt(tmp_path, record=LINE_RECORD, backup=True)
+    ns = _fold_ns(tmp_path, sha)
+    new = _new_fold()
+    (tmp_path / "manifests" / f"{new}.csv").write_text("x")
+    (tmp_path / "manifests" / f"{new}_test.csv").write_text("x")
+    (tmp_path / "configs" / "fold_stats.yaml").write_text(
+        f"folds:\n  other: {{}}\n  {new}: {{pos_weight: 1}}\n")
+    before = _snapshot(tmp_path)
+    printed = _exec_cell(_the_cell("tiling.membership_diff("), ns, "<cell 31>")
+    assert "Cell 31 already done -- skipped" in printed
+    assert _snapshot(tmp_path) == before, "the skip must not write anything"
+
+
+@pytest.mark.parametrize("what", ["one_manifest", "entry_only", "report_only", "checkpoint_only"])
+def test_the_real_fold_cell_refuses_a_partially_built_fold(tmp_path, what):
+    from src import tiling
+
+    reports, gt, sha = _scratch_gt(tmp_path, record=LINE_RECORD, backup=True)
+    ns = _fold_ns(tmp_path, sha)
+    new = _new_fold()
+    if what == "one_manifest":
         (tmp_path / "manifests" / f"{new}.csv").write_text("x")
-    elif what == "fold_stats_entry":
+    elif what == "entry_only":
         (tmp_path / "configs" / "fold_stats.yaml").write_text(
             f"folds:\n  other: {{}}\n  {new}: {{pos_weight: 1}}\n")
-    elif what == "report":
+    elif what == "report_only":
         (tmp_path / "reports" / f"tiling_{new}.json").write_text("{}")
     else:
         ckpt = tmp_path / "persist" / "checkpoints" / new
         ckpt.mkdir(parents=True)
         (ckpt / "last.pt").write_bytes(b"weights trained on the old manifests")
     before = _snapshot(tmp_path)
-    with pytest.raises(tiling.TilingError, match=f"REFUSING to rebuild fold '{new}'"):
-        _run_fold_guard(ns)
+    with pytest.raises(tiling.TilingError, match="REFUSING"):
+        _exec_cell(_the_cell("tiling.membership_diff("), ns, "<cell 31>")
     assert _snapshot(tmp_path) == before, "a refusal must not write anything"
+
+
+def test_the_real_fold_cell_refuses_when_the_ground_truth_is_not_finished(tmp_path):
+    reports, gt, sha = _scratch_gt(tmp_path, record=None, backup=False)
+    ns = _fold_ns(tmp_path, sha)
+    before = _snapshot(tmp_path)
+    with pytest.raises(SystemExit, match="run Cell 30 first"):
+        _exec_cell(_the_cell("tiling.membership_diff("), ns, "<cell 31>")
+    assert _snapshot(tmp_path) == before
+
+
+def test_the_real_fold_cell_gets_past_its_guards_when_the_fold_does_not_exist(tmp_path):
+    reports, gt, sha = _scratch_gt(tmp_path, record=LINE_RECORD, backup=True)
+    _exec_cell(_prefix_through(_the_cell("tiling.membership_diff("), FOLD_GUARD),
+               _fold_ns(tmp_path, sha), "<cell 31>")      # no raise
+
+
+# --------------------------------------------------------------------------
+# diagnostics gate, Cell 14 completion, and the locked steel step
+# --------------------------------------------------------------------------
+def _cell_after(title):
+    nb = _notebook()
+    cells = nb["cells"]
+    i = next(i for i, c in enumerate(cells) if c["cell_type"] == "markdown"
+             and _source(c).startswith(title))
+    assert cells[i + 1]["cell_type"] == "code"
+    return _source(cells[i + 1])
+
+
+@pytest.mark.parametrize("n", [25, 26, 27, 28, 29])
+def test_diagnostic_cells_are_skipped_when_run_diagnostics_is_false(n):
+    """The whole real cell, in a namespace that holds NOTHING else: if anything other
+    than the gate ran, it would raise NameError/ImportError here."""
+    printed = _exec_cell(_cell_after(f"## Cell {n} "), {"RUN_DIAGNOSTICS": False,
+                                                          "__name__": "cell"}, f"<cell {n}>")
+    assert printed == f"Cell {n} skipped (diagnostic) -- set RUN_DIAGNOSTICS = True in Cell 2 to run it."
+
+
+@pytest.mark.parametrize("n", [25, 26, 27, 28, 29])
+def test_diagnostic_cells_are_skipped_when_the_flag_was_never_set(n):
+    printed = _exec_cell(_cell_after(f"## Cell {n} "), {"__name__": "cell"}, f"<cell {n}>")
+    assert "skipped (diagnostic)" in printed
+
+
+def test_run_diagnostics_is_set_once_in_cell_2_and_defaults_to_false():
+    code = _code_cells()
+    setters = [c for c in code if re.search(r"^RUN_DIAGNOSTICS\s*=", c, re.M)]
+    assert len(setters) == 1 and "FOLD = steel_cfg[" in setters[0]
+    assert re.search(r"^RUN_DIAGNOSTICS = False$", setters[0], re.M)
+    gated = [c for c in code if 'globals().get("RUN_DIAGNOSTICS", False)' in c]
+    assert len(gated) == 5
+
+
+def test_non_diagnostic_cells_are_not_gated():
+    for title in ("## Cell 14 ", "## Cell 20 ", "## Cell 21 ", "## Cell 22 ", "## Cell 23 ",
+                  "## Cell 24 ", "## Cell 30 ", "## Cell 31 ", "## Cell 32 "):
+        assert "RUN_DIAGNOSTICS\", False)" not in _cell_after(title), title
+
+
+def test_cell_14_checks_completion_before_it_can_call_fit():
+    cell = _cell_after("## Cell 14 ")
+    check = cell.index("train_mod.run_completion(trainer.history")
+    assert check < cell.index("trainer.fit(")
+    branch = cell[check:]
+    assert branch.index("if _run_done:") < branch.index("RUN ALREADY COMPLETE") \
+        < branch.index("else:") < branch.index("trainer.fit(")
+    # fit() is only reachable from the else branch
+    fit_line = next(l for l in cell.splitlines() if "trainer.fit(" in l)
+    assert fit_line.startswith("        "), "fit() must be inside the else block"
+    assert "stopped_early = False" in branch[:branch.index("else:")], (
+        "Cell 15 reads stopped_early; the skip branch must set it")
+
+
+def test_cell_2_refuses_a_fold_other_than_the_decided_one():
+    cell = _cell_after("## Cell 2 ")
+    assert cell.index("FOLD = steel_cfg[") < cell.index("train_mod.load_steel_step()") \
+        < cell.index('if FOLD != STEEL_STEP["default_fold"]:')
+    assert "raise SystemExit(" in cell[cell.index('if FOLD != STEEL_STEP["default_fold"]:'):]
 
 
 # --------------------------------------------------------------------------

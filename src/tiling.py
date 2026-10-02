@@ -876,6 +876,42 @@ def refuse_if_fold_exists(fold_name: str, manifest_dir: Path, configs_dir: Path,
             + "; ".join(found) + ". Nothing was written.")
 
 
+def mode_a_fold_state(fold_name: str, manifest_dir: Path, configs_dir: Path,
+                      reports_dir: Path, checkpoint_dir: Optional[Path] = None) -> str:
+    """Where the line-class pooled fold stands: ``"done"``, ``"todo"``, or raise
+    :class:`TilingError`. Reads only; never writes.
+
+    ``"done"`` -- both manifests and the ``fold_stats.yaml`` entry are present (its
+    report and checkpoints may or may not be: a "Run all" rebuilds this fold in
+    Cells 6-7 before Cell 31 ever runs). ``"todo"`` -- no trace of the fold
+    anywhere, the same condition :func:`refuse_if_fold_exists` enforces. Anything
+    in between (one manifest without the other, an entry without manifests, a
+    report or a non-empty checkpoint directory with no manifests) is partial and
+    raises.
+    """
+    import yaml
+
+    manifest_dir, configs_dir, reports_dir = Path(manifest_dir), Path(configs_dir), Path(reports_dir)
+    tv = (manifest_dir / f"{fold_name}.csv").is_file()
+    te = (manifest_dir / f"{fold_name}_test.csv").is_file()
+    stats = configs_dir / "fold_stats.yaml"
+    entry = stats.is_file() and fold_name in ((yaml.safe_load(stats.read_text()) or {})
+                                              .get("folds") or {})
+    reports = [p.name for p in (reports_dir / f"tiling_{fold_name}.md",
+                                reports_dir / f"tiling_{fold_name}.json") if p.exists()]
+    ckpt = (checkpoint_dir is not None and Path(checkpoint_dir).is_dir()
+            and any(Path(checkpoint_dir).iterdir()))
+    if tv and te and entry:
+        return "done"
+    if not (tv or te or entry or reports or ckpt):
+        return "todo"
+    raise TilingError(
+        f"REFUSING: fold {fold_name!r} is partially built -- train/val manifest "
+        f"{'present' if tv else 'ABSENT'}, test manifest {'present' if te else 'ABSENT'}, "
+        f"fold_stats entry {'present' if entry else 'ABSENT'}, reports {reports or 'none'}, "
+        f"checkpoint dir {'NOT empty' if ckpt else 'empty/absent'}. Nothing was written.")
+
+
 def fold_membership(fold: dict) -> dict:
     """``{split: sorted tile ids}`` of a ``build_steel_combined_fold`` result."""
     out = {"train": [], "val": [], "test": []}

@@ -1492,6 +1492,40 @@ def refuse_if_already_regenerated(extraction: dict, gt_root: Path, dataset: str)
             "(the backup is authoritative for MODE B) instead of re-running.")
 
 
+def mode_a_regeneration_state(extraction: dict, gt_root: Path, dataset: str,
+                              fingerprint: Optional[dict], expected_sha256: str) -> str:
+    """Where a dataset's line-class regeneration stands: ``"done"``, ``"todo"``, or
+    raise :class:`ExtractionError`. Reads only; never writes.
+
+    ``"done"`` -- exactly the finished state, every sign at once: the extraction
+    record carries ``mode_a_line_class`` for ``dataset``, the MODE B backup
+    directory exists and is not empty, and the fingerprint of the ground truth on
+    disk is ``expected_sha256``. ``"todo"`` -- the clean MODE B state: no record and
+    no backup. ANY other combination (a record without a backup, a backup without a
+    record, an empty backup, a different fingerprint) is a partial or foreign state
+    and raises: skipping it would hide it, and regenerating over it could overwrite
+    the only copy of the original ground truth.
+    """
+    record = (extraction.get("datasets", {}).get(dataset) or {}).get("mode_a_line_class")
+    backup = Path(gt_root) / MODE_B_BACKUP_SUBDIR / dataset
+    backup_exists = backup.exists()
+    backup_files = backup.is_dir() and any(backup.iterdir())
+    sha = (fingerprint or {}).get("gt_extraction_sha256")
+    if record and backup_files and sha == expected_sha256:
+        return "done"
+    if not record and not backup_exists:
+        return "todo"
+    facts = [f"line-class record for {dataset}: {'present' if record else 'ABSENT'}",
+             f"backup {backup}: " + ("present" if backup_files else
+                                     "EMPTY" if backup_exists else "ABSENT"),
+             f"gt_extraction_sha256 {sha!r} (expected {expected_sha256!r})"]
+    raise ExtractionError(
+        f"REFUSING: the {dataset} line-class regeneration is in neither the finished "
+        "nor the clean state -- " + "; ".join(facts) + ". Nothing was written. "
+        "Inspect it by hand; the backup, if present, is the only copy of the "
+        "original MODE B ground truth.")
+
+
 def merge_extraction_report(existing: dict, new: dict) -> dict:
     """Fold a PARTIAL re-extraction (a subset of folders) into the report of the
     full run, instead of overwriting it.
