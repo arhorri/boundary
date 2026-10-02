@@ -4,7 +4,7 @@ Both checkpoints scored on the identical test tiles. Pixel Dice at each checkpoi
 
 ## generated_utc
 
-- 2026-10-02T09:02:20Z
+- 2026-10-02T20:06:07Z
 
 ## folds
 
@@ -120,21 +120,21 @@ Both checkpoints scored on the identical test tiles. Pixel Dice at each checkpoi
     - **delta**: -0.000744711
 - **Steel2**:
   - **pixel_dice**:
-    - **new**: 0.734021
-    - **old**: 0.596438
-    - **delta**: 0.137583
+    - **new**: 0.734013
+    - **old**: 0.596434
+    - **delta**: 0.137579
   - **pq**:
-    - **new**: 0.360189
-    - **old**: 0.0955026
-    - **delta**: 0.264686
+    - **new**: 0.360107
+    - **old**: 0.0954852
+    - **delta**: 0.264622
   - **sq**:
-    - **new**: 0.765956
-    - **old**: 0.640218
-    - **delta**: 0.125738
+    - **new**: 0.765908
+    - **old**: 0.640014
+    - **delta**: 0.125894
   - **rq**:
-    - **new**: 0.469151
-    - **old**: 0.145268
-    - **delta**: 0.323883
+    - **new**: 0.469074
+    - **old**: 0.145271
+    - **delta**: 0.323803
 
 ## summaries
 
@@ -156,17 +156,17 @@ Both checkpoints scored on the identical test tiles. Pixel Dice at each checkpoi
   - **Steel2**:
     - **tiles**: 126
     - **threshold**: 0.8
-    - **pixel_dice**: 0.734021
+    - **pixel_dice**: 0.734013
     - **marker_threshold**: 0.6
-    - **pq**: 0.360189
-    - **sq**: 0.765956
-    - **rq**: 0.469151
-    - **over_segmentation_factor**: 1.07266
+    - **pq**: 0.360107
+    - **sq**: 0.765908
+    - **rq**: 0.469074
+    - **over_segmentation_factor**: 1.07198
     - **reference_default_marker**:
       - **marker_threshold**: 0.3
-      - **pq**: 0.310451
-      - **sq**: 0.769194
-      - **rq**: 0.403582
+      - **pq**: 0.31089
+      - **sq**: 0.768985
+      - **rq**: 0.404104
 - **old**:
   - **Steel1**:
     - **tiles**: 96
@@ -185,17 +185,17 @@ Both checkpoints scored on the identical test tiles. Pixel Dice at each checkpoi
   - **Steel2**:
     - **tiles**: 126
     - **threshold**: 0.85
-    - **pixel_dice**: 0.596438
+    - **pixel_dice**: 0.596434
     - **marker_threshold**: 0.7
-    - **pq**: 0.0955026
-    - **sq**: 0.640218
-    - **rq**: 0.145268
-    - **over_segmentation_factor**: 1.92646
+    - **pq**: 0.0954852
+    - **sq**: 0.640014
+    - **rq**: 0.145271
+    - **over_segmentation_factor**: 1.92551
     - **reference_default_marker**:
       - **marker_threshold**: 0.3
-      - **pq**: 0.0640702
-      - **sq**: 0.599078
-      - **rq**: 0.0983869
+      - **pq**: 0.0640264
+      - **sq**: 0.598974
+      - **rq**: 0.0983746
 
 ## checks
 
