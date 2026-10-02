@@ -1,6 +1,6 @@
 # fold_steel_combined_modea
 
-- generated: 2026-10-02T14:27:01Z
+- generated: 2026-10-02T18:14:40Z
 - pooled from ['Steel1', 'Steel2'], split BY PARENT with seed 0
 - held out: `mixed(Steel1+Steel2)` — this fold has no single held-out DATASET in the LODO sense. The label is descriptive and matches no dataset in any per-dataset metrics breakdown by construction, which is what makes the held-out-specific paths in `src/train.py` fall back to their pooled behaviour instead of mislabelling a real dataset as this fold's held-out one.
 - pos_weight **7.693**, measured on THIS fold's own train split, never inherited from another fold
