@@ -283,3 +283,15 @@ def test_fold_state_refuses_traces_without_manifests(tmp_path):
     (r / "tiling_f.md").write_text("x")
     with pytest.raises(tiling.TilingError):
         tiling.mode_a_fold_state("f", m, c, r, None)
+
+
+def test_training_settings_were_not_changed_by_the_width_and_clDice_work():
+    """loss.cldice_iters and the width read-out are measurement concerns here; the training
+    setting stays what the recorded run used (it is in HASHED loss settings via the loss
+    section of the config hash, so a change would also invalidate the checkpoint)."""
+    pytest.importorskip("torch")
+    from src import losses
+
+    recorded = json.loads(TRAIN_REPORT.read_text())["hashed_config"]["loss"]
+    assert losses.load_config()["cldice_iters"] == recorded["cldice_iters"] == 3
+    assert {k: v for k, v in losses.load_config().items() if k in recorded} == recorded

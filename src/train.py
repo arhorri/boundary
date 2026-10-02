@@ -2114,7 +2114,8 @@ def best_epoch_thresholds(state: dict) -> dict:
 @torch.no_grad()
 def evaluate_checkpoint(model: "nn.Module", val_ds, thresholds: dict,
                         device, amp_enabled: bool = False,
-                        batch_size: int = 32, num_workers: int = 0) -> list:
+                        batch_size: int = 32, num_workers: int = 0,
+                        width_hint: Optional[int] = None) -> list:
     """Per-tile Dice AND measured boundary width, one pass over ``val_ds``.
 
     Validation only: no optimizer, no loss term, no backward pass. This exists
@@ -2131,6 +2132,16 @@ def evaluate_checkpoint(model: "nn.Module", val_ds, thresholds: dict,
     ``src.boundary_gt.measured_line_width`` measures the ground truth itself:
     skeletonized area divided by skeleton length, so the two numbers this cell
     prints are directly comparable to the numbers notebook 02 reported.
+
+    ``width_hint`` is the configured ``line_width_px`` (only its PARITY is
+    used): ``measured_line_width`` cannot tell a 3 px line from a 4 px one from
+    the distance transform alone, and with no hint it assumes an odd width, so
+    an even-width line reads one pixel LOW (a 2 px band -> 1.0, a 4 px band ->
+    3.0). Pass the width that produced the ground truth being scored (e.g.
+    ``reports/gt_extraction.json``'s ``settings.line_width_px``) to get the
+    true width; ``None`` (the default) keeps the historical behaviour exactly.
+    A tile with no foreground, or no background, has no measurable width and
+    reports ``None``.
     """
     from torch.utils.data import DataLoader
 
@@ -2178,8 +2189,8 @@ def evaluate_checkpoint(model: "nn.Module", val_ds, thresholds: dict,
                 "dice": float(dice),
                 "true_fraction": float(true.mean()),
                 "pred_fraction": float(pred.mean()),
-                "pred_width_px": boundary_gt.measured_line_width(pred),
-                "true_width_px": boundary_gt.measured_line_width(true),
+                "pred_width_px": boundary_gt.measured_line_width(pred, width_hint),
+                "true_width_px": boundary_gt.measured_line_width(true, width_hint),
             })
             row_index += 1
 

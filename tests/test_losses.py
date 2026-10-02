@@ -12,6 +12,7 @@ because a skip is not a pass.
 
 from __future__ import annotations
 
+import math
 from pathlib import Path
 
 import numpy as np
@@ -76,20 +77,22 @@ def dense_tile(rows, roots):
 
 
 def _real_mask(rows, roots, dataset_name, densest=True):
-    candidates = [r for r in rows if r["dataset"] == dataset_name]
-    if not candidates:
-        pytest.skip(f"no {dataset_name} tiles in {MANIFEST.name}")
-    candidates.sort(key=lambda r: r["boundary_fraction"], reverse=densest)
-    crops = ds.load_crops()
-    for row in candidates[:20]:
-        try:
-            _, gt_full = ds.read_pair(row, crops=crops, roots=roots)
-        except Exception:
-            continue
-        mask = (ds.crop_tile(gt_full, row["x"], row["y"], int(row["patch"])) > 0)
-        if mask.sum() > 200:
-            return mask.astype(np.uint8)
-    pytest.skip(f"{dataset_name} source images are not reachable on this host")
+    """The densest tile of ``dataset_name`` (``dataset.densest_tile_mask``); a skip, not a
+    failure, on a host that does not have the data."""
+    assert densest, "only the densest tile is ever asked for"
+    try:
+        return ds.densest_tile_mask(rows, dataset_name, roots=roots)
+    except ds.DatasetError as exc:
+        pytest.skip(f"{exc} ({MANIFEST.name})")
+
+
+@pytest.fixture(scope="module")
+def line_width():
+    """The width the ground truth on disk was generated at -- RECORDED in
+    reports/gt_extraction.json, not whatever configs/default.yaml says now."""
+    from src import tiling
+
+    return float(tiling.load_extraction()["settings"]["line_width_px"])
 
 
 def _synthetic_mask(size: int = 128) -> np.ndarray:
@@ -212,7 +215,7 @@ def test_soft_skeleton_carves_junctions_out_of_a_two_pixel_grid(settings):
             "junction; the skeleton is being changed away from junctions too")
 
 
-def test_cldice_is_far_less_sensitive_to_thickness_than_dice(criterion, dense_tile):
+def test_cldice_is_far_less_sensitive_to_thickness_than_dice(criterion, dense_tile, line_width):
     """The claim clDice actually earns its place with, on a real tile.
 
     Two errors are applied to the ground truth itself:
@@ -233,9 +236,23 @@ def test_cldice_is_far_less_sensitive_to_thickness_than_dice(criterion, dense_ti
     is checked too: a clDice of exactly 0 with an EMPTY predicted skeleton is
     ``smooth / smooth = 1`` -- degenerate, not invariant. The two are
     indistinguishable from the loss value alone.
+
+    WIDTH-AWARE. Everything that depends on how wide the ground-truth line is is
+    derived from ``line_width`` (the width recorded in gt_extraction.json), not fixed at
+    the 2 px this was first written for:
+
+    * the skeleton iterations come from ``losses.thickness_invariance_iters`` -- a line
+      ``line_width + 2`` px wide (the dilated one) must be consumed by erosion before
+      its skeleton exists, and at 4 px the default ``cldice_iters = 3`` does not get
+      there on diagonal lines. ``loss.cldice_iters`` itself is NOT changed: this is the
+      iteration count a MEASUREMENT needs, not a training setting;
+    * the gap block must be wider than the line, or it only thins it (``cut_gaps``),
+      and its spacing scales with the width so the same share of the boundary is cut.
     """
     truth = dense_tile
-    gapped = losses.cut_gaps(truth, spacing=180, gap=3)
+    iters = losses.thickness_invariance_iters(line_width)
+    gapped = losses.cut_gaps(truth, spacing=int(90 * line_width),
+                             gap=int(math.ceil(line_width)) + 1)
     dilated = losses.dilate_mask(truth, iterations=1)
 
     removed = 1.0 - gapped.sum() / max(1, truth.sum())
@@ -250,14 +267,20 @@ def test_cldice_is_far_less_sensitive_to_thickness_than_dice(criterion, dense_ti
     for name, mask in (("gap", gapped), ("dilated", dilated)):
         logits = losses.as_logits(mask, MAGNITUDE)
         terms = criterion.components(logits, target)
-        scores[name] = {k: float(terms[k]) for k in ("dice", "cldice")}
+        scores[name] = {
+            "dice": float(terms["dice"]),
+            # clDice at the width-derived iterations, not the training default
+            "cldice": float(losses.cldice_term(logits, target, iters=iters,
+                                               smooth=criterion.smooth,
+                                               eps=criterion.eps))}
         parts[name] = losses.cldice_parts(
-            logits, target, iters=criterion.cldice_iters,
-            smooth=criterion.smooth, eps=criterion.eps)
+            logits, target, iters=iters, smooth=criterion.smooth, eps=criterion.eps)
 
     dice_gap, cl_gap = scores["gap"]["dice"], scores["gap"]["cldice"]
     dice_dil, cl_dil = scores["dilated"]["dice"], scores["dilated"]["cldice"]
-    detail = (f"gap: dice={dice_gap:.5f} cldice={cl_gap:.5f} "
+    detail = (f"line_width={line_width:g} iters={iters} "
+              f"(training default {criterion.cldice_iters}); "
+              f"gap: dice={dice_gap:.5f} cldice={cl_gap:.5f} "
               f"(removed {removed:.1%}); dilated: dice={dice_dil:.5f} "
               f"cldice={cl_dil:.5f} (added {added:.1%}); dilated skeletons: "
               f"pred={parts['dilated']['skel_pred_sum']:.0f} px, "
@@ -468,3 +491,81 @@ def test_weights_are_the_configured_ones(criterion, settings):
                 + float(settings["w_dice"]) * float(terms["dice"])
                 + float(settings["w_cldice"]) * float(terms["cldice"]))
     assert float(terms["total"]) == pytest.approx(expected, rel=1e-5)
+
+
+# --------------------------------------------------------------------------
+# soft skeleton vs line width: what the iterations do on a straight line, measured
+# by running the real code (the derivation is in thickness_invariance_iters)
+# --------------------------------------------------------------------------
+def _horizontal_band(rows, size=64, c0=4, c1=60):
+    """A ``rows``-row band, columns c0..c1 inclusive, centred vertically."""
+    mask = np.zeros((size, size), dtype=np.uint8)
+    top = (size - rows) // 2
+    mask[top:top + rows, c0:c1 + 1] = 1
+    return mask
+
+
+def test_thickness_invariance_iters_is_ceil_of_the_dilated_width_over_root_two():
+    assert losses.thickness_invariance_iters(2) == 3      # the default, and where the test passed
+    assert losses.thickness_invariance_iters(4) == 5
+    assert losses.thickness_invariance_iters(6) == 6
+    assert losses.thickness_invariance_iters(1) == 3
+    assert losses.thickness_invariance_iters(2.5) == 4
+    for bad in (0, 0.5, -2, float("nan")):
+        with pytest.raises(losses.LossError):
+            losses.thickness_invariance_iters(bad)
+
+
+@pytest.mark.parametrize("rows", [2, 4, 6])
+@pytest.mark.parametrize("iters", [3, 4, 5])
+def test_soft_skeleton_of_a_straight_even_width_line_is_a_two_pixel_central_band(rows, iters):
+    """A straight line of any even width W has a 2 px central band as its skeleton, at
+    every iteration count once W has been consumed -- never a 1 px centreline. (W = 2 comes
+    back whole; W = 4 loses its outer rows at the first erosion; W = 6 at the second.)"""
+    mask = _horizontal_band(rows)
+    skel = losses.soft_skeletonize(losses.as_target(mask), iters)[0, 0].numpy()
+    column = skel[:, 32]
+    centre = 32                                   # band rows are 32 - rows/2 .. 31 + rows/2
+    assert column.sum() == pytest.approx(2.0)
+    assert column[centre - 1] == pytest.approx(1.0) and column[centre] == pytest.approx(1.0)
+
+
+def test_skeleton_measurements_report_thickness_two_and_a_length_for_straight_lines():
+    for rows in (2, 4):
+        got = losses.skeleton_measurements(_horizontal_band(rows), iters_list=(3, 4, 5))
+        assert set(got) == {3, 4, 5}
+        for iters, row in got.items():
+            assert row["mask_px"] == rows * 57
+            assert row["thickness_px"] == pytest.approx(2.0, abs=0.3), (rows, iters, row)
+            assert 40 <= row["centreline_px"] <= 57, (rows, iters, row)
+            assert row["skeleton_px"] == pytest.approx(2 * row["centreline_px"], rel=0.15)
+    # an empty skeleton reports None, not a division by zero
+    assert losses.skeleton_measurements(np.zeros((16, 16), dtype=np.uint8), (3,))[3][
+        "thickness_px"] is None
+
+
+@pytest.mark.parametrize("rows, first_iters", [(2, 1), (4, 2)])
+def test_thickness_invariance_on_a_straight_line_needs_iterations_of_about_half_the_width(
+        rows, first_iters):
+    """The straight-line case of the property the dense-tile test asserts. Below
+    ``rows / 2`` iterations the dilated (rows + 2 px) line is not yet consumed, its skeleton
+    is EMPTY, and clDice comes out ~0 for the wrong reason -- ``pred_skeleton_real`` is the
+    check that catches it. From ``rows / 2`` up it holds at every count."""
+    profile = losses.thickness_invariance_profile(_horizontal_band(rows), [1, 2, 3, 4, 5])
+    for iters, row in profile.items():
+        if iters < first_iters:
+            # an EMPTY predicted skeleton also has nothing "on" the truth (0 > 0 is false), so
+            # the on-truth check fails with it; the real-skeleton check is the one that names it
+            assert not row["holds"] and "pred_skeleton_real" in row["failed"], (iters, row)
+            assert row["cldice_dilated"] < 0.25 * row["dice_dilated"], (
+                "the degenerate case LOOKS invariant, which is the point", iters, row)
+            assert row["skel_pred_sum"] == pytest.approx(0.0, abs=1e-2)
+        else:
+            assert row["holds"], (iters, row)
+            assert row["skel_pred_on_true"] > 0.99 * row["skel_pred_sum"]
+
+
+def test_thickness_invariance_profile_names_the_checks_it_applies():
+    profile = losses.thickness_invariance_profile(_horizontal_band(4), [3])
+    assert set(profile[3]["checks"]) == set(losses.INVARIANCE_CHECKS)
+    assert profile[3]["failed"] == [] and profile[3]["holds"] is True

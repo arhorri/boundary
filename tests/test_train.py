@@ -478,7 +478,7 @@ def test_evaluate_checkpoint_matches_hand_computed_dice_and_preserves_order():
 
     records = train_mod.evaluate_checkpoint(
         model, val_ds, thresholds, device=torch.device("cpu"),
-        batch_size=2, num_workers=0)
+        batch_size=2, num_workers=0, width_hint=2)
 
     assert [r["row_index"] for r in records] == [0, 1, 2]
     assert [r["dataset"] for r in records] == ["A", "A", "B"]
@@ -493,12 +493,68 @@ def test_evaluate_checkpoint_matches_hand_computed_dice_and_preserves_order():
     assert records[2]["pred_fraction"] == pytest.approx(1.0)
     assert records[2]["true_fraction"] == pytest.approx(32 / 256)
 
-    # Width: an unbroken 2-row band has a measurable width close to 2 px.
-    assert records[0]["true_width_px"] is not None
-    assert records[0]["true_width_px"] == pytest.approx(2.0, abs=0.5)
+    # Width: an unbroken 2-row band is 2 px wide -- with the configured width's
+    # parity supplied. (Without it, see the default-behaviour test below, the same
+    # band reads 1.0: the distance transform cannot tell a 2 px line from a 1 px
+    # one, and the no-hint default assumes an odd width.)
+    assert records[0]["true_width_px"] == pytest.approx(2.0)
+    assert records[0]["pred_width_px"] == pytest.approx(2.0)
     # tile 1 predicts nothing, so its predicted width is undefined (None),
     # not zero -- an empty prediction has no skeleton to measure.
     assert records[1]["pred_width_px"] is None
+    # tile 2 predicts EVERYTHING: no background pixel, so no width -- None, not
+    # inf (which is what an overflowing distance transform used to turn into).
+    assert records[2]["pred_width_px"] is None
+
+
+def _band_val_ds_and_model(rows, size=32):
+    """One dataset-A tile whose truth AND prediction are a ``rows``-row band."""
+    band = np.zeros((size, size), dtype=np.float32)
+    top = (size - rows) // 2
+    band[top:top + rows, :] = 1.0
+    logits = torch.where(torch.from_numpy(band) > 0, torch.tensor(10.0), torch.tensor(-10.0))
+    return _FakeValDataset([band], datasets=["A"]), _ConstantLogits([logits[None]])
+
+
+def _widths(rows, **kwargs):
+    val_ds, model = _band_val_ds_and_model(rows)
+    record, = train_mod.evaluate_checkpoint(
+        model, val_ds, {"A": 0.5}, device=torch.device("cpu"), batch_size=1, **kwargs)
+    return record["true_width_px"], record["pred_width_px"]
+
+
+def test_evaluate_checkpoint_default_width_is_unchanged_and_reads_even_widths_one_low():
+    """No width_hint is the historical behaviour, bias included -- pinned so that adding
+    the parameter cannot silently move any width already reported with the default."""
+    assert _widths(2) == (pytest.approx(1.0), pytest.approx(1.0))
+    assert _widths(4) == (pytest.approx(3.0), pytest.approx(3.0))
+    # odd widths were always right under the odd-width default
+    assert _widths(3) == (pytest.approx(3.0), pytest.approx(3.0))
+    # an explicit None is the default
+    assert _widths(4, width_hint=None) == _widths(4)
+
+
+def test_evaluate_checkpoint_width_hint_4_reads_a_4px_band_as_4():
+    assert _widths(4, width_hint=4) == (pytest.approx(4.0), pytest.approx(4.0))
+    assert _widths(2, width_hint=2) == (pytest.approx(2.0), pytest.approx(2.0))
+    # only the parity of the hint is used: 4 and 2 both mean "even"
+    assert _widths(4, width_hint=2) == _widths(4, width_hint=4)
+    # an odd configured width keeps the odd correction
+    assert _widths(3, width_hint=3) == (pytest.approx(3.0), pytest.approx(3.0))
+
+
+def test_evaluate_checkpoint_all_foreground_tile_has_no_width_and_no_warning():
+    import warnings
+
+    size = 16
+    full = np.ones((size, size), dtype=np.float32)
+    val_ds = _FakeValDataset([full], datasets=["A"])
+    model = _ConstantLogits([torch.full((1, size, size), 10.0)])
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", RuntimeWarning)   # the old overflow warning would raise
+        record, = train_mod.evaluate_checkpoint(
+            model, val_ds, {"A": 0.5}, device=torch.device("cpu"), batch_size=1, width_hint=4)
+    assert record["true_width_px"] is None and record["pred_width_px"] is None
 
 
 def test_evaluate_checkpoint_requires_a_threshold_for_every_dataset():
@@ -1737,6 +1793,11 @@ def test_region_diagnostic_runs_on_a_pool_with_no_single_held_out_dataset(tmp_pa
         assert decomposition[name]["label"] == "GOOD"
         assert decomposition[name]["pixel_dice"] == pytest.approx(1.0)
 
+    # _ConstantLogits hands out its logits by a running call counter, and
+    # decompose_error above has consumed both rows: a second pass through the SAME
+    # fake indexes past the end (KeyError), which says nothing about the code under
+    # test. A fresh fake starts the counter again.
+    model = _ConstantLogits([exact[None], exact[None]])
     region_results = train_mod.evaluate_region_metrics(
         model, val_ds, thresholds, device=torch.device("cpu"),
         marker_threshold=0.3, batch_size=2)

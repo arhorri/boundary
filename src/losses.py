@@ -50,8 +50,9 @@ division guard inside the clDice harmonic mean.
 
 from __future__ import annotations
 
+import math
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Sequence
 
 import numpy as np
 
@@ -328,6 +329,108 @@ def cldice_parts(logits: "torch.Tensor", target: "torch.Tensor",
             "cldice": float(cl.mean()),
             "loss": float((1.0 - cl).mean()),
         }
+
+
+# --------------------------------------------------------------------------
+# how many skeleton iterations a given line width needs -- measurement, not training
+# --------------------------------------------------------------------------
+def thickness_invariance_iters(line_width_px: float) -> int:
+    """``soft_skeletonize`` iterations at which clDice ignores a one-pixel dilation.
+
+    A PREDICTION from the width analysis, kept apart from ``loss.cldice_iters`` (the
+    training setting, which this does not touch): the number of iterations a TEST needs
+    to be meaningful at a given ground-truth width.
+
+    ``soft_erode`` is a cross-shaped min (3x1 and 1x3), so it removes one pixel per
+    iteration measured ALONG AN AXIS. A line of perpendicular width ``W`` has axis-
+    aligned thickness ``W`` when horizontal or vertical but ``sqrt(2) * W`` at 45 degrees,
+    which is the worst case a real boundary network contains. The skeleton only sees a
+    line once erosion has consumed it, so the dilated line (``W = line_width + 2``) must
+    survive ``ceil(sqrt(2) * W / 2)`` erosions before it is captured, otherwise its
+    skeleton is EMPTY -- and an empty predicted skeleton scores ``t_prec = smooth / smooth
+    = 1``, a clDice of ~0 that is degenerate rather than invariant.
+
+    ``ceil((line_width + 2) / sqrt(2))``: 3 at ``line_width_px = 2`` -- the value the
+    default ``cldice_iters`` already has and the thickness-invariance test passed at --
+    and 5 at 4 px. The 2 px case is the only point of the formula measured so far; the
+    4 px value is derived, and ``skeleton_measurements`` / ``thickness_invariance_profile``
+    exist to measure it.
+    """
+    width = float(line_width_px)
+    if not width >= 1.0:
+        raise LossError(f"line_width_px must be >= 1, got {line_width_px!r}")
+    return max(1, int(math.ceil((width + 2.0) / math.sqrt(2.0))))
+
+
+def skeleton_measurements(mask: np.ndarray, iters_list: Sequence = (3, 4, 5)) -> dict:
+    """What ``soft_skeletonize`` leaves of ``mask``, per iteration count.
+
+    ``{iters: {mask_px, skeleton_px, skeleton_soft_sum, centreline_px, thickness_px}}``.
+    ``skeleton_px`` counts pixels above 0.5; ``centreline_px`` is the length of that set
+    once thinned to one pixel (``skimage.morphology.skeletonize``), so
+    ``thickness_px = skeleton_px / centreline_px`` is how many pixels thick the "skeleton"
+    is across -- ~1 for a true centreline, ~2 for the central band an even-width line
+    leaves (see :func:`soft_skeletonize`). ``None`` when the skeleton is empty.
+    """
+    from skimage.morphology import skeletonize
+
+    arr = (np.asarray(mask) > 0).astype(np.uint8)
+    target = as_target(arr)
+    out = {}
+    for iters in iters_list:
+        skel = soft_skeletonize(target, int(iters))[0, 0].numpy()
+        solid = skel > 0.5
+        centre = skeletonize(solid) if solid.any() else solid
+        n_solid, n_centre = int(solid.sum()), int(centre.sum())
+        out[int(iters)] = {
+            "mask_px": int(arr.sum()), "skeleton_px": n_solid,
+            "skeleton_soft_sum": float(skel.sum()), "centreline_px": n_centre,
+            "thickness_px": (n_solid / n_centre) if n_centre else None,
+        }
+    return out
+
+
+#: The four conditions a clDice that ignores a dilation must meet at once; the last three
+#: are what separate genuine invariance from a degenerate empty skeleton.
+INVARIANCE_CHECKS = ("cldice_below_quarter_of_dice", "pred_skeleton_real",
+                     "true_skeleton_real", "pred_skeleton_on_true")
+
+
+def thickness_invariance_profile(truth: np.ndarray, iters_list: Sequence,
+                                 magnitude: float = 10.0, smooth: float = 1.0,
+                                 eps: float = 1e-6) -> dict:
+    """Does clDice ignore a one-pixel dilation of ``truth``, at each iteration count?
+
+    ``{iters: {dice_dilated, cldice_dilated, skel_pred_sum, skel_true_sum,
+    skel_pred_on_true, true_sum, checks, holds, failed}}``. The prediction is ``truth``
+    dilated by one pixel all round (topology intact), scored through the real
+    :func:`dice_term` / :func:`cldice_term` / :func:`cldice_parts`. ``holds`` is the
+    conjunction of :data:`INVARIANCE_CHECKS`, the same conditions
+    tests/test_losses.py asserts, so a notebook measuring them and the test judging them
+    cannot drift apart.
+    """
+    arr = (np.asarray(truth) > 0).astype(np.uint8)
+    target = as_target(arr)
+    logits = as_logits(dilate_mask(arr, iterations=1), magnitude)
+    dice = float(dice_term(logits, target, smooth=smooth))
+    out = {}
+    for iters in iters_list:
+        cl = float(cldice_term(logits, target, iters=int(iters), smooth=smooth, eps=eps))
+        parts = cldice_parts(logits, target, iters=int(iters), smooth=smooth, eps=eps)
+        checks = {
+            "cldice_below_quarter_of_dice": cl < 0.25 * dice,
+            "pred_skeleton_real": parts["skel_pred_sum"] > 0.25 * parts["true_sum"],
+            "true_skeleton_real": parts["skel_true_sum"] > 0.25 * parts["true_sum"],
+            "pred_skeleton_on_true": parts["skel_pred_on_true"] > 0.8 * parts["skel_pred_sum"],
+        }
+        out[int(iters)] = {
+            "dice_dilated": dice, "cldice_dilated": cl,
+            **{k: parts[k] for k in ("skel_pred_sum", "skel_true_sum",
+                                     "skel_pred_on_true", "true_sum")},
+            "checks": checks, "holds": all(checks.values()),
+            "failed": [k for k in INVARIANCE_CHECKS if not checks[k]],
+        }
+    return out
 
 
 # --------------------------------------------------------------------------

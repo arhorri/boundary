@@ -713,6 +713,17 @@
           "parents"
         ]
       }
+    },
+    "cldice_iterations_vs_line_width": {
+      "status": "candidate for the model round; loss.cldice_iters unchanged (3)",
+      "measured": null,
+      "measurement_cell": "notebooks/06d_steel_combined.ipynb Cell 33 -> reports/cldice_iters_measurement.json",
+      "derived_not_measured": "straight even-width line: 2 px central skeleton band, invariance from W/2 iterations; diagonal lines predicted to need ceil((W + 2) / sqrt(2)) = 3 at 2 px (measured: passed) and 5 at 4 px (not measured)",
+      "candidate": "loss.cldice_iters = 5 at 4 px, only if Cell 33 confirms"
+    },
+    "width_read_out_bias": {
+      "status": "fixed; evaluate_checkpoint(width_hint=...) added, default unchanged",
+      "stored_in_committed_reports": false
     }
   }
 }

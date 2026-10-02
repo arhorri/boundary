@@ -700,13 +700,19 @@ def measured_line_width(binary: np.ndarray, width_hint: Optional[int] = None
     correction back to true width (``2*dist - 1`` for odd W, ``2*dist`` for
     even W) depends on which parity W actually is. ``width_hint`` supplies
     that parity (the configured ``line_width_px`` this measurement is meant
-    to verify); with no hint, odd is assumed to preserve prior behaviour.
+    to verify); with no hint, odd is assumed to preserve prior behaviour --
+    which reads an EVEN-width line one pixel low (a 2 px band -> 1.0, a 4 px
+    band -> 3.0). Callers that know the configured width should pass it.
+
+    Returns ``None`` when there is nothing to measure: no foreground, or no
+    BACKGROUND (an all-foreground tile has no distance to a background pixel;
+    the distance transform returns an overflowing huge value there, not a width).
     """
     import cv2
     from skimage.morphology import skeletonize
 
     hit = (binary > 0)
-    if not hit.any():
+    if not hit.any() or hit.all():
         return None
     skel = skeletonize(hit)
     if not skel.any():
