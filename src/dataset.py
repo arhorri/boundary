@@ -487,6 +487,33 @@ def crop_tile(array: np.ndarray, x: int, y: int, patch: int) -> np.ndarray:
     return tile
 
 
+def densest_tile_mask(rows: Sequence, dataset_name: str, roots: Optional[dict] = None,
+                      crops: Optional[dict] = None, top: int = 20,
+                      min_pixels: int = 200) -> np.ndarray:
+    """The boundary mask of the densest tile of ``dataset_name`` in ``rows``, as uint8 0/1.
+
+    Densest by the manifest's ``boundary_fraction``; among the ``top`` densest, the
+    first whose source image is readable on this host and which carries more than
+    ``min_pixels`` boundary pixels. Raises :class:`DatasetError` when the dataset has no
+    tile in ``rows`` or none of the candidates can be read -- callers decide whether
+    that is a skip (a test on a host without the data) or a failure.
+    """
+    candidates = sorted((r for r in rows if r["dataset"] == dataset_name),
+                        key=lambda r: r["boundary_fraction"], reverse=True)
+    if not candidates:
+        raise DatasetError(f"no {dataset_name} tiles in the given rows")
+    crops = crops if crops is not None else load_crops()
+    for row in candidates[:int(top)]:
+        try:
+            _, gt_full = read_pair(row, crops=crops, roots=roots)
+        except Exception:
+            continue
+        mask = crop_tile(gt_full, row["x"], row["y"], int(row["patch"])) > 0
+        if mask.sum() > int(min_pixels):
+            return mask.astype(np.uint8)
+    raise DatasetError(f"{dataset_name} source images are not reachable on this host")
+
+
 # --------------------------------------------------------------------------
 # augmentation
 # --------------------------------------------------------------------------

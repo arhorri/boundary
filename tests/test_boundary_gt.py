@@ -811,3 +811,43 @@ def test_regeneration_is_allowed_on_a_clean_mode_b_state_and_for_other_datasets(
     # another dataset's backup / record does not block this one
     (tmp_path / boundary_gt.MODE_B_BACKUP_SUBDIR / "Steel1").mkdir(parents=True)
     boundary_gt.refuse_if_already_regenerated(extraction, tmp_path, "Steel2")
+
+
+
+# --------------------------------------------------------------------------
+# measured_line_width: parity hint and the no-background case
+# --------------------------------------------------------------------------
+def _band(rows, size=32):
+    m = np.zeros((size, size), dtype=bool)
+    top = (size - rows) // 2
+    m[top:top + rows, :] = True
+    return m
+
+
+@pytest.mark.parametrize("rows, hint, expected", [
+    (2, None, 1.0), (4, None, 3.0), (3, None, 3.0),      # the no-hint default, bias included
+    (2, 2, 2.0), (4, 4, 4.0), (3, 3, 3.0),               # the hint corrects even widths
+    (4, 2, 4.0),                                          # only the parity of the hint matters
+])
+def test_measured_line_width_reads_a_band_with_and_without_the_parity_hint(rows, hint, expected):
+    assert boundary_gt.measured_line_width(_band(rows), width_hint=hint) == pytest.approx(expected)
+
+
+def test_measured_line_width_is_none_without_background_and_does_not_warn():
+    import warnings
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", RuntimeWarning)    # the old overflow warning would raise
+        assert boundary_gt.measured_line_width(np.ones((16, 16), dtype=bool)) is None
+        assert boundary_gt.measured_line_width(np.ones((16, 16), dtype=bool), width_hint=4) is None
+    assert boundary_gt.measured_line_width(np.zeros((16, 16), dtype=bool)) is None
+    # one background pixel is enough to have a width again
+    almost = np.ones((16, 16), dtype=bool)
+    almost[0, 0] = False
+    assert boundary_gt.measured_line_width(almost) is not None
+
+
+def test_a_component_with_no_background_is_classified_as_a_blob():
+    labels = np.ones((20, 20), dtype=np.int32)
+    line, blob, widths = boundary_gt.classify_line_class_components(labels, 1, 8.0)
+    assert blob.all() and not line.any() and widths == {1: None}

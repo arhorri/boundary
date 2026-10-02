@@ -81,7 +81,7 @@
  },
  "platform": "colab",
  "held_out": "mixed(Steel1+Steel2)",
- "generated_utc": "2026-10-01T07:21:21Z",
+ "generated_utc": "2026-10-02T14:28:00Z",
  "summary": {
   "fold": "fold_steel_combined_modea",
   "run_name": "fold_steel_combined_modea",
@@ -153,12 +153,12 @@
   "cache": {
    "train": {
     "source": "warm",
-    "seconds": 3.15,
+    "seconds": 3.79,
     "images": 965
    },
    "val": {
     "source": "warm",
-    "seconds": 2.16,
+    "seconds": 3.86,
     "images": 221
    }
   },

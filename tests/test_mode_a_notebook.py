@@ -282,7 +282,7 @@ def _cell_after(title):
     return _source(cells[i + 1])
 
 
-@pytest.mark.parametrize("n", [25, 26, 27, 28, 29])
+@pytest.mark.parametrize("n", [25, 26, 27, 28, 29, 33])
 def test_diagnostic_cells_are_skipped_when_run_diagnostics_is_false(n):
     """The whole real cell, in a namespace that holds NOTHING else: if anything other
     than the gate ran, it would raise NameError/ImportError here."""
@@ -291,7 +291,7 @@ def test_diagnostic_cells_are_skipped_when_run_diagnostics_is_false(n):
     assert printed == f"Cell {n} skipped (diagnostic) -- set RUN_DIAGNOSTICS = True in Cell 2 to run it."
 
 
-@pytest.mark.parametrize("n", [25, 26, 27, 28, 29])
+@pytest.mark.parametrize("n", [25, 26, 27, 28, 29, 33])
 def test_diagnostic_cells_are_skipped_when_the_flag_was_never_set(n):
     printed = _exec_cell(_cell_after(f"## Cell {n} "), {"__name__": "cell"}, f"<cell {n}>")
     assert "skipped (diagnostic)" in printed
@@ -303,7 +303,7 @@ def test_run_diagnostics_is_set_once_in_cell_2_and_defaults_to_false():
     assert len(setters) == 1 and "FOLD = steel_cfg[" in setters[0]
     assert re.search(r"^RUN_DIAGNOSTICS = False$", setters[0], re.M)
     gated = [c for c in code if 'globals().get("RUN_DIAGNOSTICS", False)' in c]
-    assert len(gated) == 5
+    assert len(gated) == 6, "Cells 25-29 and 33"
 
 
 def test_non_diagnostic_cells_are_not_gated():
@@ -410,3 +410,14 @@ def test_comparison_cell_pushes_only_after_its_checks_and_names_the_report_by_pl
                      "Steel1 test tiles: same ground-truth files and boundary fractions",
                      "the NEW checkpoint was trained on the ground truth on disk"):
         assert required in cell, required
+
+
+def test_cell_33_measures_without_touching_training_or_config():
+    cell = _cell_after("## Cell 33 ")
+    assert "losses_mod.thickness_invariance_profile(" in cell
+    assert "losses_mod.skeleton_measurements(" in cell
+    # a measurement: no assignment to a setting, no write of a config file, no training
+    for banned in ('["cldice_iters"] =', "cldice_iters:", "safe_dump", ".fit(", "Trainer(",
+                   "default.yaml"):
+        assert banned not in cell, banned
+    assert cell.index("pytest") < cell.index("losses_mod.skeleton_measurements(")

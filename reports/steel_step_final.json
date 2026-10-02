@@ -39,7 +39,7 @@
         ]
       },
       "pixel_dice": {
-        "value": 0.5934309207252186,
+        "value": 0.59342664798058,
         "source": "reports/region_metrics_fold_steel_combined_modea_colab.json",
         "key": [
           "decomposition",
@@ -48,7 +48,7 @@
         ]
       },
       "skeleton_dice": {
-        "value": 0.15128994123987344,
+        "value": 0.1511567765854337,
         "source": "reports/region_metrics_fold_steel_combined_modea_colab.json",
         "key": [
           "decomposition",
@@ -194,7 +194,7 @@
         ]
       },
       "pixel_dice": {
-        "value": 0.7340263906937258,
+        "value": 0.734029720771415,
         "source": "reports/region_metrics_fold_steel_combined_modea_colab.json",
         "key": [
           "decomposition",
@@ -203,7 +203,7 @@
         ]
       },
       "skeleton_dice": {
-        "value": 0.4096119063021299,
+        "value": 0.40949995840397485,
         "source": "reports/region_metrics_fold_steel_combined_modea_colab.json",
         "key": [
           "decomposition",
@@ -525,7 +525,7 @@
         ]
       },
       "steel1_pq_selected_postprocess": {
-        "value": 0.2979473571062202,
+        "value": 0.2982370412036321,
         "source": "reports/postprocess_sweep_fold_steel_combined_modea_colab.json",
         "key": [
           "test_rows",
@@ -537,7 +537,7 @@
         ]
       },
       "steel2_pq_selected_postprocess": {
-        "value": 0.36486581131902607,
+        "value": 0.36395685468981653,
         "source": "reports/postprocess_sweep_fold_steel_combined_modea_colab.json",
         "key": [
           "test_rows",
@@ -593,7 +593,7 @@
         ]
       },
       "skeleton_dice": {
-        "value": 0.15128994123987344,
+        "value": 0.1511567765854337,
         "source": "reports/region_metrics_fold_steel_combined_modea_colab.json",
         "key": [
           "decomposition",
@@ -637,7 +637,7 @@
         ]
       },
       "TINY_fraction": {
-        "value": 0.2836761778367618,
+        "value": 0.28386454183266935,
         "source": "reports/fn_attribution_fold_steel_combined_modea_colab.json",
         "key": [
           "attribution",
@@ -649,7 +649,7 @@
         ]
       },
       "MERGED": {
-        "value": 2098,
+        "value": 2096,
         "source": "reports/fn_attribution_fold_steel_combined_modea_colab.json",
         "key": [
           "attribution",
@@ -661,7 +661,7 @@
         ]
       },
       "MERGED_fraction": {
-        "value": 0.6960849369608494,
+        "value": 0.6958831341301461,
         "source": "reports/fn_attribution_fold_steel_combined_modea_colab.json",
         "key": [
           "attribution",
@@ -673,7 +673,7 @@
         ]
       },
       "fn_per_tile": {
-        "value": 23.92063492063492,
+        "value": 23.904761904761905,
         "source": "reports/fn_attribution_fold_steel_combined_modea_colab.json",
         "key": [
           "attribution",
@@ -681,6 +681,46 @@
           "none@tuned",
           "Steel2",
           "fn_per_tile"
+        ]
+      }
+    },
+    "region_metrics_rerun_noise": {
+      "steel1_skeleton_dice_before_rerun": {
+        "value": 0.15128994123987344,
+        "source": "reports/region_metrics_fold_steel_combined_modea_colab.json",
+        "key": [
+          "decomposition",
+          "Steel1",
+          "skeleton_dice"
+        ],
+        "commit": "b6de92e"
+      },
+      "steel1_skeleton_dice_after_rerun": {
+        "value": 0.1511567765854337,
+        "source": "reports/region_metrics_fold_steel_combined_modea_colab.json",
+        "key": [
+          "decomposition",
+          "Steel1",
+          "skeleton_dice"
+        ]
+      },
+      "steel1_pixel_dice_before_rerun": {
+        "value": 0.5934309207252186,
+        "source": "reports/region_metrics_fold_steel_combined_modea_colab.json",
+        "key": [
+          "decomposition",
+          "Steel1",
+          "pixel_dice"
+        ],
+        "commit": "b6de92e"
+      },
+      "steel1_pixel_dice_after_rerun": {
+        "value": 0.59342664798058,
+        "source": "reports/region_metrics_fold_steel_combined_modea_colab.json",
+        "key": [
+          "decomposition",
+          "Steel1",
+          "pixel_dice"
         ]
       }
     },
@@ -713,6 +753,17 @@
           "parents"
         ]
       }
+    },
+    "cldice_iterations_vs_line_width": {
+      "status": "candidate for the model round; loss.cldice_iters unchanged (3)",
+      "measured": null,
+      "measurement_cell": "notebooks/06d_steel_combined.ipynb Cell 33 -> reports/cldice_iters_measurement.json",
+      "derived_not_measured": "straight even-width line: 2 px central skeleton band, invariance from W/2 iterations; diagonal lines predicted to need ceil((W + 2) / sqrt(2)) = 3 at 2 px (measured: passed) and 5 at 4 px (not measured)",
+      "candidate": "loss.cldice_iters = 5 at 4 px, only if Cell 33 confirms"
+    },
+    "width_read_out_bias": {
+      "status": "fixed; evaluate_checkpoint(width_hint=...) added, default unchanged",
+      "stored_in_committed_reports": false
     }
   }
 }
